@@ -1,0 +1,17 @@
+# no .svn direcrories
+bin/
+# no compiled object file
+*.[oa]
+*.so
+# no temporary file
+*~
+*.out
+*.aux
+*.log
+*.eps
+*.tif
+*.dvi
+
+#ignore binary file
+src/prog/simulation
+src/prog/phylo-epi-tester
