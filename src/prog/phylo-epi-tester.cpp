@@ -253,6 +253,70 @@ trans_prob_mat(const double rate0, const double rate1,
 }
 
 
+static void
+get_rate_helper_inc(const double u, const double m, 
+                    const double u_dr, const double m_dr, 
+                    const double unmeth_child_lik, const double meth_child_lik, 
+                    const vector<vector<double> > &child_trans_mat, 
+                    const double exp_branch,
+                    double &u_inc, double &m_inc){
+  u_inc = 
+    (u_dr*child_trans_mat[0][0] + u*(1.0/exp_branch - 1.0) +
+     m_dr*child_trans_mat[0][1] + m*(1.0-1.0/exp_branch))/unmeth_child_lik;
+  m_inc = 
+    (u_dr*child_trans_mat[1][0] + u*(1.0/exp_branch - 1.0) +
+     m_dr*child_trans_mat[1][1] + m*(1.0-1.0/exp_branch))/meth_child_lik;
+}
+
+
+static void
+update_bysite(const vector<size_t> &subtree_sizes,
+              const size_t child_start,
+              const vector<vector<double> > &Q,
+              const vector<vector<double> > &child_trans_mat, 
+              const double u, const double m, 
+              const double u_dr, const double m_dr,
+              const vector<double> &u_db, const vector<double> &m_db,
+              const vector<double> &exp_branches,
+              double &subtree_lik_given_root_unmeth,
+              double &subtree_lik_given_root_meth,
+              double &rate_helper_u,
+              double &rate_helper_m,
+              vector<double> &branch_helper_u,
+              vector<double> &branch_helper_m){
+  const double unmeth_child_lik =
+    child_trans_mat[0][0]*u + child_trans_mat[0][1]*m;
+  const double meth_child_lik =
+    child_trans_mat[1][0]*u + child_trans_mat[1][1]*m;
+  
+  //likelihood
+  subtree_lik_given_root_unmeth *= unmeth_child_lik;
+  subtree_lik_given_root_meth *= meth_child_lik;
+        
+  //deriv_rate helper 
+  double exp_branch = exp_branches[child_start];
+  double u_inc, m_inc; 
+  get_rate_helper_inc(u, m, u_dr, m_dr, 
+                      unmeth_child_lik, meth_child_lik, 
+                      child_trans_mat, exp_branch, u_inc, m_inc);
+  rate_helper_u += u_inc;
+  rate_helper_m += m_inc; 
+  
+  //deriv_branch helper
+  branch_helper_u[child_start] =
+    (u*Q[0][0] + m*Q[0][1])/exp_branches[child_start]/unmeth_child_lik;  
+  branch_helper_m[child_start] =
+    (u*Q[1][0] + m*Q[1][1])/exp_branches[child_start]/meth_child_lik;
+  
+  for (size_t i = 1; i < subtree_sizes[child_start]; ++i) {
+    const size_t j = child_start + i;
+    branch_helper_u[j] =
+      (u_db[j]*child_trans_mat[0][0] + m_db[j]*child_trans_mat[0][1])/unmeth_child_lik;
+    branch_helper_m[j] =
+      (u_db[j]*child_trans_mat[1][0] + m_db[j]*child_trans_mat[1][1])/meth_child_lik;
+  }
+}
+
 
 static void
 subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
@@ -266,97 +330,68 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
                          vector<double> &deriv_rate_given_root_meth,
                          vector<vector<double> > &deriv_branches_given_root_unmeth,
                          vector<vector<double> > &deriv_branches_given_root_meth) {
-
   const size_t nsites = states[0].size();
-  const size_t nbranches = branches.size();
-  vector<double> empty_dbranch(nbranches, 0.0);
-  deriv_branches_given_root_unmeth = vector<vector<double> >(nsites, empty_dbranch);
-  deriv_branches_given_root_meth = vector<vector<double> >(nsites, empty_dbranch);
-  
 
-  vector<vector<double> > Q(2, vector<double>(2, 0.0));
-  Q[0][0] = 0.0 - rate;
-  Q[0][1] = rate;
-  Q[1][0] = 1.0 - rate;
-  Q[1][1] = rate - 1.0;
+  vector<double> empty_dbranch(branches.size(), 0.0);
+  deriv_branches_given_root_unmeth = 
+    vector<vector<double> >(nsites, empty_dbranch);
+  deriv_branches_given_root_meth = 
+    vector<vector<double> >(nsites, empty_dbranch);
   
-  subtree_lik_given_root_unmeth = vector<double>(nsites, 0.0);
-  subtree_lik_given_root_meth = vector<double>(nsites, 0.0);
-  deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
-  deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
-
   if (subtree_sizes[tree_start] == 1) {
-    
     for (size_t pos = 0; pos < nsites; ++pos) {
       assert(states[tree_start][pos] >= 0);
-      subtree_lik_given_root_unmeth[pos] = states[tree_start][pos];
-      subtree_lik_given_root_meth[pos] = 1.0 - states[tree_start][pos];
+      subtree_lik_given_root_unmeth.push_back(states[tree_start][pos]);
+      subtree_lik_given_root_meth.push_back(1.0 - states[tree_start][pos]);
     }
-  } else {
-    size_t count = 1;
+    deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
+    deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
+  }
+  else {
+    vector<vector<double> > Q(2, vector<double>(2, 0.0));
+    Q[0][0] = 0.0 - rate;
+    Q[0][1] = rate;
+    Q[1][0] = 1.0 - rate;
+    Q[1][1] = rate - 1.0;
+
+    vector<double> expbranches;
+    for (size_t i = 0; i < branches.size(); ++i) {
+      expbranches.push_back(exp(branches[i]));
+    }
+    
     subtree_lik_given_root_unmeth = vector<double>(nsites, 1.0);
     subtree_lik_given_root_meth = vector<double>(nsites, 1.0);
+    deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
+    deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
 
     vector<vector<double> > branch_helper_u(nsites, empty_dbranch);
     vector<vector<double> > branch_helper_m(nsites, empty_dbranch);
-    
+
     vector<double> rate_helper_u(nsites, 0.0);
     vector<double> rate_helper_m(nsites, 0.0);
 
-    while (count < subtree_sizes[tree_start]) {
-      size_t child_start = tree_start + count;
-      vector<double> u, m, u_dr, m_dr;
-      vector<vector<double> > u_db, m_db;
-      subtree_likelihood_deriv(subtree_sizes, rate, branches, child_start,
-                               states, u, m, u_dr, m_dr, u_db, m_db);
+    size_t child_start = 0;
+    for (size_t count = 1; count < subtree_sizes[tree_start]; 
+         count += subtree_sizes[child_start]) {
+      child_start = tree_start + count;
       const double branch = branches[child_start];
       vector<vector<double> > child_trans_mat;
       trans_prob_mat(rate, 1.0 - rate, branch, child_trans_mat);
 
-      for (size_t pos = 0; pos < nsites; ++pos) {
-        const double unmeth_child_lik =
-          child_trans_mat[0][0]*u[pos] + child_trans_mat[0][1]*m[pos];
-        const double meth_child_lik =
-          child_trans_mat[1][0]*u[pos] + child_trans_mat[1][1]*m[pos];
-        
-        //likelihood
-        subtree_lik_given_root_unmeth[pos] =
-          subtree_lik_given_root_unmeth[pos]*unmeth_child_lik;
-        subtree_lik_given_root_meth[pos] =
-          subtree_lik_given_root_meth[pos]*meth_child_lik;
-        
-        //deriv_rate
-        rate_helper_u[pos] +=
-          (u_dr[pos]*child_trans_mat[0][0] + u[pos]*(1.0/exp(branch) - 1.0) +
-           m_dr[pos]*child_trans_mat[0][1] +
-           m[pos]*(1.0-1.0/exp(branch)))/unmeth_child_lik;
-        rate_helper_m[pos] +=
-          (u_dr[pos]*child_trans_mat[1][0] + u[pos]*(1.0/exp(branch) - 1.0) +
-           m_dr[pos]*child_trans_mat[1][1] +
-           m[pos]*(1.0-1.0/exp(branch)))/meth_child_lik;
+      vector<double> u, m, u_dr, m_dr;
+      vector<vector<double> > u_db, m_db;
+      subtree_likelihood_deriv(subtree_sizes, rate, branches, child_start,
+                               states, u, m, u_dr, m_dr, u_db, m_db);
 
-        for (size_t i = 1; i < nbranches; ++i) {
-          if (i == child_start) {
-            branch_helper_u[pos][i] = 
-              (u[pos]*Q[0][0] + m[pos]*Q[0][1])/
-              exp(branches[i])/unmeth_child_lik;
-            branch_helper_m[pos][i] = 
-              (u[pos]*Q[1][0] + m[pos]*Q[1][1])/
-              exp(branches[i])/meth_child_lik;
-          } else if (i > child_start && 
-                     i < child_start + subtree_sizes[child_start]) {
-            branch_helper_u[pos][i] =
-              1.0/unmeth_child_lik*
-              (u_db[pos][i]*child_trans_mat[0][0] +
-               m_db[pos][i]*child_trans_mat[0][1]);
-            branch_helper_m[pos][i] =
-              1.0/meth_child_lik*
-              (u_db[pos][i]*child_trans_mat[1][0] +
-               m_db[pos][i]*child_trans_mat[1][1]);
-          }
-        }
+      for (size_t pos = 0; pos < nsites; ++pos) {
+        update_bysite(subtree_sizes, child_start, Q, child_trans_mat, 
+                      u[pos], m[pos], u_dr[pos], m_dr[pos], 
+                      u_db[pos], m_db[pos], expbranches, 
+                      subtree_lik_given_root_unmeth[pos],
+                      subtree_lik_given_root_meth[pos],
+                      rate_helper_u[pos], rate_helper_m[pos],
+                      branch_helper_u[pos], branch_helper_m[pos]);
       }
-      count += subtree_sizes[child_start];
     }
 
     for (size_t pos = 0; pos < nsites; ++pos) {
@@ -367,19 +402,18 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
         rate_helper_m[pos]*subtree_lik_given_root_meth[pos];
 
       //deriv_branches
-      vector<double> deriv_branches_unmeth_site(nbranches, 0.0);
-      vector<double> deriv_branches_meth_site(nbranches, 0.0);
+      const size_t nbranches = branches.size();
+
       for (size_t i = 1; i < nbranches; ++i) {
-        deriv_branches_unmeth_site[i] = 
+        deriv_branches_given_root_unmeth[pos][i] =
           branch_helper_u[pos][i]*subtree_lik_given_root_unmeth[pos];
-        deriv_branches_meth_site[i]= 
+        deriv_branches_given_root_meth[pos][i]=
           branch_helper_m[pos][i]*subtree_lik_given_root_meth[pos];
-      } 
-      deriv_branches_given_root_unmeth[pos] = deriv_branches_unmeth_site;
-      deriv_branches_given_root_meth[pos] = deriv_branches_meth_site;
+      }
     }
   }
 }
+
 
 
 static void
@@ -1335,16 +1369,16 @@ main(int argc, const char **argv) {
 /* ADS:
    xx Move the stuff in main into their own functions
    -- Consider a wrapper for the optimization stuff
-   xx Switch to using the tree directly to parse input
-   xx Do not try to reorder the nodes/columns
-   -- When values are checked against TOLERANCE, is it always on boths
-      sides of the unit interval?
-   -- Is the root unmeth prob just for making things reversible?
    xx Make variable names more sensible and typically longer
-   -- No const references for primitive types
+   xx No const references for primitive types
    -- Make sure ordering of parameters to functions makes sense and is
       always consistent
    -- What are the semantics of TOLERANCE? Should it be both a
       precision value for estimates and also used for convergence?
    xx Make sure convergence criteria is based on only one value
+ */
+
+/* TO-DO:
+   -- Avoid exp() function
+   -- Let size of deriv_branches be variable according to the subtree size. 
  */
