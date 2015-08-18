@@ -533,11 +533,12 @@ subtree_likelihood(const vector<size_t> &subtree_sizes,
                    vector<double> &subtree_lik_given_root_unmeth,
                    vector<double> &subtree_lik_given_root_meth) {
   
-  subtree_lik_given_root_unmeth = vector<double>(states.size(), 1.0);
-  subtree_lik_given_root_meth = vector<double>(states.size(), 1.0);
+  size_t nsites = states[0].size();
+  subtree_lik_given_root_unmeth = vector<double>(nsites, 1.0);
+  subtree_lik_given_root_meth = vector<double>(nsites, 1.0);
   
   if (subtree_sizes[tree_start] == 1) {
-    for (size_t pos = 0; pos < states.size(); ++ pos) {
+    for (size_t pos = 0; pos < nsites; ++ pos) {
       assert (states[tree_start][pos] >= 0);
       subtree_lik_given_root_unmeth[pos] = states[tree_start][pos];
       subtree_lik_given_root_meth[pos] = 1.0 - states[tree_start][pos];
@@ -551,7 +552,7 @@ subtree_likelihood(const vector<size_t> &subtree_sizes,
                          child_start, states, u, m);
       vector<vector<double> > child_trans_mat;
       unitrate_trans_prob_mat(rate, expbranches[child_start], child_trans_mat);
-      for (size_t pos = 0; pos < states.size(); ++pos) {
+      for (size_t pos = 0; pos < nsites; ++pos) {
         double unmeth_child_lik =
           child_trans_mat[0][0]*u[pos] + child_trans_mat[0][1]*m[pos];
         double meth_child_lik =
@@ -1089,7 +1090,7 @@ optimize_branch(const bool VERBOSE,
 
 
 static void 
-optimize(const bool VERBOSE, const size_t MAXITER, const size_t TOLERANCE, 
+optimize(const bool VERBOSE, const size_t MAXITER, const double TOLERANCE, 
          const double paramtol, const double stepsize,
          const vector<size_t> &subtree_sizes, 
          double &root_unmeth_prob, 
@@ -1099,6 +1100,7 @@ optimize(const bool VERBOSE, const size_t MAXITER, const size_t TOLERANCE,
   
   double llk = tree_loglikelihood(subtree_sizes, root_unmeth_prob, lam,
                                   branches, states);
+  if (VERBOSE) cerr << "BEGIN llk=" << llk << endl;
   double prev_llk;
   for (size_t iter = 0; iter < MAXITER; ++iter) {
     if (VERBOSE)
@@ -1125,6 +1127,8 @@ optimize(const bool VERBOSE, const size_t MAXITER, const size_t TOLERANCE,
         cerr << "[branch_" << i <<"]\t"<< branches[i]
              << "\t[log-likelihood]\t" << llk << endl;
     }
+    if (VERBOSE)
+      cerr << "[Improved] "<< llk- prev_llk << "(TOL=" << TOLERANCE << ")"<< endl;
     if (abs(llk - prev_llk) < TOLERANCE) {
       if (VERBOSE)
         cerr << "Converged at iteration " << iter << endl;
@@ -1253,7 +1257,7 @@ main(int argc, const char **argv) {
     bool COUNT = false;
 
     double TOLERANCE = 1e-4;
-    size_t MAXITER = 10;
+    size_t MAXITER = 20;
     double PARAM_TOL = 1e-4;
     double STEP_SIZE = 0.1;
 
