@@ -1294,7 +1294,7 @@ main(int argc, const char **argv) {
     // run mode flags
     bool VERBOSE = false;
     bool COUNT = false;
-    bool JOINT = false;
+    bool NODEMAP = false;
 
     double TOLERANCE = 1e-4;
     size_t MAXITER = 10;
@@ -1313,9 +1313,9 @@ main(int argc, const char **argv) {
                       "of state probability (default: false)", false, COUNT);
     opt_parse.add_opt("iteration", 'i', "max iteration (default: 10)",
                       false, MAXITER);
-    opt_parse.add_opt("joint", 'j', "output most likely methylation pattern"
-                      "instead of MAP states at each node (default: false)", 
-                      false, JOINT);
+    opt_parse.add_opt("nodemap", 'n', "output  MAP states at each node"
+                      "instead of most likely methylation patterns (default: false)", 
+                      false, NODEMAP);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     vector<string> leftover_args;
@@ -1420,7 +1420,7 @@ main(int argc, const char **argv) {
     t.set_branch_lengths(branches);
     /**************************************************************************/
     /**********  SET INTERNAL NODES STATES ************************************/
-    if (JOINT) {
+    if (!NODEMAP) {
       if (VERBOSE)
         cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
       vector<string> bestpatterns;
