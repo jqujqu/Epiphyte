@@ -25,7 +25,7 @@ ifndef TREETOOL
 TREETOOL=$(realpath ../adssrc/treetool)
 endif
 
-PROGS = phylo-epi-tester simulation # hme hmess treetool MultiSampleHMR
+PROGS = phylo-epi-tester simulation indep-sites-hypo
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50
@@ -71,6 +71,7 @@ simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 phylo-epi-tester: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
+indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o) 
 
 install: all
 	@mkdir -p ../../bin
