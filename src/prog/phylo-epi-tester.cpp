@@ -865,6 +865,27 @@ log_sum_log(const double p, const double q) {
 }
 
 
+static void
+tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
+                        const double root_unmeth_prob,
+                        const double rate,
+                        const vector<double> &branches,
+                        const vector<vector<double> > &states,
+                        vector<string> &best_patterns) {
+  
+  const size_t nsites = states[0].size();
+  for (size_t pos = 0; pos < nsites; ++pos) {
+    vector<double> tree_log_probs;
+    subtree_pattern_log_prob(subtree_sizes, rate, branches, 0, states, pos,
+                             tree_log_probs);
+    vector<double>::iterator result;
+    result = std::max_element(tree_log_probs.begin(), tree_log_probs.end());
+    size_t best = std::distance(tree_log_probs.begin(), result);
+    string pattern = dec2binary(subtree_sizes[0], best);
+    best_patterns.push_back(pattern);
+  }
+}
+
 
 static void
 tree_pattern_probs(const vector<size_t> &subtree_sizes,
@@ -1167,6 +1188,24 @@ write_states(const string &outfile,
   }
 }
 
+
+static void
+write_patterns(const string &outfile, 
+               const PhyloTreePreorder &t,
+               const double lam,
+               const double root_unmeth_prob,
+               const vector<Site> &sites,
+               const vector<string> &patterns) {
+  std::ofstream out(outfile.c_str());
+  const size_t nsites = sites.size();
+  out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
+      << "\tRoot unmeth prob = " << root_unmeth_prob << endl;
+  for (size_t i = 0; i < nsites; ++i) {
+    out << sites[i].chrom << ":" << sites[i].pos << "\t" 
+        << patterns[i] << endl;
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////// PHYLOTREEPREORDER HELPERS ///////////////////////////////
@@ -1255,9 +1294,10 @@ main(int argc, const char **argv) {
     // run mode flags
     bool VERBOSE = false;
     bool COUNT = false;
+    bool JOINT = false;
 
     double TOLERANCE = 1e-4;
-    size_t MAXITER = 20;
+    size_t MAXITER = 10;
     double PARAM_TOL = 1e-4;
     double STEP_SIZE = 0.1;
 
@@ -1271,6 +1311,11 @@ main(int argc, const char **argv) {
                       false, outfile);
     opt_parse.add_opt("counts", 'c', "meth-tab contains read counts instead"
                       "of state probability (default: false)", false, COUNT);
+    opt_parse.add_opt("iteration", 'i', "max iteration (default: 10)",
+                      false, MAXITER);
+    opt_parse.add_opt("joint", 'j', "output most likely methylation pattern"
+                      "instead of MAP states at each node (default: false)", 
+                      false, JOINT);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     vector<string> leftover_args;
@@ -1375,8 +1420,19 @@ main(int argc, const char **argv) {
     t.set_branch_lengths(branches);
     /**************************************************************************/
     /**********  SET INTERNAL NODES STATES ************************************/
-    tree_pattern_probs(subtree_sizes, root_unmeth_prob, lam, branches, states);
-    write_states(outfile, t, lam, root_unmeth_prob, sites, states);
+    if (JOINT) {
+      if (VERBOSE)
+        cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
+      vector<string> bestpatterns;
+      tree_pattern_probs_best(subtree_sizes, root_unmeth_prob, lam, branches, 
+                              states, bestpatterns);
+      write_patterns(outfile, t, lam, root_unmeth_prob, sites, bestpatterns);
+    } else {
+      if (VERBOSE)
+        cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
+      tree_pattern_probs(subtree_sizes, root_unmeth_prob, lam, branches, states);
+      write_states(outfile, t, lam, root_unmeth_prob, sites, states);
+    }
     /**************************************************************************/
   }
   catch (SMITHLABException &e) {
@@ -1404,5 +1460,5 @@ main(int argc, const char **argv) {
  */
 
 /* TO-DO:
-   -- Let size of deriv_branches be variable according to the subtree size. 
+   xx Let size of deriv_branches be variable according to the subtree size. 
  */
