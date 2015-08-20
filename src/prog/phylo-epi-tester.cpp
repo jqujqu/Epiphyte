@@ -1352,7 +1352,7 @@ main(int argc, const char **argv) {
     tree_in >> t;
 
     if (VERBOSE)
-      cout <<  t.tostring() << endl;
+      cerr <<  t.tostring() << endl;
 
     vector<size_t> subtree_sizes;
     vector<size_t> node_degrees;
