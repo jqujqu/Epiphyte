@@ -16,36 +16,38 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-all_subdirs=prog common
-app_subdirs=prog 
 
-ifndef SMITHLAB_CPP
-SMITHLAB_CPP=$(realpath smithlab_cpp)
+
+SOURCES = $(wildcard *.cpp)
+OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
+
+CXX = g++
+CXXFLAGS = -Wall
+OPTFLAGS = -O2
+DEBUGFLAGS = -g
+
+ifdef DEBUG
+CXXFLAGS += $(DEBUGFLAGS)
 endif
 
-ifndef TREETOOL
-TREETOOL=$(realpath adssrc/treetool)
+ifdef OPT
+CXXFLAGS += $(OPTFLAGS)
 endif
 
-all:
-	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) OPT=1; \
-	done;
+# Flags for Mavericks
+ifeq "$(shell uname)" "Darwin"
+CXXFLAGS += -arch x86_64
+ifeq "$(shell if [ `sysctl -n kern.osrelease | cut -d . -f 1` -ge 13 ];\
+		then echo 'true'; fi)" "true"
+CXXFLAGS += -stdlib=libstdc++
+endif
+endif
 
-install:
-	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) OPT=1 install; \
-	done;
+all: $(OBJECTS)
+%.o: %.cpp %.hpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-test:
-	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=${TREETOOL} test; \
-	done;
-
-clean:
-	@for i in $(all_subdirs); do \
-	make -C $${i} clean; \
-	done;
-
-.PHONY: test
+clean: 
+	@-rm -f *.o *~
+.PHONY: clean
 
