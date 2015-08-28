@@ -163,6 +163,34 @@ load_meth_table(const string &filename, vector<Site> &sites,
       throw SMITHLABException("inconsistent line length: " + line);
   }
 }
+
+static void
+read_params(const bool VERBOSE, const string &paramfile,
+            double &root_unmeth_prob, double &lam,
+            PhyloTreePreorder &t) {
+  std::ifstream in(paramfile.c_str());
+  if (!in)
+    throw SMITHLABException("cannot read: " + paramfile);
+
+  string line;
+  getline(in, line);
+  istringstream iss(line);
+  iss >> t;
+  if (VERBOSE)
+    cerr << "Read in tree branch lengths:" << endl
+         << t.tostring() << endl;
+
+  getline(in, line);
+  istringstream issp(line);
+  issp >> root_unmeth_prob >> lam;
+  if (VERBOSE)
+    cerr << "Root_unmeth_prob=" << root_unmeth_prob
+         << "\trate=" <<  lam << endl;
+  if (root_unmeth_prob >= 1.0 || root_unmeth_prob <= 0.0 ||
+      lam >= 1.0 || lam <= 0.0)
+    throw SMITHLABException("wrong parameter range: " + paramfile);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ///////////// ABOVE CODE IS FOR LOADING DATA  //////////////////////////////////
@@ -1075,12 +1103,16 @@ log_sum_log(const double p, const double q) {
 
 
 static void
-tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
+tree_pattern_probs_best(const bool VERBOSE,
+                        const vector<size_t> &subtree_sizes,
                         const double root_unmeth_prob,
                         const double rate,
                         const vector<double> &branches,
                         const vector<vector<double> > &states,
                         vector<string> &best_patterns) {
+
+  if (VERBOSE)
+    cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
 
   const size_t nsites = states[0].size();
   for (size_t pos = 0; pos < nsites; ++pos) {
@@ -1097,11 +1129,16 @@ tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
 
 
 static void
-tree_pattern_probs(const vector<size_t> &subtree_sizes,
+tree_pattern_probs(const bool VERBOSE,
+                   const vector<size_t> &subtree_sizes,
                    const double root_unmeth_prob,
                    const double rate,
                    const vector<double> &branches,
                    vector<vector<double> > &states) {
+
+  if (VERBOSE)
+    cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
+
   const size_t nsites = states[0].size();
   const size_t treesize = subtree_sizes[0];
   for (size_t pos = 0; pos < nsites; ++pos) {
@@ -1383,12 +1420,14 @@ write_states(std::ostream &out,
              const PhyloTreePreorder &t,
              const double lam,
              const double root_unmeth_prob,
+             const double llk,
              const vector<Site> &sites,
              const vector<vector<double> > &states) {
   const size_t nsites = sites.size();
   const size_t n_species = states.size();
   out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
-      << "\tRoot unmeth prob = " << root_unmeth_prob << endl;
+      << "\tRoot unmeth prob = " << root_unmeth_prob
+      << "\tlog-likelihood = " << llk << endl;
   for (size_t i = 0; i < nsites; ++i) {
     out << sites[i].chrom << ":" << sites[i].pos << "\t";
     for (size_t j = 0; j < n_species; ++j)
@@ -1403,11 +1442,13 @@ write_patterns(std::ostream &out,
                const PhyloTreePreorder &t,
                const double lam,
                const double root_unmeth_prob,
+               const double llk,
                const vector<Site> &sites,
                const vector<string> &patterns) {
   const size_t nsites = sites.size();
   out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
-      << "\tRoot unmeth prob = " << root_unmeth_prob << endl;
+      << "\tRoot unmeth prob = " << root_unmeth_prob
+      << "\tlog-likelihood = " << llk << endl;
   for (size_t i = 0; i < nsites; ++i) {
     out << sites[i].chrom << ":" << sites[i].pos << "\t"
         << patterns[i] << endl;
@@ -1627,12 +1668,20 @@ main(int argc, const char **argv) {
     }
     root_unmeth_prob = root_unmeth_prob/(nleaf*nsites);
 
-    // initialize rate between (0,1)
-    double lam = 0.4;
-    double llk = optimize(VERBOSE, MAXITER, TOLERANCE, PARAM_TOL, STEP_SIZE,
-                          subtree_sizes, root_unmeth_prob, lam, branches, states);
-    t.set_branch_lengths(branches);
-
+    double llk;
+    double lam;
+    if (paramfile.empty()) {
+      // initialize rate between (0,1)
+      lam = 0.4;
+      llk = optimize(VERBOSE, MAXITER, TOLERANCE, PARAM_TOL, STEP_SIZE,
+                     subtree_sizes, root_unmeth_prob, lam, branches, states);
+      t.set_branch_lengths(branches);
+    } else {
+      read_params(VERBOSE, paramfile, root_unmeth_prob, lam, t);
+      t.get_branch_lengths(branches);
+      llk = tree_loglikelihood(subtree_sizes, root_unmeth_prob, lam,
+                               branches, states);
+    }
 
     /**************************************************************************/
     /**********  SET INTERNAL NODES STATES ************************************/
@@ -1641,18 +1690,17 @@ main(int argc, const char **argv) {
     std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
 
     if (!NODEMAP) {
-      if (VERBOSE)
-        cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
+
       vector<string> bestpatterns;
-      tree_pattern_probs_best(subtree_sizes, root_unmeth_prob, lam, branches,
-                              states, bestpatterns);
-      write_patterns(out, t, lam, root_unmeth_prob, sites, bestpatterns);
+      tree_pattern_probs_best(VERBOSE, subtree_sizes, root_unmeth_prob, lam,
+                              branches, states, bestpatterns);
+      write_patterns(out, t, lam, root_unmeth_prob, llk, sites, bestpatterns);
     }
     else {
       if (VERBOSE)
-        cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
-      tree_pattern_probs(subtree_sizes, root_unmeth_prob, lam, branches, states);
-      write_states(out, t, lam, root_unmeth_prob, sites, states);
+        tree_pattern_probs(VERBOSE, subtree_sizes, root_unmeth_prob,
+                           lam, branches, states);
+      write_states(out, t, lam, root_unmeth_prob, llk, sites, states);
     }
 
   }
