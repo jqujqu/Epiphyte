@@ -1319,7 +1319,7 @@ optimize_branch(const bool VERBOSE,
 
 
 
-static void
+double
 optimize(const bool VERBOSE, const size_t MAXITER, const double TOLERANCE,
          const double paramtol, const double stepsize,
          const vector<size_t> &subtree_sizes,
@@ -1374,17 +1374,17 @@ optimize(const bool VERBOSE, const size_t MAXITER, const double TOLERANCE,
       cerr << "[branch" << i << "]\t" << branches[i] << endl;
     cerr << "[Log-likelihood]" << "\t" << llk << endl;
   }
+  return llk;
 }
 
 
 static void
-write_states(const string &outfile,
+write_states(std::ostream &out,
              const PhyloTreePreorder &t,
              const double lam,
              const double root_unmeth_prob,
              const vector<Site> &sites,
              const vector<vector<double> > &states) {
-  std::ofstream out(outfile.c_str());
   const size_t nsites = sites.size();
   const size_t n_species = states.size();
   out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
@@ -1399,13 +1399,12 @@ write_states(const string &outfile,
 
 
 static void
-write_patterns(const string &outfile,
+write_patterns(std::ostream &out,
                const PhyloTreePreorder &t,
                const double lam,
                const double root_unmeth_prob,
                const vector<Site> &sites,
                const vector<string> &patterns) {
-  std::ofstream out(outfile.c_str());
   const size_t nsites = sites.size();
   out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
       << "\tRoot unmeth prob = " << root_unmeth_prob << endl;
@@ -1511,20 +1510,23 @@ main(int argc, const char **argv) {
     double STEP_SIZE = 0.1;
 
     string outfile;
+    string paramfile;
     /************************* COMMAND LINE OPTIONS ***************************/
     OptionParser opt_parse(strip_path(argv[0]), "test functionality for "
                            "estimating phylo-epigenomic parameters ",
                            "assuming independent sites"
                            "<newick> <meth-tab>");
-    opt_parse.add_opt("out", 'o', "output file (default: stdout)",
-                      false, outfile);
     opt_parse.add_opt("counts", 'c', "meth-tab contains read counts instead"
                       "of state probability (default: false)", false, COUNT);
+    opt_parse.add_opt("params", 'p', "use parameters from file and skip optimization",
+                      false, paramfile);
     opt_parse.add_opt("iteration", 'i', "max iteration (default: 10)",
                       false, MAXITER);
     opt_parse.add_opt("nodemap", 'n', "output  MAP states at each node"
-                      "instead of most likely methylation patterns (default: false)",
-                      false, NODEMAP);
+                      "instead of most likely methylation patterns"
+                      "(default: false)", false, NODEMAP);
+    opt_parse.add_opt("out", 'o', "output file (default: stdout)",
+                      false, outfile);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     vector<string> leftover_args;
@@ -1627,26 +1629,30 @@ main(int argc, const char **argv) {
 
     // initialize rate between (0,1)
     double lam = 0.4;
-    optimize(VERBOSE, MAXITER, TOLERANCE, PARAM_TOL, STEP_SIZE,
-             subtree_sizes, root_unmeth_prob, lam, branches, states);
+    double llk = optimize(VERBOSE, MAXITER, TOLERANCE, PARAM_TOL, STEP_SIZE,
+                          subtree_sizes, root_unmeth_prob, lam, branches, states);
     t.set_branch_lengths(branches);
 
 
     /**************************************************************************/
     /**********  SET INTERNAL NODES STATES ************************************/
+    std::ofstream of;
+    if (!outfile.empty()) of.open(outfile.c_str());
+    std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
+
     if (!NODEMAP) {
       if (VERBOSE)
         cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
       vector<string> bestpatterns;
       tree_pattern_probs_best(subtree_sizes, root_unmeth_prob, lam, branches,
                               states, bestpatterns);
-      write_patterns(outfile, t, lam, root_unmeth_prob, sites, bestpatterns);
+      write_patterns(out, t, lam, root_unmeth_prob, sites, bestpatterns);
     }
     else {
       if (VERBOSE)
         cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
       tree_pattern_probs(subtree_sizes, root_unmeth_prob, lam, branches, states);
-      write_states(outfile, t, lam, root_unmeth_prob, sites, states);
+      write_states(out, t, lam, root_unmeth_prob, sites, states);
     }
 
   }
