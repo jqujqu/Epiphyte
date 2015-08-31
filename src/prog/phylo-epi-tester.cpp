@@ -1103,16 +1103,12 @@ log_sum_log(const double p, const double q) {
 
 
 static void
-tree_pattern_probs_best(const bool VERBOSE,
-                        const vector<size_t> &subtree_sizes,
+tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
                         const double root_unmeth_prob,
                         const double rate,
                         const vector<double> &branches,
                         const vector<vector<double> > &states,
                         vector<string> &best_patterns) {
-
-  if (VERBOSE)
-    cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
 
   const size_t nsites = states[0].size();
   for (size_t pos = 0; pos < nsites; ++pos) {
@@ -1129,15 +1125,11 @@ tree_pattern_probs_best(const bool VERBOSE,
 
 
 static void
-tree_pattern_probs(const bool VERBOSE,
-                   const vector<size_t> &subtree_sizes,
+tree_pattern_probs(const vector<size_t> &subtree_sizes,
                    const double root_unmeth_prob,
                    const double rate,
                    const vector<double> &branches,
                    vector<vector<double> > &states) {
-
-  if (VERBOSE)
-    cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
 
   const size_t nsites = states[0].size();
   const size_t treesize = subtree_sizes[0];
@@ -1690,16 +1682,17 @@ main(int argc, const char **argv) {
     std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
 
     if (!NODEMAP) {
-
+      if (VERBOSE)
+        cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
       vector<string> bestpatterns;
-      tree_pattern_probs_best(VERBOSE, subtree_sizes, root_unmeth_prob, lam,
+      tree_pattern_probs_best(subtree_sizes, root_unmeth_prob, lam,
                               branches, states, bestpatterns);
       write_patterns(out, t, lam, root_unmeth_prob, llk, sites, bestpatterns);
-    }
-    else {
+    } else {
       if (VERBOSE)
-        tree_pattern_probs(VERBOSE, subtree_sizes, root_unmeth_prob,
-                           lam, branches, states);
+        cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
+      tree_pattern_probs(subtree_sizes, root_unmeth_prob,
+                         lam, branches, states);
       write_states(out, t, lam, root_unmeth_prob, llk, sites, states);
     }
 
