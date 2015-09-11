@@ -95,7 +95,13 @@ struct Site {
   }
 };
 
-
+size_t
+distance_between_sites(Site s, Site t) {
+  size_t d = std::numeric_limits<size_t>::max();
+  if (s.chrom == t.chrom)
+    d = (t.pos > s.pos)? t.pos - s.pos : s.pos - t.pos;
+  return d;
+}
 
 void
 parse_table_line(istringstream &iss,
@@ -216,42 +222,82 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
 }
 
 static void
-separate_regions(const bool VERBOSE, const size_t desert_size,
+separate_regions(const size_t desert_size,
                  const size_t min_site_per_block,
                  vector<vector<double> > &meth, vector<Site> &sites,
                  vector<size_t> &reset_points) {
-  vector<Site> sites_copy;
-  Site last_site;
-  vector<vector<double> > meth_copy;
   const size_t nleaf = meth[0].size();
   const size_t totalsites = sites.size();
 
+  //scan desert
   //uncovered site has prob value set to -1.0
+  vector<bool> is_desert(totalsites, false);
+  for (size_t i = 0; i < nleaf; ++i) {
+    cerr << "sample" << i ;
+    size_t j = 0;
+    for (j = 0; meth[j][i] == -1.0; ++j) {
+      is_desert[j] = true;
+    }
+    assert (j< totalsites);
+
+    Site prev_obs = sites[j];
+    for (size_t k = j+1; k < totalsites; ++k) {
+      while (k < totalsites && meth[k][i]== -1.0) {
+        ++k;
+      }
+      if (k < totalsites) {
+        if (distance_between_sites(prev_obs, sites[k]) > desert_size)  {
+          for (size_t w = j+1; w < k; ++w) {
+            is_desert[w] = true;
+          }
+        }
+        j = k;
+        prev_obs = sites[k];
+      } else {
+        for (size_t w = j+1; w < totalsites; ++w)
+          is_desert[w] = true;
+      }
+    }
+    cerr << endl;
+  }
+  cerr << "Scan complete" << endl;
+  size_t good =0;
+  for (size_t i = 0; i < totalsites; ++i) {
+    if (!is_desert[i]) ++good;
+  }
+  cerr << good << " good sites" << endl;
+
+  vector<Site> sites_copy;
+  Site last_site;
+  vector<vector<double> > meth_copy;
   const double empty_cutoff = -1.0*nleaf;
 
   size_t last_block_size = 0;
   for (size_t i = 0; i < totalsites; ++i) {
-    if (accumulate(meth[i].begin(), meth[i].end(), 0.0) > empty_cutoff) {
+     if (accumulate(meth[i].begin(), meth[i].end(), 0.0) > empty_cutoff &&
+        !is_desert[i]) {
+      // Add new site
       sites_copy.push_back(sites[i]);
       meth_copy.push_back(meth[i]);
       ++ last_block_size;
+      // Maintain blocks
       if (sites_copy.size()==1) {
         reset_points.push_back(0);
-      } else if (last_site.chrom != sites_copy.back().chrom ||
-                 sites_copy.back().pos - last_site.pos > desert_size) {
-        if (last_block_size < min_site_per_block) {
+       } else if (distance_between_sites(last_site, sites[i]) > desert_size) {
+        if (last_block_size < min_site_per_block) { //remover small block
           size_t start = reset_points.back();
           sites_copy.erase(sites_copy.begin()+start, sites_copy.end() );
           meth_copy.erase(meth_copy.begin()+start, meth_copy.end());
           reset_points.pop_back();
           last_block_size =
             reset_points.empty()? 0 : meth_copy.size()-reset_points.back();
-        } else {
+        } else { //end block, and start new block
           reset_points.push_back(sites_copy.size()-1);
           last_block_size = 1;
         }
       }
-      last_site = sites_copy.back();
+      if (sites_copy.size()>0)
+        last_site = sites_copy.back();
     }
   }
   reset_points.push_back(sites_copy.size());
@@ -423,36 +469,45 @@ collect_transition_matrices(const double g0, const double g1,
   }
 }
 
+// hypo_prob: at leaf nodes only
 double loglik_tree_start(const double pi0,
                          const vector<size_t> &subtree_sizes,
                          const vector<um_mat> &time_trans_mats,
                          const string &states,
                          const vector<double> &hypo_prob) {
+  const double TOL = 1e-10;
+
   const size_t n_nodes = subtree_sizes.size();
   double llk = (states[0] == '0')? log(pi0) : log(1.0-pi0);
+  size_t leaf_count = 0;
   for (size_t i = 0; i < n_nodes; ++i) {
     if (subtree_sizes[i] > 1) {
       size_t count = 1;
       while (count < subtree_sizes[i]) {
-        size_t child_start = i + count;
+        size_t child = i + count;
         if (states[i] == '0') {
-          if (states[child_start] == '0') {
-            llk += log(time_trans_mats[child_start].u.u);
+          if (states[child] == '0') {
+            llk += log(time_trans_mats[child].u.u);
           } else {
-            llk += log(time_trans_mats[child_start].u.m);
+            llk += log(time_trans_mats[child].u.m);
           }
         } else {
-          if (states[child_start] == '0') {
-            llk +=  log(time_trans_mats[child_start].m.u);
+          if (states[child] == '0') {
+            llk +=  log(time_trans_mats[child].m.u);
           } else {
-            llk += log(time_trans_mats[child_start].m.m);
+            llk += log(time_trans_mats[child].m.m);
           }
         }
-        count += subtree_sizes[child_start];
+        count += subtree_sizes[child];
       }
     } else {
-      if (hypo_prob[i] > 0)
-        llk += (states[i] == '0') ? log(hypo_prob[i]) : log(1.0 - hypo_prob[i]);
+      double p = hypo_prob[leaf_count];
+      if (p >= 0) {
+        if (p < TOL) p = TOL;
+        if (p > 1.0-TOL) p = 1.0-TOL;
+        llk += (states[i] == '0') ? log(p) : log(1.0 - p);
+      }
+      ++ leaf_count;
     }
   }
   return llk;
@@ -478,18 +533,22 @@ double loglik_tree_transition(const double g0, const double g1,
         size_t child_start = i + count;
         if (prev_states[child_start] == '0') {
           if (cur_states[i] == '0') {
-            llk += (cur_states[child_start] == '0') ? log(prev_u_trans_mats[child_start].u.u) :
+            llk += (cur_states[child_start] == '0') ?
+              log(prev_u_trans_mats[child_start].u.u) :
               log(prev_u_trans_mats[child_start].u.m);
           } else {
-            llk += (cur_states[child_start] == '0') ? log(prev_u_trans_mats[child_start].m.u) :
+            llk += (cur_states[child_start] == '0') ?
+              log(prev_u_trans_mats[child_start].m.u) :
               log(prev_u_trans_mats[child_start].m.m);
           }
         } else {
           if (cur_states[i] == '0') {
-            llk += (cur_states[child_start] == '0') ? log(prev_m_trans_mats[child_start].u.u) :
+            llk += (cur_states[child_start] == '0') ?
+              log(prev_m_trans_mats[child_start].u.u) :
               log(prev_m_trans_mats[child_start].u.m);
           } else {
-            llk += (cur_states[child_start] == '0') ? log(prev_m_trans_mats[child_start].m.u) :
+            llk += (cur_states[child_start] == '0') ?
+              log(prev_m_trans_mats[child_start].m.u) :
               log(prev_m_trans_mats[child_start].m.m);
           }
         }
@@ -518,6 +577,16 @@ dec2binary(const size_t len, size_t n) {
   return result;
 }
 
+size_t
+binary2dec(const string states) {
+  size_t id = 0;
+  for (size_t i = 0; i < states.length(); ++i) {
+    if (states[states.length()-i-1] == '1')
+      id += pow(2, i);
+  }
+  return id;
+}
+
 static void
 hme_trans_prob_mat(const double pi0, const double g0, const double g1,
                    const double rate0,
@@ -543,16 +612,106 @@ hme_trans_prob_mat(const double pi0, const double g0, const double g1,
   }
 }
 
+// restricted transition states
+// [0]: self; [1,...,n_nodes] change at each node;
+// [n_node+1,2*n_nodes-1] change at root and each other node
+static void
+get_rstr_state_ids(const string states,
+                   vector<size_t> &rstr_state_ids) {
+  const size_t id = binary2dec(states);
+  const size_t n_nodes = states.length();
+  rstr_state_ids.push_back(id);
+  for (size_t i = 0; i < n_nodes; ++i) {
+    size_t delta =  pow(2, n_nodes-i-1);
+    size_t sign = (states[i]=='0') ? 1 : -1;
+    rstr_state_ids.push_back(id + sign*delta);
+  }
+  size_t root_delta =  pow(2, n_nodes-1);
+  size_t root_sign = (states[0]=='0') ? 1 : -1;
+  for (size_t i =1; i < n_nodes; ++i) {
+    size_t delta =  pow(2, n_nodes-i-1);
+    size_t sign = (states[i]=='0') ? 1 : -1;
+    rstr_state_ids.push_back(id + sign*delta + root_delta*root_sign);
+  }
+}
+
+
+// HME transitions correspond to at most one change in one branch,
+// and zero or one change at the root
+static void
+rstr_hme_trans_prob_mat(const double pi0, const double g0,
+                        const double g1, const double rate0,
+                        const vector<double> &branches,
+                        const vector<size_t> &subtree_sizes,
+                        const vector<um_mat> &prev_u_trans_mats,
+                        const vector<um_mat> &prev_m_trans_mats,
+                        vector<vector<size_t> > &neighbors,
+                        vector<vector<size_t> > &place_in_neighbor,
+                        vector<vector<double> > &rstr_hme_log_tpm) {
+  size_t n_nodes = subtree_sizes.size();
+  size_t n_hme = pow(2, n_nodes);
+  vector<string> all_states;
+  for (size_t i = 0; i < n_hme; ++i) {
+    all_states.push_back(dec2binary(n_nodes, i));
+  }
+
+  rstr_hme_log_tpm =
+    vector<vector<double> >(n_hme, vector<double>(2*n_nodes, 0.0));
+
+  for (size_t i = 0; i < n_hme; ++i) {
+    vector<size_t> rstr_state_ids;
+    get_rstr_state_ids(all_states[i], rstr_state_ids);
+    assert (rstr_state_ids.size()== 2*n_nodes);
+    neighbors.push_back(rstr_state_ids);
+    double row_sum = 0;
+    // Compute transition probabilities
+    for (size_t j = 0; j < rstr_state_ids.size(); ++j) {
+      const double log_prob =
+        loglik_tree_transition(g0, g1, subtree_sizes, prev_u_trans_mats,
+                               prev_m_trans_mats, all_states[i],
+                               all_states[rstr_state_ids[j]]);
+      rstr_hme_log_tpm[i][j] = log_prob;
+      row_sum = log_sum_log(row_sum, log_prob);
+    }
+    // Normalize
+    for (size_t j = 0; j < rstr_state_ids.size(); ++j) {
+      rstr_hme_log_tpm[i][j] = rstr_hme_log_tpm[i][j]-row_sum;
+      assert (rstr_hme_log_tpm[i][j] <0 );
+    }
+  }
+
+  // my slots in my neighbor's lists
+  place_in_neighbor =
+    vector<vector<size_t> >(n_hme, vector<size_t>(2*n_nodes, 0.0));
+  for (size_t i = 0; i < n_hme; ++i) {
+    for (size_t j = 0; j < neighbors[0].size(); ++j) {
+      const size_t neighbor = neighbors[i][j];
+      const size_t myid = distance(neighbors[neighbor].begin(),
+                                   find(neighbors[neighbor].begin(),
+                                        neighbors[neighbor].end(), i));
+      place_in_neighbor[i][j] = myid;
+    }
+  }
+}
 
 
 double
 evaluate_emission(const vector<size_t> &subtree_sizes,
                   const string states,
                   const vector<double> &hypo_prob) {
+  const double TOL = 1e-10;
   double llk = 0;
+  size_t leaf_count = 0;
   for (size_t i = 0; i < subtree_sizes.size(); ++i) {
-    if (subtree_sizes[i] == 1 && hypo_prob[i] > 0 && hypo_prob[i] <1)
-      llk += (states[i] == '0') ? log(hypo_prob[i]) : log(1.0-hypo_prob[i]);
+    if (subtree_sizes[i] == 1 ) {
+      double p = hypo_prob[leaf_count];
+      if (p >= 0) {
+        if (p < TOL) p = TOL;
+        if (p > 1.0-TOL) p = 1.0-TOL;
+        llk += (states[i] == '0') ? log(p) : log(1.0 - p);
+      }
+      ++ leaf_count;
+    }
   }
   return llk;
 }
@@ -567,8 +726,8 @@ forward_variables(const double pi0, const vector<size_t> &subtree_sizes,
                   const size_t pos,
                   vector<double> &forward) {
   const size_t n_hme = all_states.size();
-  forward = vector<double> (n_hme, 0.0);
   if (pos == 0) {
+    forward = vector<double> (n_hme, 0.0);
     for (size_t i = 0; i < n_hme; ++i) {
       forward[i] = loglik_tree_start(pi0, subtree_sizes, time_trans_mats,
                                      all_states[i], meth_prob_table[0]);
@@ -579,34 +738,101 @@ forward_variables(const double pi0, const vector<size_t> &subtree_sizes,
                       hme_log_tpm, meth_prob_table, pos-1, ff);
     for (size_t j = 0; j < n_hme; ++ j) {
       for (size_t i = 0; i < n_hme; ++ i) {
-        double ele = ff[i] + hme_log_tpm[i][j] +
-          evaluate_emission(subtree_sizes, all_states[j], meth_prob_table[pos]);
-        forward[j] = log_sum_log(forward[j], ele);
+        forward[j] = log_sum_log(forward[j], ff[i] + hme_log_tpm[i][j]);
       }
+      forward[j] += evaluate_emission(subtree_sizes, all_states[j],
+                                      meth_prob_table[pos]);
     }
   }
   cerr << pos << endl;
 }
 
 double
-loglikelihood_by_forward_algorithm(const double pi0,
-                                   const vector<size_t> &subtree_sizes,
-                                   const vector<string> &all_states,
-                                   const vector<um_mat> &time_trans_mats,
-                                   const vector<vector<double> > &hme_log_tpm,
-                                   const vector<vector<double> > &meth_prob_table) {
+llk_by_forward_algorithm(const double pi0,
+                         const vector<size_t> &subtree_sizes,
+                         const vector<string> &all_states,
+                         const vector<um_mat> &time_trans_mats,
+                         const vector<vector<double> > &hme_log_tpm,
+                         const vector<vector<double> > &meth_prob_table) {
   const size_t n_hme = all_states.size();
   const size_t end = meth_prob_table.size()-1;
   double llk = 0;
   vector<double> forward;
-  forward_variables(pi0, subtree_sizes, all_states, time_trans_mats, hme_log_tpm,
-                    meth_prob_table, end, forward);
+  forward_variables(pi0, subtree_sizes, all_states, time_trans_mats,
+                    hme_log_tpm, meth_prob_table, end, forward);
   for (size_t i = 0; i < n_hme; ++i ){
     llk = log_sum_log(llk, forward[i]);
   }
   return llk;
 }
 
+
+static void
+forward_variables_rstr(const double pi0, const vector<size_t> &subtree_sizes,
+                       const vector<string> &all_states,
+                       const vector<um_mat> &time_trans_mats,
+                       const vector<vector<size_t> > &neighbors,
+                       const vector<vector<size_t> > &place_in_neighbor,
+                       const vector<vector<double> > &rstr_hme_log_tpm,
+                       const vector<vector<double> > &meth_prob_table,
+                       const size_t pos,
+                       vector<double> &forward) {
+  forward.clear();
+  const size_t n_hme = all_states.size();
+  for (size_t i = 0; i < n_hme; ++i) {
+    forward.push_back(loglik_tree_start(pi0, subtree_sizes, time_trans_mats,
+                                        all_states[i], meth_prob_table[0]));
+  }
+
+  if (pos == 0) {
+    return;
+  } else {
+    for (size_t k = 0; k <= pos; ++k) {
+      if (k%10000 == 0) cerr << k <<"." ;
+      vector<double> ff;
+      ff.swap(forward);
+      assert (forward.empty());
+      for (size_t j = 0; j < n_hme; ++ j) { //current site
+        forward.push_back(0);
+        for (size_t i = 0; i < neighbors[0].size(); ++ i) { //previous site
+          assert(neighbors[j].size()==2*subtree_sizes.size());
+          const size_t prev_state_id = neighbors[j][i];
+          const size_t idx_in_neighbor = place_in_neighbor[j][i];
+          double ele = ff[prev_state_id] +
+            rstr_hme_log_tpm[prev_state_id][idx_in_neighbor] ;
+          assert (ele < 0);
+          forward[j] = log_sum_log(forward[j], ele);
+        }
+        forward[j] += evaluate_emission(subtree_sizes, all_states[j],
+                                        meth_prob_table[pos]);
+      }
+    }
+  }
+}
+
+
+double
+llk_by_rstr_forward_algorithm(const double pi0,
+                              const vector<size_t> &subtree_sizes,
+                              const vector<string> &all_states,
+                              const vector<um_mat> &time_trans_mats,
+                              const vector<vector<size_t> > &neighbors,
+                              const vector<vector<size_t> > &place_in_neighbor,
+                              const vector<vector<double> > &rstr_hme_log_tpm,
+                              const vector<vector<double> > &meth_prob_table) {
+  const size_t n_hme = all_states.size();
+  const size_t end = meth_prob_table.size()-1;
+  double llk = 0;
+  vector<double> forward;
+  cerr << "[Computing likelihood]" << endl;
+  forward_variables_rstr(pi0, subtree_sizes, all_states, time_trans_mats,
+                         neighbors, place_in_neighbor, rstr_hme_log_tpm,
+                         meth_prob_table, end, forward);
+  for (size_t i = 0; i < n_hme; ++i ){
+    llk = log_sum_log(llk, forward[i]);
+  }
+  return llk;
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -698,7 +924,6 @@ main(int argc, const char **argv) {
            << meth_table_species.size() << ")" << endl;
 
 
-
     /**************************************************************************/
     /**********  ENSURE METH DATA AND TREE INFO IS IN SYNC ********************/
     if (meth_table_species.size() != n_leaves)
@@ -711,12 +936,22 @@ main(int argc, const char **argv) {
       cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
     }
 
-    cerr << "Read in total " << sites.size() << " sites" << endl;
+    if (VERBOSE)
+      cerr << "Read in total " << sites.size() << " sites" << endl
+           << "Separating sites" << endl;
     vector<size_t> reset_points;
-    separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
+    separate_regions(desert_size, minCpG, meth_prob_table,
                      sites, reset_points);
-    cerr << "After filtering: " << sites.size()
-         << "in " << reset_points.size() << "blocks" << endl;
+    if (VERBOSE)
+      cerr << "After filtering: " << sites.size()
+           << "in " << reset_points.size() << "blocks" << endl;
+
+    const size_t n_nodes = subtree_sizes.size();
+    const size_t n_hme = pow(2,n_nodes);
+    vector<string> all_states;
+    for (size_t i = 0; i < n_hme; ++i) {
+      all_states.push_back(dec2binary(n_nodes, i));
+    }
 
     //test transition probabilities.
     double g0 = 0.9;
@@ -731,26 +966,54 @@ main(int argc, const char **argv) {
                                 time_trans_mats, prev_u_trans_mats,
                                 prev_m_trans_mats);
 
-    cerr << "Check Point 1" << endl;
-    vector<vector<double> > hme_log_tpm;
-    hme_trans_prob_mat(pi0, g0, g1, rate0, branches, subtree_sizes,
-                       prev_u_trans_mats, prev_m_trans_mats,
-                       hme_log_tpm);
-    cerr << "Check Point 2" << endl;
+    double llk = 0;
 
-    const size_t n_nodes = subtree_sizes.size();
-    const size_t n_hme = pow(2,n_nodes);
-    vector<string> all_states;
-    for (size_t i = 0; i < n_hme; ++i) {
-      all_states.push_back(dec2binary(n_nodes, i));
-    }
+    //// Full transition
+    // vector<vector<double> > hme_log_tpm;
+    // hme_trans_prob_mat(pi0, g0, g1, rate0, branches, subtree_sizes,
+    //                    prev_u_trans_mats, prev_m_trans_mats,
+    //                    hme_log_tpm);
 
-    double llk =
-      loglikelihood_by_forward_algorithm(pi0, subtree_sizes, all_states,
-                                         time_trans_mats, hme_log_tpm, meth_prob_table);
 
-    cerr << llk << endl;
+    // llk =
+    //   llk_by_forward_algorithm(pi0, subtree_sizes, all_states,
+    //                            time_trans_mats, hme_log_tpm, meth_prob_table);
+    // cerr << llk << endl;
 
+    ///////////////////////////////////////////////
+
+    // Restricted neighbor transition
+    vector<vector<double> > rstr_hme_log_tpm;
+    vector<vector<size_t> > neighbors;
+    vector<vector<size_t> > place_in_neighbor;
+
+    rstr_hme_trans_prob_mat(pi0, g0, g1, rate0, branches, subtree_sizes,
+                            prev_u_trans_mats, prev_m_trans_mats,
+                            neighbors, place_in_neighbor, rstr_hme_log_tpm);
+    cerr << "[Restricted trans mat done]" << endl;
+
+    cerr << "all_states size: " << all_states.size() << endl;
+    cerr << "time_trans_mats size: " << time_trans_mats.size() << endl;
+    cerr << "neighbors size: " << neighbors.size()<< endl;
+    cerr << "#neighbors: " << neighbors[0].size() << endl;
+    cerr << "place_in_neighbor dim:" << place_in_neighbor.size() << "x"
+         << place_in_neighbor[0].size() << endl;
+    cerr << "rstr_hme_log_tpm dim:" << rstr_hme_log_tpm.size()<< "x"
+         << rstr_hme_log_tpm[0].size()<< endl;
+    cerr << "meth_prob_table dim:" << meth_prob_table.size() << "x"
+         << meth_prob_table[0].size()<< endl;
+
+    //    size_t pos = meth_prob_table.size()-40306;
+    //cerr << sites[pos].chrom << "\t" << sites[pos].pos << endl;
+    //for (size_t i = 0; i < meth_prob_table[pos].size();++i){
+    //  cerr << meth_prob_table[pos][i] << "\t";
+    //}
+    //cerr << endl;
+    llk = llk_by_rstr_forward_algorithm(pi0, subtree_sizes, all_states,
+                                        time_trans_mats, neighbors,
+                                        place_in_neighbor, rstr_hme_log_tpm,
+                                        meth_prob_table);
+    cerr << "[Log-likelihood] " << llk << endl;
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
