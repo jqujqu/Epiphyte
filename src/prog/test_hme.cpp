@@ -76,6 +76,15 @@ log_sum_log(const double p, const double q) {
   return larger + log(1.0 + exp(smaller - larger));
 }
 
+double
+kronecker_delta( const size_t a, const size_t b) {
+  return (a==b) ? 1.0 : 0.0;
+}
+
+double
+sign(double val) {
+  return (val >= 0)? 1.0 : -1.0;
+}
 
 // methtab format: COL1=chr:start, COLn=HypoProb (-1 if no coverage)
 struct Site {
@@ -235,10 +244,12 @@ separate_regions(const size_t desert_size,
   for (size_t i = 0; i < nleaf; ++i) {
     cerr << "sample" << i ;
     size_t j = 0;
-    for (j = 0; meth[j][i] == -1.0; ++j) {
+    for (j = 0; j < totalsites && meth[j][i] == -1.0; ++j) {
       is_desert[j] = true;
     }
-    assert (j< totalsites);
+
+    if (j == totalsites)
+      throw SMITHLABException("No valid observation.");
 
     Site prev_obs = sites[j];
     for (size_t k = j+1; k < totalsites; ++k) {
@@ -448,6 +459,110 @@ combined_trans_prob_mat(const double g0, const double g1,
   prev_m_trans_mat.m.m = prev_m.m*time_trans_mat.m.m/mm;
 }
 
+
+void
+trans_deriv(const vector<vector<double> > &Q,
+            const vector<vector<double> > &G,
+            const double exp_branch,
+            const size_t prev,
+            const size_t anc,
+            const size_t cur,
+            const double denom,
+            const vector<vector<double> > &time_trans_mat,
+            double &d_lam, double &d_g, double &d_T) {
+
+  d_lam = exp_branch/denom*
+    (kronecker_delta(cur, 1)*G[prev][cur] -
+     G[prev][cur]*time_trans_mat[anc][cur]*
+     (G[prev][1]-G[prev][0])/denom);
+
+  if (prev == 0) {
+    d_g = time_trans_mat[anc][cur]/denom*
+      (kronecker_delta(cur, 0)*2 - 1.0 -
+       G[prev][cur]*(time_trans_mat[anc][0] -
+                     time_trans_mat[anc][1])/denom);
+  }
+  if (prev == 1) {
+    d_g = time_trans_mat[anc][cur]/denom*
+      (kronecker_delta(cur, 1)*2 - 1.0 -
+       G[prev][cur]*(time_trans_mat[anc][1] -
+                     time_trans_mat[anc][0])/denom);
+  }
+  d_T = G[prev][cur]/denom*
+    (Q[anc][cur] - time_trans_mat[anc][cur]*
+     (G[prev][0]*Q[anc][0]+G[prev][1]*Q[anc][1])/denom);
+}
+
+
+static void
+combined_trans_prob_mat_deriv(const double lam,
+                              const double g0, const double g1,
+                              const double exp_branch,
+                              const um_mat &time_trans_mat,
+                              um_mat &prev_u_trans_mat,
+                              um_mat &prev_m_trans_mat,
+                              um_mat &u_deriv_lam, um_mat &m_deriv_lam,
+                              um_mat &u_deriv_g0, um_mat &m_deriv_g1,
+                              um_mat &u_deriv_T, um_mat &m_deriv_T) {
+  // deriv: (lam, g0, g1, T)
+  vector<vector<double> > G(2,vector<double>(2,0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][1] = g1;
+  G[1][0] = 1.0 - g1;
+  vector<vector<double> > Q(2,vector<double>(2,0.0));
+  Q[0][0] = -1.0*lam;
+  Q[0][1] = lam;
+  Q[1][0] = 1.0 - lam;
+  Q[1][1] = lam - 1.0;
+
+  vector<vector<double> > time_trans_mat_copy(2,vector<double>(2,0.0));
+  time_trans_mat_copy[0][0] = time_trans_mat.u.u;
+  time_trans_mat_copy[0][1] = time_trans_mat.u.m;
+  time_trans_mat_copy[1][0] = time_trans_mat.m.u;
+  time_trans_mat_copy[1][1] = time_trans_mat.m.m;
+
+  // spatial transition probabilities
+  um_val prev_u(g0, 1.0 - g0);
+  um_val prev_m(1.0 - g1, g1);
+  // normalization denominators
+  double uu = dot(prev_u, time_trans_mat.u);
+  double um = dot(prev_u, time_trans_mat.m);
+  double mu = dot(prev_m, time_trans_mat.u);
+  double mm = dot(prev_m, time_trans_mat.m);
+  // combined transition matrix given previous site is u: anc x desc
+  prev_u_trans_mat.u.u = prev_u.u*time_trans_mat.u.u/uu;
+  prev_u_trans_mat.u.m = prev_u.m*time_trans_mat.u.m/uu;
+  prev_u_trans_mat.m.u = prev_u.u*time_trans_mat.m.u/um;
+  prev_u_trans_mat.m.m = prev_u.m*time_trans_mat.m.m/um;
+
+  trans_deriv(Q, G, exp_branch, 0, 0, 0, uu, time_trans_mat_copy,
+              u_deriv_lam.u.u, u_deriv_g0.u.u, u_deriv_T.u.u);
+  trans_deriv(Q, G, exp_branch, 0, 0, 1, um, time_trans_mat_copy,
+              u_deriv_lam.u.m, u_deriv_g0.u.m, u_deriv_T.u.m);
+  trans_deriv(Q, G, exp_branch, 0, 1, 0, mu, time_trans_mat_copy,
+              u_deriv_lam.m.u, u_deriv_g0.m.u, u_deriv_T.m.u);
+  trans_deriv(Q, G, exp_branch, 0, 1, 1, mm, time_trans_mat_copy,
+              u_deriv_lam.m.m, u_deriv_g0.m.m, u_deriv_T.m.m);
+
+  // combined transition matrix given previous site is m: anc x desc
+  prev_m_trans_mat.u.u = prev_m.u*time_trans_mat.u.u/mu;
+  prev_m_trans_mat.u.m = prev_m.m*time_trans_mat.u.m/mu;
+  prev_m_trans_mat.m.u = prev_m.u*time_trans_mat.m.u/mm;
+  prev_m_trans_mat.m.m = prev_m.m*time_trans_mat.m.m/mm;
+
+  trans_deriv(Q, G, exp_branch, 1, 0, 0, uu, time_trans_mat_copy,
+              m_deriv_lam.u.u, m_deriv_g1.u.u, m_deriv_T.u.u);
+  trans_deriv(Q, G, exp_branch, 1, 0, 1, um, time_trans_mat_copy,
+              m_deriv_lam.u.m,  m_deriv_g1.u.m, m_deriv_T.u.m);
+  trans_deriv(Q, G, exp_branch, 1, 1, 0, mu, time_trans_mat_copy,
+              m_deriv_lam.m.u, m_deriv_g1.m.u, m_deriv_T.m.u);
+  trans_deriv(Q, G, exp_branch, 1, 1, 1, mm, time_trans_mat_copy,
+              m_deriv_lam.m.m, m_deriv_g1.m.m, m_deriv_T.m.m);
+
+}
+
+
 static void
 collect_transition_matrices(const double g0, const double g1,
                             const double rate0, const vector<double> &branches,
@@ -468,6 +583,47 @@ collect_transition_matrices(const double g0, const double g1,
                             prev_u_trans_mats[i], prev_m_trans_mats[i]);
   }
 }
+
+
+static void
+collect_transition_matrices_deriv(const double g0, const double g1,
+                                  const double rate0, const vector<double> &branches,
+                                  vector<um_mat> &time_trans_mats,
+                                  vector<um_mat> &prev_u_trans_mats,
+                                  vector<um_mat> &prev_m_trans_mats,
+                                  vector<um_mat> &prev_u_trans_mats_drate,
+                                  vector<um_mat> &prev_m_trans_mats_drate,
+                                  vector<um_mat> &prev_u_trans_mats_dg0,
+                                  vector<um_mat> &prev_m_trans_mats_dg1,
+                                  vector<um_mat> &prev_u_trans_mats_dT,
+                                  vector<um_mat> &prev_m_trans_mats_dT) {
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  const size_t n_nodes = branches.size();
+  vector<double> exp_branches;
+  for (size_t i = 0; i < branches.size(); ++i) {
+    exp_branches.push_back(exp(branches[i]));
+  }
+  time_trans_mats= vector<um_mat>(n_nodes, um_mat());
+  prev_u_trans_mats = vector<um_mat>(n_nodes, um_mat());
+  prev_m_trans_mats = vector<um_mat>(n_nodes, um_mat());
+  prev_u_trans_mats_drate = vector<um_mat>(n_nodes, um_mat());
+  prev_m_trans_mats_drate = vector<um_mat>(n_nodes, um_mat());
+  prev_u_trans_mats_dg0 = vector<um_mat>(n_nodes, um_mat());
+  prev_m_trans_mats_dg1 = vector<um_mat>(n_nodes, um_mat());
+  prev_u_trans_mats_dT = vector<um_mat>(n_nodes, um_mat());
+  prev_m_trans_mats_dT = vector<um_mat>(n_nodes, um_mat());
+
+  for (size_t i = 1; i < branches.size(); ++i) {
+    temporal_trans_prob_mat(exp_branches[i], rate0, time_trans_mats[i]);
+    combined_trans_prob_mat_deriv(rate0, g0, g1, exp_branches[i],
+                                  time_trans_mats[i],
+                                  prev_u_trans_mats[i], prev_m_trans_mats[i],
+                                  prev_u_trans_mats_drate[i], prev_m_trans_mats_drate[i],
+                                  prev_u_trans_mats_dg0[i], prev_m_trans_mats_dg1[i],
+                                  prev_u_trans_mats_dT[i], prev_m_trans_mats_dT[i]);
+  }
+}
+
 
 // hypo_prob: at leaf nodes only
 double loglik_tree_start(const double pi0,
@@ -512,6 +668,77 @@ double loglik_tree_start(const double pi0,
   }
   return llk;
 }
+
+// hypo_prob: at leaf nodes only
+double
+loglik_tree_start_deriv(const double pi0, const double rate0,
+                        const vector<size_t> &subtree_sizes,
+                        const vector<double> &exp_branches,
+                        const vector<um_mat> &time_trans_mats,
+                        const string &states,
+                        const vector<double> &hypo_prob,
+                        double &d_pi, double &d_rate,
+                        vector<double> &d_T) {
+
+  const double TOL = 1e-10;
+  const size_t n_nodes = subtree_sizes.size();
+  double llk = (states[0] == '0')? log(pi0) : log(1.0-pi0);
+  size_t leaf_count = 0;
+
+  d_rate = 0;
+  d_T = vector<double>(n_nodes, 0.0);
+
+  for (size_t i = 0; i < n_nodes; ++i) {
+    if (subtree_sizes[i] > 1) {
+      size_t count = 1;
+      while (count < subtree_sizes[i]) {
+        size_t child = i + count;
+        if (states[i] == '0') {
+          if (states[child] == '0') {
+            llk += log(time_trans_mats[child].u.u);
+            d_rate += exp_branches[child]*(-1.0)/time_trans_mats[child].u.u;
+            d_T[child] = -1.0*rate0/time_trans_mats[child].u.u;
+          } else {
+            llk += log(time_trans_mats[child].u.m);
+            d_rate += exp_branches[child]/time_trans_mats[child].u.m;
+            d_T[child] = rate0/time_trans_mats[child].u.m;
+          }
+        } else {
+          if (states[child] == '0') {
+            llk +=  log(time_trans_mats[child].m.u);
+            d_rate += exp_branches[child]*(-1.0)/time_trans_mats[child].m.u;
+            d_T[child] = (1.0 - rate0)/time_trans_mats[child].m.u;
+          } else {
+            llk += log(time_trans_mats[child].m.m);
+            d_rate += exp_branches[child]/time_trans_mats[child].m.m;
+            d_T[child] = (rate0 - 1.0)/time_trans_mats[child].m.m;
+          }
+        }
+        count += subtree_sizes[child];
+      }
+    } else {
+      double p = hypo_prob[leaf_count];
+      if (p >= 0) {
+        if (p < TOL) p = TOL;
+        if (p > 1.0-TOL) p = 1.0-TOL;
+        llk += (states[i] == '0') ? log(p) : log(1.0 - p);
+      }
+      ++ leaf_count;
+    }
+  }
+
+  d_rate = d_rate*exp(llk);
+  d_pi = exp(llk)/pi0*(kronecker_delta(states[0],0)*2-1);
+  for (size_t i = 1; i < n_nodes; ++i) {
+    d_T[i] = d_T[i]*exp(llk);
+  }
+
+  return llk;
+}
+
+
+
+
 
 double loglik_tree_transition(const double g0, const double g1,
                               const vector<size_t> &subtree_sizes,
@@ -558,6 +785,117 @@ double loglik_tree_transition(const double g0, const double g1,
   }
   return llk;
 }
+
+
+double
+loglik_tree_transition_deriv(const double g0, const double g1,
+                             const vector<size_t> &subtree_sizes,
+                             const vector<um_mat> &time_trans_mats,
+                             const vector<um_mat> &prev_u_trans_mats,
+                             const vector<um_mat> &prev_m_trans_mats,
+                             const vector<um_mat> &prev_u_trans_mats_drate,
+                             const vector<um_mat> &prev_m_trans_mats_drate,
+                             const vector<um_mat> &prev_u_trans_mats_dg0,
+                             const vector<um_mat> &prev_m_trans_mats_dg1,
+                             const vector<um_mat> &prev_u_trans_mats_dT,
+                             const vector<um_mat> &prev_m_trans_mats_dT,
+                             const string prev_states,
+                             const string cur_states,
+                             double &trans_deriv_rate,
+                             double &trans_deriv_g0,
+                             double &trans_deriv_g1,
+                             vector<double> &trans_deriv_T) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  trans_deriv_T = vector<double>(n_nodes, 0.0);
+  trans_deriv_rate = 0;
+  trans_deriv_g0 = 0;
+  trans_deriv_g1 = 0;
+
+  double llk = 0;
+  if (prev_states[0] == '0') {
+    llk = (cur_states[0] == '0') ? log(g0) : log(1.0 - g0);
+    trans_deriv_g0 = (cur_states[0] == '0') ? 1.0/g0 : (-1.0)/(1.0-g0);
+  } else {
+    llk = (cur_states[0] == '0') ? log(1.0 - g1) : log(g1);
+    trans_deriv_g1 = (cur_states[0] == '0') ? (-1.0)/(1.0-g1) : 1.0/g1;
+  }
+
+  for (size_t i = 0; i < n_nodes; ++i) {
+    if (subtree_sizes[i] > 1) {
+      size_t count = 1;
+      while (count < subtree_sizes[i]) {
+        size_t child = i + count;
+        if (prev_states[child] == '0') {
+          if (cur_states[i] == '0') {
+            if (cur_states[child] == '0') {
+              llk += log(prev_u_trans_mats[child].u.u);
+              trans_deriv_T[child] = prev_u_trans_mats_dT[child].u.u/prev_u_trans_mats[child].u.u;
+              trans_deriv_rate += prev_u_trans_mats_drate[child].u.u/prev_u_trans_mats[child].u.u;
+              trans_deriv_g0 += prev_u_trans_mats_dg0[child].u.u/prev_u_trans_mats[child].u.u;
+            } else {
+              llk += log(prev_u_trans_mats[child].u.m);
+              trans_deriv_T[child] = prev_u_trans_mats_dT[child].u.m/prev_u_trans_mats[child].u.m;
+              trans_deriv_rate += prev_u_trans_mats_drate[child].u.m/prev_u_trans_mats[child].u.m;
+              trans_deriv_g0 +=prev_u_trans_mats_dg0[child].u.m/prev_u_trans_mats[child].u.m;
+            }
+          } else {
+            if (cur_states[child] == '0') {
+              llk += log(prev_u_trans_mats[child].m.u);
+              trans_deriv_T[child] =prev_u_trans_mats_dT[child].m.u/prev_u_trans_mats[child].m.u;
+              trans_deriv_rate += prev_u_trans_mats_drate[child].m.u/prev_u_trans_mats[child].m.u;
+              trans_deriv_g0 += prev_u_trans_mats_dg0[child].m.u/prev_u_trans_mats[child].m.u;
+            } else {
+              llk += log(prev_u_trans_mats[child].m.m);
+              trans_deriv_T[child] = prev_u_trans_mats_dT[child].m.m/prev_u_trans_mats[child].m.m;
+              trans_deriv_rate += prev_u_trans_mats_drate[child].m.m/prev_u_trans_mats[child].m.m;
+              trans_deriv_g0 += prev_u_trans_mats_dg0[child].m.m/prev_u_trans_mats[child].m.m;
+            }
+          }
+        } else {
+          if (cur_states[i] == '0') {
+            if (cur_states[child] == '0') {
+              llk += log(prev_m_trans_mats[child].u.u);
+              trans_deriv_T[child] = prev_m_trans_mats_dT[child].u.u/prev_m_trans_mats[child].u.u;
+              trans_deriv_rate += prev_m_trans_mats_drate[child].u.u/prev_m_trans_mats[child].u.u;
+              trans_deriv_g1 += prev_m_trans_mats_dg1[child].u.u/prev_m_trans_mats[child].u.u;
+            } else {
+              llk += log(prev_m_trans_mats[child].u.m);
+              trans_deriv_T[child] = prev_m_trans_mats_dT[child].u.m/prev_m_trans_mats[child].u.m;
+              trans_deriv_rate += prev_m_trans_mats_drate[child].u.m/prev_m_trans_mats[child].u.m;
+              trans_deriv_g1 += prev_m_trans_mats_dg1[child].u.m/prev_m_trans_mats[child].u.m;
+            }
+          } else {
+            if (cur_states[child] == '0') {
+              llk += log(prev_m_trans_mats[child].m.u);
+              trans_deriv_T[child] = prev_m_trans_mats_dT[child].m.u/prev_m_trans_mats[child].m.u;
+              trans_deriv_rate += prev_m_trans_mats_drate[child].m.u/prev_m_trans_mats[child].m.u;
+              trans_deriv_g1 += prev_m_trans_mats_dg1[child].m.u/prev_m_trans_mats[child].m.u;
+            } else {
+              llk += log(prev_m_trans_mats[child].m.m);
+              trans_deriv_T[child] = prev_m_trans_mats_dT[child].m.m/prev_m_trans_mats[child].m.m;
+              trans_deriv_rate += prev_m_trans_mats_drate[child].m.m/prev_m_trans_mats[child].m.m;
+              trans_deriv_g1 += prev_m_trans_mats_dg1[child].m.m/prev_m_trans_mats[child].m.m;
+            }
+          }
+        }
+        count += subtree_sizes[child];
+      }
+    }
+  }
+
+  trans_deriv_rate = trans_deriv_rate*exp(llk);
+  trans_deriv_g0 = trans_deriv_g0*exp(llk);
+  trans_deriv_g1 = trans_deriv_g1*exp(llk);
+  for (size_t i = 1; i < n_nodes; ++i) {
+    trans_deriv_T[i] = trans_deriv_T[i]*exp(llk);
+  }
+
+  return llk;
+}
+
+
+
 
 
 string
@@ -611,6 +949,55 @@ hme_trans_prob_mat(const double pi0, const double g0, const double g1,
     }
   }
 }
+
+
+static void
+hme_trans_prob_mat_deriv(const double g0, const double g1,
+                         const double rate0,
+                         const vector<double> &branches,
+                         const vector<size_t> &subtree_sizes,
+                         const vector<um_mat> &time_trans_mats,
+                         const vector<um_mat> &prev_u_trans_mats,
+                         const vector<um_mat> &prev_m_trans_mats,
+                         const vector<um_mat> &prev_u_trans_mats_drate,
+                         const vector<um_mat> &prev_m_trans_mats_drate,
+                         const vector<um_mat> &prev_u_trans_mats_dg0,
+                         const vector<um_mat> &prev_m_trans_mats_dg1,
+                         const vector<um_mat> &prev_u_trans_mats_dT,
+                         const vector<um_mat> &prev_m_trans_mats_dT,
+                         vector<vector<double> > &hme_log_tpm,
+                         vector<vector<double> > &hme_trans_drate,
+                         vector<vector<double> > &hme_trans_dg0,
+                         vector<vector<double> > &hme_trans_dg1,
+                         vector<vector<vector<double> > > &hme_trans_dT) {
+  size_t n_nodes = subtree_sizes.size();
+  size_t n_hme = pow(2, n_nodes);
+  hme_log_tpm = vector<vector<double> >(n_hme, vector<double>(n_hme, 0.0));
+  hme_trans_dg0 = vector<vector<double> >(n_hme, vector<double>(n_hme, 0.0));
+  hme_trans_dg1 = vector<vector<double> >(n_hme, vector<double>(n_hme, 0.0));
+  hme_trans_drate = vector<vector<double> >(n_hme, vector<double>(n_hme, 0.0));
+  hme_trans_dT = vector<vector<vector<double> > >(n_hme, vector<vector<double> >(n_hme, vector<double>(n_nodes, 0.0)));
+
+  vector<string> all_states;
+  for (size_t i = 0; i < n_hme; ++i) {
+    all_states.push_back(dec2binary(n_nodes, i));
+  }
+
+  for (size_t i = 0; i < n_hme; ++i) {
+    for (size_t j = 0; j < n_hme; ++j) {
+      hme_log_tpm[i][j] =
+        loglik_tree_transition_deriv(g0, g1, subtree_sizes,time_trans_mats,
+                                     prev_u_trans_mats, prev_m_trans_mats,
+                                     prev_u_trans_mats_drate, prev_m_trans_mats_drate,
+                                     prev_u_trans_mats_dg0, prev_m_trans_mats_dg1,
+                                     prev_u_trans_mats_dT, prev_m_trans_mats_dT,
+                                     all_states[i], all_states[j], hme_trans_drate[i][j],
+                                     hme_trans_dg0[i][j], hme_trans_dg1[i][j],
+                                     hme_trans_dT[i][j]);
+    }
+  }
+}
+
 
 // restricted transition states
 // [0]: self; [1,...,n_nodes] change at each node;
@@ -726,8 +1113,8 @@ forward_variables(const double pi0, const vector<size_t> &subtree_sizes,
                   const size_t pos,
                   vector<double> &forward) {
   const size_t n_hme = all_states.size();
+  forward = vector<double> (n_hme, 0.0);
   if (pos == 0) {
-    forward = vector<double> (n_hme, 0.0);
     for (size_t i = 0; i < n_hme; ++i) {
       forward[i] = loglik_tree_start(pi0, subtree_sizes, time_trans_mats,
                                      all_states[i], meth_prob_table[0]);
@@ -744,8 +1131,147 @@ forward_variables(const double pi0, const vector<size_t> &subtree_sizes,
                                       meth_prob_table[pos]);
     }
   }
-  cerr << pos << endl;
+  if (pos %1000 == 0) cerr << ".";
 }
+
+// val= log[abs(exp(p)*sign(p) + exp(q)*sign(q))]
+static void
+log_sum_log_sign(const double p, const double sign_p,
+                 const double q, const double sign_q,
+                 double &val, double &sign_val) {
+  if (p == 0) {
+    val= q;
+    sign_val = sign(sign_q);
+  } else if (q == 0) {
+    val= p;
+    sign_val = sign(sign_p);
+  } else {
+    const double larger = (p > q) ? p : q;
+    const double smaller = (p > q) ? q : p;
+    sign_val = (p > q)? sign(sign_p) : sign(sign_q);
+    if (sign_p*sign_q > 0) {
+      val = larger + log(1.0 + exp(smaller - larger));
+    } else {
+      val = larger + log(1.0 - exp(smaller - larger));
+    }
+  }
+}
+
+
+
+static void
+forward_variables_deriv(const double pi0, const double rate0,
+                        const vector<size_t> &subtree_sizes,
+                        const vector<double> &exp_branches,
+                        const vector<string> &all_states,
+                        const vector<um_mat> &time_trans_mats,
+                        const vector<vector<double> > &hme_log_tpm,
+                        const vector<vector<double> > &hme_trans_drate,
+                        const vector<vector<double> > &hme_trans_dg0,
+                        const vector<vector<double> > &hme_trans_dg1,
+                        const vector<vector<vector<double> > > &hme_trans_dT,
+                        const vector<vector<double> > &meth_prob_table,
+                        const size_t pos,
+                        vector<double> &forward,
+                        vector<vector<double> > &log_forward_deriv,
+                        vector<vector<double> > &log_forward_deriv_sign) {
+  const size_t n_hme = all_states.size();
+  const size_t n_nodes = subtree_sizes.size();
+  forward = vector<double> (n_hme, 0.0);
+  log_forward_deriv = vector<vector<double> >(n_hme, vector<double>(n_nodes+4, 0.0));
+  log_forward_deriv_sign = vector<vector<double> >(n_hme, vector<double>(n_nodes+4, 2.0));
+
+  if (pos == 0) {
+    for (size_t i = 0; i < n_hme; ++i) {
+      double d_pi, d_rate;
+      vector<double> d_T;
+      forward[i] = loglik_tree_start_deriv(pi0, rate0, subtree_sizes, exp_branches,
+                                           time_trans_mats, all_states[i],
+                                           meth_prob_table[0], d_pi, d_rate, d_T);
+      log_forward_deriv[i][0] = log(abs(d_pi));
+      log_forward_deriv_sign[i][0] = sign(d_pi);
+      log_forward_deriv[i][1] = log(abs(d_rate));
+      log_forward_deriv_sign[i][1] = sign(d_rate);
+      for (size_t j = 1; j < n_nodes; ++j) {
+        log_forward_deriv[i][4+j] = log(abs(d_T[j]));
+        log_forward_deriv_sign[i][4+j] = sign(d_T[j]);
+      }
+    }
+  } else {
+    vector<double> ff;
+    vector<vector<double> > ffdd;
+    vector<vector<double> > ffdd_sign;
+    forward_variables_deriv(pi0, rate0, subtree_sizes, exp_branches,
+                            all_states, time_trans_mats, hme_log_tpm, hme_trans_drate,
+                            hme_trans_dg0, hme_trans_dg1,  hme_trans_dT,
+                            meth_prob_table, pos-1, ff, ffdd, ffdd_sign);
+
+    for (size_t j = 0; j < n_hme; ++ j) {
+      for (size_t i = 0; i < n_hme; ++ i) {
+        forward[j] = log_sum_log(forward[j], ff[i] + hme_log_tpm[i][j]);
+
+        double val, val_sign;
+        // d_pi0
+        log_sum_log_sign(log_forward_deriv[j][0], log_forward_deriv_sign[j][0],
+                         ffdd[i][0] + hme_log_tpm[i][j], sign(ffdd[i][0]),
+                         val, val_sign);
+        log_forward_deriv[j][0] = val;
+        log_forward_deriv_sign[j][0] = val_sign;
+
+        double inc, inc_sign;
+        //d_rate
+        log_sum_log_sign(ffdd[i][1]+hme_log_tpm[i][j], ffdd_sign[i][1],
+                         ff[i]+ log(abs(hme_trans_drate[i][j])), sign(hme_trans_drate[i][j]),
+                         inc, inc_sign);
+        log_sum_log_sign(log_forward_deriv[j][1], log_forward_deriv_sign[j][1],
+                         inc, inc_sign, val, val_sign);
+        log_forward_deriv[j][1] = val;
+        log_forward_deriv_sign[j][1] = val_sign;
+
+        // d_g0
+        log_sum_log_sign(ffdd[i][2] + hme_log_tpm[i][j], ffdd_sign[i][2],
+                         ff[i] + log(abs(hme_trans_dg0[i][j])), sign(hme_trans_dg0[i][j]),
+                         inc, inc_sign);
+        log_sum_log_sign(log_forward_deriv[j][2], log_forward_deriv_sign[j][2],
+                         inc, inc_sign, val, val_sign);
+        log_forward_deriv[j][2] = val;
+        log_forward_deriv_sign[j][2] = val_sign;
+
+        // d_g1
+        log_sum_log_sign(ffdd[i][3] + hme_log_tpm[i][j], ffdd_sign[i][3],
+                         ff[i] + log(abs(hme_trans_dg1[i][j])), sign(hme_trans_dg1[i][j]),
+                         inc, inc_sign);
+        log_sum_log_sign(log_forward_deriv[j][3], log_forward_deriv_sign[j][3],
+                         inc, inc_sign, val, val_sign);
+        log_forward_deriv[j][3] = val;
+        log_forward_deriv_sign[j][3] = val_sign;
+
+        // d_T
+        for (size_t k = 1; k < n_nodes; ++k) {
+          log_sum_log_sign(ffdd[i][4+k] + hme_log_tpm[i][j], ffdd_sign[i][4+k],
+                           ff[i] + log(abs(hme_trans_dT[i][j][k])), sign(hme_trans_dT[i][j][k]),
+                           inc, inc_sign);
+          log_sum_log_sign(log_forward_deriv[j][4+k], log_forward_deriv_sign[j][4+k],
+                           inc, inc_sign, val, val_sign);
+          log_forward_deriv[j][4+k] = val;
+          log_forward_deriv_sign[j][4+k] = val_sign;
+        }
+      }
+      double emi_log_prob = evaluate_emission(subtree_sizes, all_states[j], meth_prob_table[pos]);
+      forward[j] += emi_log_prob;
+      for (size_t k = 0; k < n_nodes+4; ++k) {
+        if (k!=4)
+          log_forward_deriv[j][k] += emi_log_prob;
+      }
+      // for (size_t k = 0; k < n_nodes+4; ++k){
+      //   cerr << pos << "\tforward_deriv[" << j << "," << k <<"]"
+      //        << log_forward_deriv[j][k] << "\t" << log_forward_deriv_sign[j][k] << endl;
+      // }
+    }
+  }
+  if (pos %1000 == 0) cerr << ".";
+}
+
 
 double
 llk_by_forward_algorithm(const double pi0,
@@ -762,6 +1288,53 @@ llk_by_forward_algorithm(const double pi0,
                     hme_log_tpm, meth_prob_table, end, forward);
   for (size_t i = 0; i < n_hme; ++i ){
     llk = log_sum_log(llk, forward[i]);
+  }
+  return llk;
+}
+
+
+double
+llk_by_forward_algorithm_deriv(const double pi0, const double rate0,
+                               const vector<size_t> &subtree_sizes,
+                               const vector<double> &exp_branches,
+                               const vector<string> &all_states,
+                               const vector<um_mat> &time_trans_mats,
+                               const vector<vector<double> > &hme_log_tpm,
+                               const vector<vector<double> > &hme_trans_drate,
+                               const vector<vector<double> > &hme_trans_dg0,
+                               const vector<vector<double> > &hme_trans_dg1,
+                               const vector<vector<vector<double> > > &hme_trans_dT,
+                               const vector<vector<double> > &meth_prob_table,
+                               vector<double> &deriv) {
+
+  const size_t n_hme = all_states.size();
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t end = meth_prob_table.size()-1;
+  double llk = 0;
+  vector<double> forward;
+  vector<vector<double> > forward_deriv;
+  vector<vector<double> > forward_deriv_sign;
+
+  forward_variables_deriv(pi0, rate0, subtree_sizes, exp_branches, all_states,
+                          time_trans_mats, hme_log_tpm, hme_trans_drate,
+                          hme_trans_dg0, hme_trans_dg1, hme_trans_dT,
+                          meth_prob_table, end, forward, forward_deriv, forward_deriv_sign);
+
+  deriv = vector<double>(n_nodes+4, 0.0);
+  vector<double>deriv_sign(n_nodes+4, 1.0);
+  double val, val_sign;
+  for (size_t i = 0; i < n_hme; ++i ){
+    llk = log_sum_log(llk, forward[i]);
+    for (size_t j = 0; j < deriv.size(); ++j){
+      log_sum_log_sign(deriv[j], deriv_sign[j], forward_deriv[i][j], forward_deriv_sign[i][j],
+                       val, val_sign);
+      deriv[j] = val;
+      deriv_sign[j] = val_sign;
+    }
+  }
+  for (size_t i = 0; i < deriv.size(); ++i) {
+    if (i!=4)
+      deriv[i] = exp(deriv[i]-llk)*deriv_sign[i];
   }
   return llk;
 }
@@ -784,9 +1357,7 @@ forward_variables_rstr(const double pi0, const vector<size_t> &subtree_sizes,
                                         all_states[i], meth_prob_table[0]));
   }
 
-  if (pos == 0) {
-    return;
-  } else {
+  if (pos > 0) {
     for (size_t k = 0; k <= pos; ++k) {
       if (k%10000 == 0) cerr << k <<"." ;
       vector<double> ff;
@@ -954,34 +1525,76 @@ main(int argc, const char **argv) {
     }
 
     //test transition probabilities.
-    double g0 = 0.9;
-    double g1 = 0.95;
-    double rate0 = 0.3;
     double pi0 = 0.2;
+    double rate0 = 0.6;
+    double g0 = 0.9;
+    double g1 = 0.9;
+    double llk = 0;
 
     vector<um_mat> time_trans_mats;
     vector<um_mat> prev_u_trans_mats;
     vector<um_mat> prev_m_trans_mats;
+
     collect_transition_matrices(g0, g1, rate0, branches,
                                 time_trans_mats, prev_u_trans_mats,
                                 prev_m_trans_mats);
+    // Full transition
+    cerr << "----FULL TRANSITION----" << endl;
+    vector<vector<double> > hme_log_tpm;
+    hme_trans_prob_mat(pi0, g0, g1, rate0, branches, subtree_sizes,
+                       prev_u_trans_mats, prev_m_trans_mats, hme_log_tpm);
+    llk = llk_by_forward_algorithm(pi0, subtree_sizes, all_states,
+                                   time_trans_mats, hme_log_tpm, meth_prob_table);
+    cerr << "loglikelihood=" << llk << endl;
 
-    double llk = 0;
+    // Full transition with derivatives
+    cerr << "----FULL TRANSITION----WITH-DERIVATIVES" << endl;
+    vector<um_mat> prev_u_trans_mats_drate;
+    vector<um_mat> prev_m_trans_mats_drate;
+    vector<um_mat> prev_u_trans_mats_dg0;
+    vector<um_mat> prev_m_trans_mats_dg1;
+    vector<um_mat> prev_u_trans_mats_dT;
+    vector<um_mat> prev_m_trans_mats_dT;
 
-    //// Full transition
-    // vector<vector<double> > hme_log_tpm;
-    // hme_trans_prob_mat(pi0, g0, g1, rate0, branches, subtree_sizes,
-    //                    prev_u_trans_mats, prev_m_trans_mats,
-    //                    hme_log_tpm);
+    cerr <<"[collect_transition_matrices_deriv]" << endl;
+    collect_transition_matrices_deriv(g0, g1, rate0, branches, time_trans_mats,
+                                      prev_u_trans_mats, prev_m_trans_mats,
+                                      prev_u_trans_mats_drate, prev_m_trans_mats_drate,
+                                      prev_u_trans_mats_dg0, prev_m_trans_mats_dg1,
+                                      prev_u_trans_mats_dT, prev_m_trans_mats_dT);
+    cerr << "[done]" << endl;
+    vector<vector<double> > hme_trans_dg0;
+    vector<vector<double> > hme_trans_dg1;
+    vector<vector<double> > hme_trans_drate;
+    vector<vector<vector<double> > > hme_trans_dT;
+    cerr << "[hme_trans_prob_mat_deriv]" << endl;
+    hme_trans_prob_mat_deriv(g0, g1, rate0, branches, subtree_sizes, time_trans_mats,
+                             prev_u_trans_mats, prev_m_trans_mats,
+                             prev_u_trans_mats_drate, prev_m_trans_mats_drate,
+                             prev_u_trans_mats_dg0, prev_m_trans_mats_dg1,
+                             prev_u_trans_mats_dT, prev_m_trans_mats_dT,
+                             hme_log_tpm,  hme_trans_drate,
+                             hme_trans_dg0, hme_trans_dg1, hme_trans_dT);
+    cerr << "[done]" << endl;
+    vector<double> exp_branches;
+    for (size_t i = 0; i < branches.size(); ++i) {
+      exp_branches.push_back(exp(branches[i]));
+    }
 
+    vector<double> deriv;
+    cerr << "[llk_by_forward_algorithm_deriv]" << endl;
+    llk = llk_by_forward_algorithm_deriv(pi0, rate0, subtree_sizes, exp_branches,
+                                         all_states, time_trans_mats, hme_log_tpm,
+                                         hme_trans_drate, hme_trans_dg0, hme_trans_dg1,
+                                         hme_trans_dT, meth_prob_table, deriv);
 
-    // llk =
-    //   llk_by_forward_algorithm(pi0, subtree_sizes, all_states,
-    //                            time_trans_mats, hme_log_tpm, meth_prob_table);
-    // cerr << llk << endl;
+    for (size_t i = 0; i < deriv.size(); ++i) {
+      cerr << "d[" << i << "]" << deriv[i] << endl;
+    }
+
+    cerr << llk << endl;
 
     ///////////////////////////////////////////////
-
     // Restricted neighbor transition
     vector<vector<double> > rstr_hme_log_tpm;
     vector<vector<size_t> > neighbors;
@@ -1003,12 +1616,6 @@ main(int argc, const char **argv) {
     cerr << "meth_prob_table dim:" << meth_prob_table.size() << "x"
          << meth_prob_table[0].size()<< endl;
 
-    //    size_t pos = meth_prob_table.size()-40306;
-    //cerr << sites[pos].chrom << "\t" << sites[pos].pos << endl;
-    //for (size_t i = 0; i < meth_prob_table[pos].size();++i){
-    //  cerr << meth_prob_table[pos][i] << "\t";
-    //}
-    //cerr << endl;
     llk = llk_by_rstr_forward_algorithm(pi0, subtree_sizes, all_states,
                                         time_trans_mats, neighbors,
                                         place_in_neighbor, rstr_hme_log_tpm,
