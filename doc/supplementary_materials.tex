@@ -1,0 +1,222 @@
+\documentclass[11pt]{article}
+
+\usepackage{fullpage,times,pgf,amsmath}
+\usepackage{authblk}
+
+\newcommand{\child}[1]{\ensuremath{\mathrm{child}(#1)}}
+\newcommand{\tsum}{{\textstyle\sum}}
+\newcommand{\tprod}{{\textstyle\prod}}
+
+
+\title{Supplementary Material: Evolution of mammalian sperm methylomes}
+\date{}
+\author{Jenny Qu \and Egor Dolzhenko \and Other People \and Andrew D Smith}
+%\affil[1]{Molecular and Computational Biology Section, Division
+ %         of Biological Sciences, University of Southern California,
+  %        Los Angeles, CA, 90089, United States of America}
+
+\begin{document}
+
+%% \maketitle
+
+%% \section*{Definitions for enhancers}
+
+
+
+%% \section*{Defining mutually orthologous regions for a set of species}
+
+
+
+%% \section*{Identifying HMRs that appear to be constant across cell types in human and mouse}
+
+%% We require a set of HMRs that we can assume have constant size between
+%% cell types, when they exist. We have this information for mouse and
+%% for human from multiple somatic cell types. For chimp we also have a
+%% few more.
+
+%% \section*{Mapping sites between pairs of species}
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{A phylo-epigenomic model with independent sites}
+
+A methylome is a sequence of CpG sites with each site displaying a
+methylation state from the set $\{0,1\}$.
+%%% ADS: not sure if the statement below can be considered accurate or
+%%% an assumption.
+
+%%% the Markov process
+Our goal here is to model the evolution of DNA methylation states
+between species. We first focus on a single-site, and then extend the
+model to multiple sites but for which epigenomic evolution is assumed
+to be independent. An individual CpG site has a methylation state that
+follows a continuous-time Markov process over the state space $\{0,
+1\}$, representing hypermethylated and hypomethylated states. Let
+$\pi=(\pi_0, \pi_1)$ be the initial distribution for the process, and
+let the transition rate matrix matrix be
+\[
+Q=\begin{bmatrix}
+-\lambda & \lambda\\
+    \eta & -\eta
+\end{bmatrix}.
+\]
+In a continuous-time Markov process the transition probability between
+two time points separated by time $t$ is determined by two terms
+$(t(\lambda + \eta), \lambda/\eta)$. The transition probability matrix
+is
+\[
+P(t) = \exp(Qt) =
+\begin{bmatrix}
+  1 - \lambda T & \lambda T \\
+         \eta T & 1 - \eta T
+\end{bmatrix},
+\]
+where $T = 1 - \exp(-t)$, so $T\in (0,1)$ for $t > 0$.
+
+%%% the tree and our notation
+For a given set of extant species and with an assumed set of
+phylogenetic relationships, {\it i.e.} a tree topology, we use $\{V,
+E\}$ to denote the sets of vertices and of edges in the tree. The
+model parameter space is thus
+\[
+\Theta=\{E,\lambda\},
+\]
+where $E$ represents the lengths of the edges in the phylogenetic
+tree, and $\lambda$ is the transition from hypomethylated state to
+hypermethylated state. Below we will use $u$, $v$ and $w$ to denote
+tree nodes, with $(u, v)\in E$ and $(v, w)\in E$ implicit. Let $s(u)
+\in \{0, 1\}$ denote the state of node $u$, and let $R_u$ be the set
+of methylation states at leaf nodes that are descendents of $u$.  We
+will use letters $x$ and $y$ to denote methylation states, and $x$
+will typically denote the state at the parent of the node whose state
+is represented by $y$. Finally, we use $\ell_{uv}$ to denote the
+length of edge $(u, v)\in E$.
+
+%% The likelihood is then
+%% \begin{equation}
+%% L = \Pr(X|\Theta) = \prod_{i=1}^{N} P(X_i|\Theta)
+%% \end{equation}
+
+%% Let $u$ be the probability that node $u$ has hyper-methylated state.
+%% If $u$ is a leaf node, then the probability is known beforehand; when
+%% $u$ is an internal node this probability is not generally known.
+
+%%% the tree and our notation
+For node $v$ with parent $u$ having methylation state $s(u) = x$,
+\[
+p_{x}(v) = \Pr(R_v | s(u) = x, \Theta),
+\]
+is the probability of observing states $R_v$ at terminal descendents
+of node $v$. For notational convenience we define
+\[
+q_y(v) = \left\{
+\begin{array}{ll}
+  \Pr(s(v) = y) & \mbox{if $v$ is a leaf node,} \\
+  \prod_{w\in \child{v}}  p_{y}(w) & \mbox{otherwise.} \\
+\end{array}\right.
+\]
+We can then write the probability $p_x(v)$ as the recurrence
+\[
+p_{x}(v) = \sum_{y}\Big(P(\ell_{uv})_{xy} \times q_y(v)\Big),
+\]
+where $\ell_{uv}$ is the branch length between $u$ and $v$. With node
+ $r$ representing the root of the tree, we can express the likelihood
+for the entire tree as
+%%
+\begin{equation}
+L = L(\Theta|R_r) = \Pr(R_r|\Theta) = \sum_{x}\pi_{x}q_x(r).
+\end{equation}
+This recurrence is the basis of Felsenstein's pruning algorithm for
+efficiently computing the likelihood of a tree topology, branch
+lengths and transition rate, given data at leaf nodes.
+
+\section{Derivatives required for parameter optimization}
+
+The derivative of the transition rate matrix $P(t)$ with respect to
+rate $\lambda$ is
+\[
+P_\lambda (t) = \frac{\partial}{\partial \lambda} P(t)
+= T\begin{bmatrix}
+  -1 & 1 \\
+  -1 & 1
+\end{bmatrix},
+\]
+where as above $T = 1-\exp(-t)$. The derivative of the likelhood with
+respect to $\lambda$ satisfies the recurrence relation
+\begin{equation}
+\frac{\partial p_x(v)}{\partial \lambda}
+= \sum_{y} \bigg(P_{\lambda}(\ell_{uv})_{xy} q_y(v) +
+P(\ell_{uv})_{xy} \sum_{w\in \child{v}} \frac{\partial p_{y}(w)}{\partial \lambda}\frac{q_y(v)}{p_{y}(w)}\bigg).
+\end{equation}
+Incorporating the probabilities associated with the root node $r$, the
+derivative of the likelihood over the entire tree becomes
+\begin{equation}
+  \frac{\partial}{\partial \lambda}L = \sum_{x} \pi_{x}\frac{\partial q_x(r)}{\partial \lambda}.
+\end{equation}
+
+We will also require derivatives of the likelihood with respect to the
+lengths of each tree branch. The derivative of the rate matrix with
+respect to branch length can be computed
+\[
+P_T (t) = \frac{\partial}{\partial T} P(t) = Q.
+\]
+Let $T_{uv} = 1 - \exp(-\ell_{uv})$. Then the derivative of $p_x(v)$
+for specific methylation state $x$ is
+\begin{equation}
+\frac{\partial p_x(v)}{\partial T_{uv}} =
+\sum_{y}
+\Big(P_{T_{xy}}(\ell_{uv})_{xy} q_y(v) +
+     P(\ell_{uv})_{xy}\sum_{w\in \child{v}}
+     \frac{\partial p_y(w)}{\partial T_{uv}}\frac{q_y(v)}{p_y(w)}\Big).
+\end{equation}
+When we incorporate the probabilities associated with the root node
+the derivative of the likelihood over the entire tree becomes
+\begin{equation}
+\frac{\partial}{\partial T_{uv}} L
+=\sum_{x} \pi_{x} \frac{\partial q_x(r)}{\partial T_{uv}}.
+\end{equation}
+Finally, the derivative of the likelihood with respect to the
+methylation level $\pi_0 = 1 - \pi_1$ at root node $r$ is
+\[
+\frac{\partial}{\partial \pi_0} = q_{0}(r) - q_1(r).
+\]
+
+\section{Considering multiple sites}
+
+Let $R^{(i)}$ denote the set of methylation states associated with
+terminal nodes at CpG site $i$, with $1\leq i\leq N$. Assuming the
+epigenomic states at distinct sites evolve independently according to
+a single continuous time Markov process, define
+\[
+L_i = L(\Theta|R^{(i)}_r).
+\]
+Then the likelihood for the entire sequence of sites is
+\[
+L(\Theta|R_r) = \prod_{i=1}^NL(\Theta|R^{(i)}_r).
+\]
+The relevant partial derivatives of this likelihood all have a common form:
+\begin{gather*}
+\frac{\partial L}{\partial \lambda} =
+\Big(\tprod_{i=1}^N L_i\Big)\Big(\tsum_{i=1}^N \frac{\partial L_i/\partial \lambda}{L_i}\Big),\quad
+\frac{\partial L}{\partial T_{uv}} =
+\Big(\tprod_{i=1}^N L_i\Big)\Big(\tsum_{i=1}^N \frac{\partial L_i/\partial T_{uv}}{L_i}\Big)\quad \mbox{and}\\
+\frac{\partial L}{\partial \pi_0} =
+\Big(\tprod_{i=1}^N L_i\Big)\Big(\tsum_{i=1}^N \frac{\partial L_i/\partial \pi_0}{L_i}\Big).
+\end{gather*}
+
+\bibliographystyle{plain}%namedplus}
+\bibliography{biblio}
+
+\end{document}
+
