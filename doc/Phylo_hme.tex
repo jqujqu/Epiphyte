@@ -224,18 +224,24 @@ computational complexity.
 
 \textbf{Neighbor HME} Let $N(h)=\{h'\in H: P(H_{n+1}=h'|H_n=h) > 0\}$,
 be the neighbor set of an HME $h$. We always allow self-transition,
-\textit{i.e.} $h\in N(h), \forall h\in H$. For any two HMEs, if they only
-differ by methylation state at one node, then they are neighbors. In
-addition, if two HMEs differ at root node, and differ at only one
-other node, they are neighbors.
+\textit{i.e.} $h\in N(h), \forall h\in H$. For any two HMEs, they are
+neighbors if one HME can be converted to the other HME by picking a
+subtree and forcing all nodes in the subtree to have a same
+methylation state.
 
-The neighbor relationship defined above is symmetric, \textit{i.e.} if
-$h\in N(h')$ then $h'\in N(h)$. Each HME has $2|V|$ neighbors,
-including itself. Now, the total number of possible transitions between
-HMEs is $2^{|V|}\times 2|V|$. The new transition probabilities are defined
-as below:
+By this definition, the complete hypomethylated or hypermethylated HME
+is neighbor with all HMEs. Different HMEs might have different number
+of neighbors.  The neighbor definition implies a symmetric
+relationship, \textit{i.e.} if $h\in N(h')$ then $h'\in N(h)$. The
+restricted transition probabilities are defined as below:
 $$a'_{ij} =1_{h_j\in N(h_i)} \frac{a_{ij}}{\sum_{k\in N(i)} a_{ik}}$$.
-
+The relevant partial derivatives should be recalculated as:
+\begin{gather*}
+\frac{\partial}{\partial x} a'_{ij} = 1_{h_j\in N(h_i)}
+\bigg[ \frac{\frac{\partial}{\partial x} a_{ij}}{\sum_{k\in N(i)} a_{ik}} -
+ \frac{\sum_{k\in N(i)}\frac{\partial}{\partial x} a_{ik}}{\big(\sum_{k\in N(i)} a_{ik}\big)^2 }\bigg]
+\end{gather*}
+where parameter $x\in\{\lambda, g_0, g_1\}\bigcup\{T_v:v\in V\}$.
 \bibliographystyle{plain}
 \bibliography{biblio}
 
