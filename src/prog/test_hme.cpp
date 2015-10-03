@@ -1179,7 +1179,7 @@ rstr_hme_trans_prob_mat_deriv(const vector<size_t> &subtree_sizes,
       for (size_t k = 1; k < n_nodes+4; ++k) {
         if (k !=4) {
           Logscale part1(trans_log_prob_derivs[i][id][k].logval - log_row_sum,
-                         transition_log_prob_derivs[i][id][k].symbol);
+                         trans_log_prob_derivs[i][id][k].symbol);
           Logscale part2((trans_log_probs[i][id]-log_row_sum*2) +
                          rowsum_derivs_log[k].logval,
                          rowsum_derivs_log[k].symbol);
@@ -1788,15 +1788,19 @@ fill_leaf_prob(const vector<Site> &sites,
         size_t d1 = distance_between_sites(sites[j], sites[prev]);
         size_t d2 = distance_between_sites(sites[j], sites[next]);
         if (j > prev && j < next && d1 < desert_size && d2 < desert_size) {
-          meth_prob_table[j][i] = (meth_prob_table[prev][i]*d1 +
-                                   meth_prob_table[next][i]*d2)/(d1+d2);
+          meth_prob_table[j][i] = (meth_prob_table[prev][i]*d2 +
+                                   meth_prob_table[next][i]*d1)/(d1+d2);
           ++count;
         } else if (prev < j && d1 < desert_size) {
-          meth_prob_table[j][i] = (0.5 + meth_prob_table[prev][i])/2;
+          meth_prob_table[j][i] = (0.5*d1 + meth_prob_table[prev][i]*(desert_size - d1))/desert_size;
+          assert( meth_prob_table[j][i] >= 0);
+          ++count;
+        } else if (j < next && d2 < desert_size){
+          meth_prob_table[j][i] = (0.5*d1 + meth_prob_table[next][i]*(desert_size - d2))/desert_size;
+          assert( meth_prob_table[j][i] >= 0);
           ++count;
         } else {
-          meth_prob_table[j][i] = (0.5 + meth_prob_table[next][i])/2;
-          ++count;
+          meth_prob_table[j][i] = 0.5;
         }
       }
     }
@@ -1889,15 +1893,61 @@ loglik_complete_tree(const vector<string> &states,
   }
 }
 
+// uninitialized nodes have value -1.0
+// assuming all leaves are initialized already
+static void
+init_internal_prob(const vector<size_t> &subtree_sizes,
+                   const size_t node_id,
+                   vector<double> &node_probs) {
+  size_t count = 1;
+  // Recursion
+  size_t n_children = 0;
+  double sum_children_prob = 0;
+  while (count < subtree_sizes[node_id]) {
+    const size_t child_id = node_id + count;
+    if (node_probs[child_id] < 0) {
+      init_internal_prob(subtree_sizes, child_id, node_probs);
+    }
+    count += subtree_sizes[child_id];
+    ++n_children;
+    sum_children_prob += node_probs[child_id];
+  }
+  node_probs[node_id] = sum_children_prob/n_children;
+}
+
+
 
 static void
 leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   const vector<vector<double> > &meth_prob_table,
-                  const vector<double> &params,
                   vector<vector<double> > &tree_prob_table) {
+  const size_t n_sites = meth_prob_table.size();
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_leaves = meth_prob_table[0].size();
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
-
-
+  tree_prob_table = vector<vector<double> >(n_sites, vector<double>(n_nodes, -1.0));
+  // copy leaves first
+  for (size_t i = 0; i < n_sites; ++i) {
+    for (size_t j = 0; j < n_leaves; ++j) {
+      tree_prob_table[i][leaves_preorder[j]] = meth_prob_table[i][j];
+    }
+  }
+  // initialize internal probs
+  for (size_t i = 0; i < n_sites; ++i) {
+    cerr << "site\t" << i << "\t";
+    for (size_t j = 0; j < n_nodes; ++j) {
+      cerr << tree_prob_table[i][j] << ", ";
+    }
+    cerr << endl;
+    init_internal_prob(subtree_sizes, 0, tree_prob_table[i]);
+    cerr << "    \t" << i << "\t";
+    for (size_t j = 0; j < n_nodes; ++j) {
+      cerr << tree_prob_table[i][j] << ", ";
+    }
+    cerr << endl;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2026,12 +2076,14 @@ main(int argc, const char **argv) {
         throw SMITHLABException("inconsistent species counts");
       if (!has_same_species_order(t, meth_table_species))
         throw SMITHLABException("inconsistent species names or order");
-      vector<size_t> species_in_order;
-      subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
-      for (size_t i = 0; i < species_in_order.size(); ++i) {
-        cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
-      }
 
+      if (VERBOSE) {
+        vector<size_t> species_in_order;
+        subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
+        for (size_t i = 0; i < species_in_order.size(); ++i) {
+          cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
+        }
+      }
 
       /**************************************************************************/
       /*************************  SEPARATE BY DESERTS ***************************/
@@ -2051,6 +2103,11 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "Filled probabilities at missing sites" << endl;
 
+
+      vector<vector<double> > tree_prob_table;
+      leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+      if (VERBOSE)
+        cerr << "Initialized internal probability" << endl;
 
       /**************************************************************************/
       /*************************  STARTING PARAMETERS ***************************/
