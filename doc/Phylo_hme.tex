@@ -85,7 +85,12 @@ species, $i=1,\ldots, N$. Let $O=O_1O_2\cdots O_N$ be the total
 observed methylation states at leaf nodes.  Let $S=S_1\cdots S_N$ be
 the unobserved methylation states at internal nodes.
 
-\section{Data Likelihood}
+\section{Incomplete data}
+We have observations of bisulfite read counts, or precomputed
+hypomethylation probability at leaf nodes. There is no prior
+information about the methylation states at internal nodes.
+
+\subsection{Data Likelihood}
 The above description defines a hidden Markov model over the
 space $$H=\{h\in\{0,1\}^{|V|}: \text{all possible combination of
 methylation states over the phylogenetic tree} \}.$$ Each state
@@ -101,7 +106,7 @@ $A=\{a_{ij}\}$, where
 $$a_{ij}=\Pr(h_j|h_i) = G_{r_ir_j}\prod_{(u,v)\in E}P(v_j|v_i,u_j).$$
 The data likelihood calculation can be written as
 \begin{equation}
-L = P(O|\Theta) =\sum_{H_1,\ldots, H_N\in H} \Pr(H_1)\prod_{i=1}^{N} \Pr(H_i| H_{i-1}, \Theta),
+L = P(O|\Theta) =\sum_{H_1,\ldots, H_N\in H} \Pr(H_1)\Pr(O_1|H_1)\prod_{i=1}^{N} \Pr(H_i| H_{i-1}, \Theta)\Pr(O_i|H_i),
 \end{equation}
 where $H_t$ is a HME random variable at position $t$. $H$ is the HME
 space.
@@ -120,7 +125,7 @@ $$L = P(O|\Theta) = \sum_{i=1,\ldots, |H|}\alpha_{N}(i).$$
 And the log-likelihood is
 $$l = \log{L} = \log\sum_{i=1,\ldots, |H|}\alpha_{N}(i).$$
 
-\section{First order derivative}
+\subsection{First order derivative}
 Our parameter space is $\Theta=\{E,\lambda, g_0, g_1, \pi_0\}$.
 Let $E'= \{e'= 1-exp(-e):\forall e\in E\}$. There is a 1-1 mapping
 between $E$ and $E'$, so the model parameter space is equivalently
@@ -131,7 +136,7 @@ $$\frac{\partial l}{\partial x}
 = \frac{1}{L}\sum_{i=1,\ldots, |H|}\frac{\partial }{\partial x} \alpha_{N}(i) $$
 
 
-\subsection*{Recursion by forward algorithm}
+\noindent\textbf{Recursion by forward algorithm}
 Using the recursive definition of forward variables,
 $$\frac{\partial }{\partial x} \alpha_{n+1}(j) =
 \sum_{i=1,\ldots, |H|} \big[\frac{\partial }{\partial x}\alpha_n(i) \cdot a_{ij} +\alpha_n(i)\cdot \frac{\partial }{\partial x}a_{ij} \big] \cdot \Pr(O_{n+1}|h_j), $$
@@ -217,7 +222,7 @@ a_{ij} \times\big[ \delta_{\{r_i=s\}}\times\frac{(2\delta_{\{v_j=s\}}-1)}{G_{r_i
 All other partial derivatives of $\alpha_n(i)$ and $a_{ij}$ that are
 not specified above have value 0.
 
-\section{Reduce transition complexity}
+\subsection{Reduce transition complexity}
 The total number of possible transitions between HMEs is $2^{2|V|}$. We
 introduce constraints on transition between HMEs to reduce the
 computational complexity.
@@ -242,6 +247,70 @@ The relevant partial derivatives should be recalculated as:
  \frac{\sum_{k\in N(i)}\frac{\partial}{\partial x} a_{ik}}{\big(\sum_{k\in N(i)} a_{ik}\big)^2 }\bigg]
 \end{gather*}
 where parameter $x\in\{\lambda, g_0, g_1\}\bigcup\{T_v:v\in V\}$.
+
+
+
+\section{Approximation method}
+In the incomplete data situation, all possible transitions between HMEs
+have to be considered, which give rise to a complexity of $O(c^n)$ where
+$n$ is the number of nodes in the phylogenetic tree.
+
+We would like to get around the computational complexity by
+approximating the transition probabilities between HME with a product
+of weighted transition probabilities along each branch, with the
+weight being a function of the posterior hypomethylation probabilities
+at relevant nodes. The work flow is described below:
+\begin{enumerate}
+\item Initialize hypomethylation probability at internal nodes
+\item Compute likelihood and gradient
+\item Optimize parameter
+\item Update posterior hypomethylation probability at internal nodes using
+Markov blanket and the updated model parameters
+\item Repeat step 2-4 until convergence of parameter.
+\end{enumerate}
+
+
+\subsection{Likelihood and gradient}
+Let $s^{(i)}_u\in\{0,1\}$ be the methylation sate of node $u$ on the
+phylogenetic tree at position $i$ in the methylome.  Let
+$p^{(i)}_{s_u}$ be the observed or posterior probability of node $u$
+having methylation state $s_u$ at position $i$.
+
+Likelihood and gradient for the first site in the genomic fragment is
+\begin{gather*}
+L_0=\sum_{s_r} p_{s_r}\pi_{s_r} \prod_{(u,v)\in E}\big[\sum_{s_u, s_v} p_{s_u}p_{s_v}\Pr(T_{u,v})_{s_us_v} \big]\\
+\frac{\partial \log L_0}{\partial x} = \frac{1}{L_0} \sum_{s_r} \bigg(p_{s_r}\pi_{s_r} \prod_{(u,v)\in E}\big[\sum_{s_u, s_v} p_{s_u}p_{s_v}\Pr(T_{u,v})_{s_us_v} \big]\bigg)\times
+\bigg( \frac{\frac{\partial \pi_{s_r}}{\partial x}}{\pi_{s_r}} +  \sum_{(u,v)\in E}\frac{\sum_{s_u, s_v} p_{s_u}p_{s_v}\frac{\partial\Pr(T_{u,v})_{s_us_v}}{\partial x} }{\sum_{s_u, s_v} p_{s_u}p_{s_v}\Pr(T_{u,v})_{s_us_v} } \bigg)
+\end{gather*}
+Transition probability between site $i$ and $i+1$ is
+\begin{gather*}
+L_{i,i+1} = \sum_{s^{(i-1)}_r s^{(i)}_r}p_{s^{(i)}_r}p_{s^{(i+1)}_r} G_{s^{(i)}_rs^{(i+1)}_r}  \prod_{(u,v)\in E}
+\big[\sum_{s^{(i)}_vs^{(i+1)}_us^{(i+1)}_v }  p^{(i)}_vp^{(i+1)}_up^{(i+1)}_v \Pr(s^{(i+1)}_v | s^{(i)}_v, s^{(i+1)}_u ) \big] \\
+\frac{\partial}{\partial x} \log L_{i,i+1} = \frac{1}{L_{i,i+1}}
+\sum_{s^{(i)}_r s^{(i+1)}_r} \bigg( p_{s^{(i)}_r}p_{s^{(i+1)}_r} G_{s^{(i)}_rs^{(i+1)}_r}  \prod_{(u,v)\in E}
+\big[\sum_{s^{(i)}_vs^{(i+1)}_us^{(i+1)}_v }  p^{(i)}_vp^{(i+1)}_up^{(i+1)}_v \Pr(s^{(i+1)}_v | s^{(i)}_v, s^{(i+1)}_u ) \big]  \bigg) \times \\
+\bigg( \frac{\frac{\partial}{\partial x} G_{s^{(i)}_rs^{(i+1)}_r}}{G_{s^{(i)}_rs^{(i+1)}_r}}  +
+      \sum_{(u,v)\in E}\frac{\sum_{s^{(i)}_vs^{(i+1)}_us^{(i+1)}_v }  p^{(i)}_vp^{(i+1)}_up^{(i+1)}_v \frac{\partial}{\partial x}\Pr(s^{(i+1)}_v | s^{(i)}_v, s^{(i+1)}_u )}{\sum_{s^{(i)}_vs^{(i+1)}_us^{(i+1)}_v }  p^{(i)}_vp^{(i+1)}_up^{(i+1)}_v \Pr(s^{(i+1)}_v | s^{(i)}_v, s^{(i+1)}_u )}   \bigg)
+\end{gather*}
+The overall log-likelihood  and gradients are
+\begin{gather*}
+\log L = \log L_0 + \sum_{i=0}^{N-1} \log L_{i,i+1} \\
+\frac{\partial}{\partial x} \log L = \frac{\partial}{\partial x}\log L_0 + \sum_{i=0}^{N-1}\frac{\partial}{\partial x}\log L_{i,i+1}
+\end{gather*}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 \bibliographystyle{plain}
 \bibliography{biblio}
 
