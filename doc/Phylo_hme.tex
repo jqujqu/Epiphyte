@@ -300,16 +300,94 @@ The overall log-likelihood  and gradients are
 
 
 
+\subsection{Update posterior}
+All CpGs in all the species in a genomic region form a directed
+graph. Each branch either links an ancestral CpG to a descendent CpG,
+or links one CpG to the next CpG in the same species. Ideally, we
+would like to have the joint posterior distribution for the methylation
+states at all CpGs, or the marginal posterior distribution at each node.
+
+We update the marginal posterior iteratively through all the nodes,
+using the Markov blanket of each node. There are 9 different
+cases. The joint distribution of nodes in the Markov blanket is
+approximated with the product of their marginal distributions.
+
+\textbf{Case 1: node $v_{cur}$ is root in the start position.} Nodes
+in its Markov blanket are the three children $l_{cur},m_{cur}
+r_{cur}$, and the $v_{next}$. Let $B$ the set of joint states for nodes in
+$v_{cur}$'s Markov blanket.
+
+$$p_{b} = p_{l_{cur}}p_{m_{cur}}p_{r_{cur}}p_{v_{next}}, \forall~b\in B.$$
+
+For each combination of Markov blanket state, the normalized
+conditional hypomethylation probability is calculated by
+\begin{equation*}
+\begin{aligned}
+&\Pr(v_{cur} = u|b) \\
+\propto & \Pr(l_{cur}| v_{cur} = u)\Pr(m_{cur}| v_{cur} = u)\Pr(r_{cur}| v_{cur} = u) \Pr(v_{next}| v_{cur} = u)
+\end{aligned}
+\end{equation*}
+The updated posterior hypomethylation probability is $p'_{v_{cur}}$
+$$ p'_{v_{cur}} = \sum_{b}p_{b}\Pr(v_{cur} = u| b)$$
+
+\textbf{Case 2: node $v_{cur}$ is root and in the end position.} Its
+Markov blanket includes $l_{cur}$, $m_{cur}$, $r_{cur}$, $l_{prev}$,
+$m_{prev}$, $r_{prev}$ and $v_{prev}$.
+
+\begin{equation*}
+\Pr(v_{cur} = u|b)
+\propto \Pr(v_{cur} = u| v_{prev})\prod_{c \in children(v)}\Pr(c_{cur}| v_{cur} = u, c_{prev})
+\end{equation*}
 
 
+\textbf{Case 3: node $v_{cur}$ is a root node in the middle.}  Its
+Markov blanket includes $c_{cur},c_{prev}$, where $c\in children(v)$,
+$v_{prev}$ and $v_{next}$.
+
+\begin{equation*}
+\Pr(v_{cur} = u|b)
+\propto \Pr(v_{cur} = u| v_{prev}) \Pr(v_{next}|v_{cur} = u)\prod_{c \in children(v)}\Pr(c_{cur}| v_{cur} = u, c_{prev})
+\end{equation*}
+
+\textbf{Case 4: node $v_{cur}$ is a leaf node in the start position.}
+Its Markov blanket includes $v_{next}$, and $m_{cur}, m_{next}$, where
+$m$ is the parent of node $v$.
+\begin{equation*}
+\Pr(v_{cur} = u|b)
+\propto \Pr(v_{cur} = u| m_{cur}) \Pr(v_{next}|v_{cur} = u, m_{next})
+\end{equation*}
 
 
+\textbf{Case 5: node $v_{cur}$ is a leaf node in the end position.}
+Its Markov blanket includes $v_{prev}$ and $m_{cur}$, where
+$m$ is the parent of node $v$.
+\begin{equation*}
+\Pr(v_{cur} = u|b)\propto \Pr(v_{cur} = u| v_{prev}, m_{cur})
+\end{equation*}
 
+\textbf{Case 6: node $v_{cur}$ is a leaf node in the middle.}
+Its Markov blanket includes $v_{prev}$, $v_{next}$, $m_{cur}$ and $m_{next}$.
+\begin{equation*}
+\Pr(v_{cur} = u|b)\propto \Pr(v_{cur} = u| v_{prev}, m_{cur})  \Pr(v_{next}| v_{cur}, m_{next})
+\end{equation*}
 
+\textbf{Case 7: node $v_{cur}$ is an internal node in the start position.}
+Its Markov blanket includes $c_{cur} (c\in \text{children}(v))$, $v_{next}$, $m_{cur}$ and $m_{next}$.
+\begin{equation*}
+\Pr(v_{cur} = u|b)\propto \Pr(v_{cur} = u| m_{cur}) \big(\prod_{c\in \text{children}(v)} \Pr(c_{cur} = u| v_{cur}=u)\big) \Pr(v_{next}| v_{cur}, m_{next})
+\end{equation*}
 
+\textbf{Case 8: node $v_{cur}$ is an internal node in the start position.}
+Its Markov blanket includes $c_{prev}, c_{cur} (c\in \text{children}(v))$, $v_{prev}$ and $m_{cur}$.
+\begin{equation*}
+\Pr(v_{cur} = u|b)\propto \Pr(v_{cur} = u| m_{cur}, v_{prev}) \big(\prod_{c\in \text{children}(v)} \Pr(c_{cur} = u| v_{cur}=u, c_{prev})\big)
+\end{equation*}
 
-
-
+\textbf{Case 9: node $v_{cur}$ is an internal node in the middle.}
+Its Markov blanket includes $v_{prev}$, $c_{prev}, c_{cur} (c\in \text{children}(v))$, $v_{next}$, $m_{cur}$ and $m_{next}$.
+\begin{equation*}
+\Pr(v_{cur} = u|b) \propto \Pr(v_{cur} = u| m_{cur}, v_{prev}) \big(\prod_{c\in \text{children}(v)} \Pr(c_{cur}| v_{cur}=u, c_{prev})\big)\Pr(v_{next} | v_{cur}=u, m_{next})
+\end{equation*}
 
 \bibliographystyle{plain}
 \bibliography{biblio}
