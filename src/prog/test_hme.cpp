@@ -1916,7 +1916,6 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
 }
 
 
-
 static void
 leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   const vector<vector<double> > &meth_prob_table,
@@ -1952,11 +1951,699 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+//////////////////         APPROX POSTERIOR        /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+static void
+posterior_start(const vector<size_t> &subtree_sizes,
+                const vector<vector<double> >&G,
+                const vector<vector<vector<double> > > &time_trans_mats,
+                const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                const size_t pos,
+                const size_t node_id,
+                const size_t parent_id,
+                vector<bool> &updated,
+                vector<vector<double> > &meth_prob_table,
+                double &diff) {
+  //vector<bool> updated(subtree_sizes.size(), false);
+  double p_cur = 0.0;
+  double mar;
+  if (subtree_sizes[node_id] == 1) {
+    double p_parent_next = meth_prob_table[pos+1][parent_id];
+    double p_parent_cur = meth_prob_table[pos][parent_id];
+    double p_next = meth_prob_table[pos+1][node_id];
+
+    for (size_t next = 0; next < 2; ++next) {
+      double next_p = (next == 0) ? p_next : 1.0 - p_next;
+      for (size_t par_next = 0; par_next <2; ++par_next) {
+        double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+        for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+          double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+          mar = next_p*par_next_p*par_cur_p;
+          double p_cur_u =  time_trans_mats[node_id][par_cur][0] *
+            combined_trans_mats[node_id][0][par_next][next];
+          double p_cur_m =  time_trans_mats[node_id][par_cur][1] *
+            combined_trans_mats[node_id][1][par_next][next];
+          double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+          p_cur += p_cur_mb*mar;
+        }
+      }
+    }
+  } else {
+    //check if all children are updated
+    vector<size_t> children;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_start(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+                        pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
+    }
+
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
+
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t c2 = 0; c2 < 2; ++c2) {
+            double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
+            for (size_t next = 0; next < 2; ++ next) {
+              double next_p = (next == 0) ?  hypo_prob_next : 1.0 - hypo_prob_next;
+              mar = c0_p*c1_p*c2_p*next_p;
+              double p_cur_u = time_trans_mats[children[0]][0][c0]*
+                time_trans_mats[children[1]][0][c1]*
+                time_trans_mats[children[2]][0][c2]*G[0][next];
+              double p_cur_m = time_trans_mats[children[0]][1][c0]*
+                time_trans_mats[children[1]][1][c1]*
+                time_trans_mats[children[2]][1][c2]*G[1][next];
+              p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+            }
+          }
+        }
+      }
+    } else { // internal node // two children
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+      double hypo_prob_par_next = meth_prob_table[pos+1][parent_id];
+
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t next = 0; next < 2; ++next) {
+            double next_p = (next == 0) ? hypo_prob_next : 1.0 - hypo_prob_next;
+            for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+              double par_cur_p =
+                (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+              for (size_t par_next = 0; par_next < 2; ++par_next) {
+                double par_next_p =
+                  (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
+                mar = c0_p*c1_p*next_p*par_cur_p*par_next_p;
+                double p_cur_u = time_trans_mats[node_id][par_cur][0]*
+                  time_trans_mats[children[0]][0][c0]*
+                  time_trans_mats[children[1]][0][c1]*
+                  combined_trans_mats[node_id][0][par_next][next];
+                double p_cur_m = time_trans_mats[node_id][par_cur][1]*
+                  time_trans_mats[children[0]][1][c0]*
+                  time_trans_mats[children[1]][1][c1]*
+                  combined_trans_mats[node_id][1][par_next][next];
+                p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  updated[node_id] = true;
+  diff += abs(meth_prob_table[pos][node_id] - p_cur);
+  meth_prob_table[pos][node_id] = p_cur;
+}
+
+
+static void
+posterior_middle(const vector<size_t> &subtree_sizes,
+                 const vector<vector<double> >&G,
+                 const vector<vector<vector<double> > > &time_trans_mats,
+                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                 const size_t pos,
+                 const size_t node_id,
+                 const size_t parent_id,
+                 vector<bool> &updated,
+                 vector<vector<double> > &meth_prob_table,
+                 double &diff) {
+
+  double mar;
+  double p_cur = 0.0;
+  if (subtree_sizes[node_id] == 1) { // leaf
+    double p_prev = meth_prob_table[pos-1][parent_id];
+    double p_parent_next = meth_prob_table[pos+1][parent_id];
+    double p_parent_cur = meth_prob_table[pos][parent_id];
+    double p_next = meth_prob_table[pos+1][node_id];
+
+    for (size_t prev = 0; prev < 2; ++prev) {
+      double prev_p = (prev == 0) ? p_prev: 1.0 - p_prev;
+      for (size_t next = 0; next < 2; ++next) {
+        double next_p = (next == 0) ? p_next : 1.0 - p_next;
+        for (size_t par_next = 0; par_next <2; ++par_next) {
+          double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+          for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+            double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+            mar = prev_p*next_p*par_next_p*par_cur_p;
+            double p_cur_u =  combined_trans_mats[node_id][prev][par_cur][0] *
+              combined_trans_mats[node_id][0][par_next][next];
+            double p_cur_m =  combined_trans_mats[node_id][prev][par_cur][1] *
+              combined_trans_mats[node_id][1][par_next][next];
+            double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+            p_cur += p_cur_mb*mar;
+          }
+        }
+      }
+    }
+  } else {
+    //check if all children are updated
+    vector<size_t> children;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_start(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+                        pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
+    }
+
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev_child_2 = meth_prob_table[pos-1][children[2]];
+
+      for (size_t prev = 0; prev < 2; ++prev) {
+        double prev_p = (prev==0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+        for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
+          double prev_c0_p =
+            (prev_c0==0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+          for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
+            double prev_c1_p =
+              (prev_c1==0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+            for (size_t prev_c2 =0; prev_c2 < 2; ++ prev_c2) {
+              double prev_c2_p =
+                (prev_c2==0) ? hypo_prob_prev_child_2 : 1.0 - hypo_prob_prev_child_2;
+              for (size_t c0 = 0; c0 < 2; ++c0) {
+                double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+                for (size_t c1 = 0; c1 < 2; ++c1) {
+                  double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+                  for (size_t c2 = 0; c2 < 2; ++c2) {
+                    double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
+                    for (size_t next = 0; next < 2; ++ next) {
+                      double next_p = (next == 0) ?  hypo_prob_next : 1.0 - hypo_prob_next;
+                      mar = prev_p*prev_c0_p*prev_c1_p*prev_c2_p*c0_p*c1_p*c2_p*next_p;
+                      double p_cur_u = combined_trans_mats[children[0]][prev][0][c0]*
+                        combined_trans_mats[children[1]][prev][0][c1]*
+                        combined_trans_mats[children[2]][prev][0][c2]*
+                        G[0][next]*G[prev][0];
+                      double p_cur_m = combined_trans_mats[children[0]][prev][1][c0]*
+                        combined_trans_mats[children[1]][prev][1][c1]*
+                        combined_trans_mats[children[2]][prev][1][c2]*
+                        G[1][next]*G[prev][1];
+                      p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } else { // internal node // two children
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+      double hypo_prob_par_next = meth_prob_table[pos+1][parent_id];
+
+      for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
+        double prev_c0_p =
+          (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+        for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
+          double prev_c1_p =
+          (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+          for (size_t prev = 0; prev < 2; ++ prev) {
+            double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+            for (size_t c0 = 0; c0 < 2; ++c0) {
+              double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+              for (size_t c1 = 0; c1 < 2; ++c1) {
+                double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+                for (size_t next = 0; next < 2; ++next) {
+                  double next_p = (next == 0) ? hypo_prob_next : 1.0 - hypo_prob_next;
+                  for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+                    double par_cur_p =
+                      (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+                    for (size_t par_next = 0; par_next < 2; ++par_next) {
+                      double par_next_p =
+                        (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
+                      mar = prev_c0_p* prev_c1_p*prev_p*c0_p*
+                        c1_p*next_p*par_cur_p*par_next_p;
+                      double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0]*
+                        combined_trans_mats[children[0]][prev_c0][0][c0]*
+                        combined_trans_mats[children[1]][prev_c1][0][c1]*
+                        combined_trans_mats[node_id][0][par_next][next];
+                      double p_cur_m =combined_trans_mats[node_id][prev][par_cur][1]*
+                        combined_trans_mats[children[0]][prev_c0][1][c0]*
+                        combined_trans_mats[children[1]][prev_c1][1][c1]*
+                        combined_trans_mats[node_id][1][par_next][next];
+                      p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  updated[node_id] = true;
+  diff += abs(meth_prob_table[pos][node_id] - p_cur);
+  meth_prob_table[pos][node_id] = p_cur;
+}
+
+
+
+static void
+posterior_end(const vector<size_t> &subtree_sizes,
+              const vector<vector<double> >&G,
+              const vector<vector<vector<double> > > &time_trans_mats,
+              const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+              const size_t pos,
+              const size_t node_id,
+              const size_t parent_id,
+              vector<bool> &updated,
+              vector<vector<double> > &meth_prob_table,
+              double &diff) {
+  //vector<bool> updated(subtree_sizes.size(), false);
+
+  double mar;
+  double p_cur = 0.0;
+
+  if (subtree_sizes[node_id] == 1) { //leaf
+    double p_parent_cur = meth_prob_table[pos][parent_id];
+    double p_prev = meth_prob_table[pos-1][node_id];
+    for (size_t prev = 0; prev < 2; ++prev) {
+      double prev_p = (prev == 0) ? p_prev : 1.0 - p_prev;
+      for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+        double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+        mar = prev_p*par_cur_p;
+        double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0];
+        double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1];
+        double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+        p_cur += p_cur_mb*mar;
+      }
+    }
+  } else {
+    //check if all children are updated
+    vector<size_t> children;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_start(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+                        pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
+    }
+
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev_child_2 = meth_prob_table[pos-1][children[2]];
+
+      for (size_t prev = 0; prev < 2; ++ prev) {
+        double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+        for (size_t c0 = 0; c0 < 2; ++c0) {
+          double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+          for (size_t c1 = 0; c1 < 2; ++c1) {
+            double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+            for (size_t c2 = 0; c2 < 2; ++c2) {
+              double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
+              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
+                double prev_c0_p =
+                  (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
+                  double prev_c1_p =
+                    (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+                  for (size_t prev_c2 = 0; prev_c2 < 2; ++prev_c2) {
+                    double prev_c2_p =
+                      (prev_c2 == 0) ? hypo_prob_prev_child_2 : 1.0 - hypo_prob_prev_child_2;
+                    mar = prev_p*c0_p*c1_p*c2_p*prev_c0_p*prev_c1_p*prev_c2_p;
+                    double p_cur_u = combined_trans_mats[children[0]][prev_c0][0][c0]*
+                      combined_trans_mats[children[1]][prev_c1][0][c1]*
+                      combined_trans_mats[children[2]][prev_c2][0][c2]*G[prev][0];
+                    double p_cur_m = combined_trans_mats[children[0]][prev_c0][1][c0]*
+                      combined_trans_mats[children[1]][prev_c1][1][c1]*
+                      combined_trans_mats[children[2]][prev_c2][1][c2]*G[prev][1];
+                    p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } else { // internal node // two children
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t prev = 0; prev < 2; ++prev) {
+            double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+            for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+              double par_cur_p =
+                (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
+                double prev_c0_p =
+                  (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
+                 double  prev_c1_p = (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+                  mar = c0_p*c1_p*prev_p*par_cur_p*prev_c0_p*prev_c1_p;
+                  double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0]*
+                    combined_trans_mats[children[0]][prev_c0][0][c0]*
+                    combined_trans_mats[children[1]][prev_c1][0][c1];
+                  double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1]*
+                    combined_trans_mats[children[0]][prev_c0][1][c0]*
+                    combined_trans_mats[children[1]][prev_c1][1][c1];
+                  p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  updated[node_id] = true;
+  diff += abs(meth_prob_table[pos][node_id] - p_cur);
+  meth_prob_table[pos][node_id] = p_cur;
+}
+
+
+
+static void
+iterate_update(const vector<size_t> &subtree_sizes,
+               const vector<size_t> &reset_points,
+               const vector<vector<double> >&G,
+               const vector<vector<vector<double> > > &time_trans_mats,
+               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+               const double tolerance,
+               vector<vector<double> > &meth_prob_table) {
+
+  cerr << "iterate update" << endl;
+  size_t n_nodes = subtree_sizes.size();
+  size_t n_sites = meth_prob_table.size();
+  double tol = tolerance *n_nodes*n_sites;
+
+  for (size_t i = 0; i < reset_points.size()-1; ++i) {
+    cerr << "block " << i << endl;
+    double diff = std::numeric_limits<double>::max();
+    size_t start = reset_points[i];
+    size_t end = reset_points[i+1];
+    while (diff > tol) {
+      diff = 0.0;
+      for (size_t j = start; j < end; ++j) {
+        if (j == start) {
+          vector<bool> updated (subtree_sizes.size(), false);
+          posterior_start(subtree_sizes, G, time_trans_mats,
+                          combined_trans_mats, j, 0,
+                          0, updated, meth_prob_table, diff);
+        } else if (j == end -1) {
+          vector<bool> updated (subtree_sizes.size(), false);
+          posterior_end(subtree_sizes, G, time_trans_mats,
+                        combined_trans_mats, j, 0,
+                        0, updated, meth_prob_table, diff);
+        } else {
+          vector<bool> updated (subtree_sizes.size(), false);
+          posterior_middle(subtree_sizes, G, time_trans_mats,
+                           combined_trans_mats, j, 0,
+                           0, updated, meth_prob_table, diff);
+        }
+      }
+      cerr << "Average diff =" << diff/(n_nodes*n_sites) << endl;
+    }
+  }
+}
+
+
+static void
+approx_posterior(const vector<size_t> &subtree_sizes,
+                 const vector<double> &params,
+                 const vector<size_t> &reset_points,
+                 const double tolerance,
+                 vector<vector<double> > &meth_prob_table) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_hme = pow(2, n_nodes);
+  const vector<vector<double> > mat2x2(2, vector<double>(2,0.0));
+  vector<vector<vector<double> > > time_trans_mats(n_nodes, mat2x2);
+  // collect probabilities and derivatives by branch
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  vector<double> Ts(params.begin()+4, params.end());
+  collect_transition_matrices(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats);
+
+  vector<vector<double> >G(2, vector<double>(2, 0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][0] = 1.0 - g1;
+  G[1][1] = g1;
+
+  //initialize internal posteriors
+
+  //update iteratively
+  iterate_update(subtree_sizes, reset_points, G, time_trans_mats,
+                 combined_trans_mats, tolerance, meth_prob_table);
+}
+
+
+static void
+posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
+                       const vector<double> &params,
+                       const vector<size_t> &reset_points,
+                       const vector<vector<double> > &meth_prob_table,
+                       double &llk, vector<double> &deriv) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_params = params.size();
+  const vector<vector<double> > mat2x2(2, vector<double>(2,0.0));
+  vector<vector<vector<double> > > time_trans_mats(n_nodes, mat2x2);
+
+  // collect probabilities and derivatives by branch
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_drate;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  vector<double> Ts(params.begin()+4, params.end());
+  collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats,
+                                    combined_trans_mats_drate,
+                                    combined_trans_mats_dg0,
+                                    combined_trans_mats_dg1,
+                                    combined_trans_mats_dT);
+
+  vector<vector<double> >G(2, vector<double>(2, 0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][0] = 1.0 - g1;
+  G[1][1] = g1;
+
+  vector<double> pi(2,0.0);
+  pi[0] = params[0];
+  pi[1] = 1.0 - params[0];
+
+  vector<vector<double> > Q(2, vector<double>(2, 0.0));
+  Q[0][0] = -1.0*rate0;
+  Q[0][1] = rate0;
+  Q[1][1] = -1.0*(1.0-rate0);
+  Q[1][0] = 1.0 - rate0;
+  vector<double> llk_by_site(n_sites, 0.0);
+  vector<vector<Logscale> > deriv_by_site(n_sites, vector<Logscale>(n_params, Logscale(0.0, 0.0)));
+
+  for(size_t i = 0; i < reset_points.size()-1; ++i) {
+    size_t start = reset_points[i];
+    size_t end = reset_points[i+1];
+    for (size_t pos = start; pos < end; ++pos) {
+      if (pos == start) { //L0
+        for (size_t root = 0; root < 2; ++root) {
+          double p_root = (root == 0) ? meth_prob_table[pos][0] : 1.0 - meth_prob_table[pos][0];
+
+          double log_prod_branches = 0.0;
+          vector<Logscale> log_deriv_prod_branches(n_params, Logscale(0.0, 0.0));
+
+          for (size_t node = 0; node < n_nodes; ++ node) {
+            size_t count = 1;
+            while (count < subtree_sizes[node]) {// downward branches
+              size_t child_id = node + count;
+
+              double llk_ele = 0.0;
+              vector<double>deriv_ele(n_params, 0.0);
+
+              for (size_t par = 0; par < 2; ++par) {
+                double p_par = (par == 0) ? meth_prob_table[pos][node] : 1.0 - meth_prob_table[pos][node];
+                for (size_t chi = 0; chi < 2; ++ chi) {
+                  double p_chi = (chi == 0) ? meth_prob_table[pos][child_id] : 1.0 - meth_prob_table[pos][child_id];
+                  // process likelihood
+                  llk_ele = log_sum_log(llk_ele, log(p_par) + log(p_chi) +
+                                        log(time_trans_mats[child_id][par][chi]));
+                  // process derivative
+                  for (size_t k = 0; k < n_params; ++k) {
+                    if (k == 1) { //drate
+                      deriv_ele[k] += p_par*p_chi*(Ts[child_id]*(kronecker(chi, 1)*2-1));
+                    } else if (k > 4) { //dT
+                      deriv_ele[k] += p_par*p_chi*Q[par][chi];
+                    }
+                  }
+                }
+              }//end par
+              log_prod_branches = log_sum_log(log_prod_branches, llk_ele);
+              for (size_t k = 0; k < n_params; ++k) {
+                Logscale inc(log(abs(deriv_ele[k]))-llk_ele, sign(deriv_ele[k]));
+                Logscale result;
+                log_sum_log_sign(log_deriv_prod_branches[k], inc, result);
+                log_deriv_prod_branches[k].logval = result.logval;
+                log_deriv_prod_branches[k].symbol = result.symbol;
+              }
+              count += subtree_sizes[child_id];
+            }
+          }// end node
+
+          // start position log-likelihood increment
+          llk_by_site[pos] = log_sum_log(llk_by_site[pos], log(p_root*pi[root]) +
+                                         log_prod_branches);
+
+          Logscale pi_drate(-log(pi[root]), sign(kronecker(root,0)*2-1));
+          Logscale result;
+          log_sum_log_sign(log_deriv_prod_branches[pos][0], pi_drate, result);
+          log_deriv_prod_branches[0].logval = result.logval;
+          log_deriv_prod_branches[0].symbol = result.symbol;
+
+          for (size_t k = 0; k < n_params; ++k) {
+            log_deriv_prod_branches[k] += log(p_root*pi[root]) + log_prod_branches;
+            log_sum_log_sign(deriv_by_site[pos][k], log_deriv_prod_branches[k], result);
+            deriv_by_site[pos][k].logval = result.logval;
+            deriv_by_site[pos][k].symbol = result.symbol;
+          }
+        } //end root
+
+        // start position log deriv of log-likelihood
+        for (size_t k = 0; k < n_params; ++k) {
+          deriv_by_site[pos][k].logval = deriv_by_site[pos][k].logval - llk_by_site[pos];
+        }
+
+      } else { // L_{pos-1, pos}
+        for (size_t prev_root = 0; prev_root < 2; ++prev_root) {
+          double p_prev_root =
+            (prev_root == 0) ? meth_prob_table[pos-1][0] : 1.0 - meth_prob_table[pos-1][0];
+          for (size_t root = 0; root < 2; ++root) {
+            double p_root = (root == 0) ? meth_prob_table[pos][0] : 1.0 - meth_prob_table[pos][0];
+
+            vector<Logscale> log_deriv_prod_branches(n_params, Logscale(0.0, 0.0));
+            double log_prod_branches = 0.0;
+
+            for (size_t node = 0; node < n_nodes; ++node) {
+              size_t count = 1;
+              while (count < subtree_sizes[node]) {
+                size_t child_id = node+count;
+
+                double llk_ele = 0.0;
+                vector<double>deriv_ele(n_params, 0.0);
+
+                for (size_t par = 0; par < 2; ++par) {
+                  double p_par = (par == 0) ? meth_prob_table[pos][node] : 1.0 - meth_prob_table[pos][node];
+                  for (size_t cur = 0; cur < 2; ++cur) {
+                    double p_cur = (cur == 0) ? meth_prob_table[pos][child_id] : 1.0 - meth_prob_table[pos][child_id];
+                    for (size_t prev = 0; prev < 2; ++prev) {
+                      double p_prev = (prev == 0) ? meth_prob_table[pos-1][child_id] : 1.0 - meth_prob_table[pos-1][child_id];
+
+                      llk_ele = log_sum_log(llk_ele, log(p_par) + log(p_cur)+ log(p_prev) +
+                                            log(combined_trans_mats[child_id][prev][par][cur]));
+                      log_prod_branches = log_sum_log(log_prod_branches,llk_ele);
+
+                      deriv_ele[1] += p_par*p_cur*p_prev*combined_trans_mats_drate[child_id][prev][par][cur];
+                      deriv_ele[2] += p_par*p_cur*p_prev*combined_trans_mats_dg0[child_id][prev][par][cur];
+                      deriv_ele[3] += p_par*p_cur*p_prev*combined_trans_mats_dg1[child_id][prev][par][cur];
+                      for (size_t k = 5; k < n_params; ++k) {
+                        deriv_ele[k] += p_par*p_cur*p_prev*combined_trans_mats_dT[child_id][prev][par][cur];
+                      }
+                    }
+                  }
+                }
+
+                for (size_t k = 0; k < n_params; ++k) {
+                  Logscale inc(log(abs(deriv_ele[k]))-llk_ele, sign(deriv_ele[k]));
+                  Logscale result;
+                  log_sum_log_sign(inc, log_deriv_prod_branches[k], result);
+                  log_deriv_prod_branches[k].logval = result.logval;
+                  log_deriv_prod_branches[k].symbol = result.symbol;
+                }
+                count += subtree_sizes[child_id];
+              }
+
+              Logscale G_dg0(-log(G[prev_root][root]),
+                             sign(kronecker(prev_root, root)*2 -1)*kronecker(prev_root,0));
+              Logscale G_dg1(-log(G[prev_root][root]),
+                             sign(kronecker(prev_root, root)*2 -1)*kronecker(prev_root,1));
+              Logscale result;
+              log_sum_log_sign(G_dg0, log_deriv_prod_branches[2], result);
+              log_deriv_prod_branches[2].logval = result.logval;
+              log_deriv_prod_branches[2].symbol = result.symbol;
+              log_sum_log_sign(G_dg1, log_deriv_prod_branches[3], result);
+              log_deriv_prod_branches[3].logval = result.logval;
+              log_deriv_prod_branches[3].symbol = result.symbol;
+            } // end node
+
+            double lp = log_prod_branches + log(G[prev_root][root]) +  log(p_prev_root) + log(p_root);
+            for (size_t k = 0; k < n_params; ++k) {
+              log_deriv_prod_branches[k].logval += lp;
+              log_sum_log_sign(deriv_by_site[pos][k], log_deriv_prod_branches[k], result);
+              deriv_by_site[pos][k].logval = result.logval;
+              deriv_by_site[pos][k].symbol = result.symbol;
+            }
+            llk_by_site[pos] =
+              log_sum_log(llk_by_site[pos], log(p_prev_root) + log(p_root) +
+                          log(G[prev_root][root]) + log_prod_branches);
+          } // end root
+        } //end prev_root
+        for (size_t k = 0; k < n_params; ++k) {
+          deriv_by_site[pos][k].logval = deriv_by_site[pos][k].logval - llk_by_site[pos];
+        }
+      } //end else
+    } //end pos
+  } // end reset_points i
+}
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 //////////////////////          MAIN             ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
-
 
 int
 main(int argc, const char **argv) {
@@ -2136,6 +2823,14 @@ main(int argc, const char **argv) {
       for (size_t i = 1; i < n_nodes; ++i) {
         start_param[4+i] = Ts[i];
       }
+
+
+      /**************************************************************************/
+      cerr << "Approx posterior" << endl;
+      double tolerance = 1e-4;
+      approx_posterior(subtree_sizes, start_param, reset_points,
+                       tolerance, tree_prob_table);
+
 
       /**************************************************************************/
       /*************************  OPTIMIZATION **********************************/
