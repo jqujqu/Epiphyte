@@ -284,7 +284,7 @@ L_0=\sum_{s_r} p_{s_r}\pi_{s_r} \prod_{(u,v)\in E}\big[\sum_{s_u, s_v} p_{s_u}p_
 \end{gather*}
 Transition probability between site $i$ and $i+1$ is
 \begin{gather*}
-L_{i,i+1} = \sum_{s^{(i-1)}_r s^{(i)}_r}p_{s^{(i)}_r}p_{s^{(i+1)}_r} G_{s^{(i)}_rs^{(i+1)}_r}  \prod_{(u,v)\in E}
+L_{i,i+1} = \sum_{s^{(i)}_r s^{(i+1)}_r}p_{s^{(i)}_r}p_{s^{(i+1)}_r} G_{s^{(i)}_rs^{(i+1)}_r}  \prod_{(u,v)\in E}
 \big[\sum_{s^{(i)}_vs^{(i+1)}_us^{(i+1)}_v }  p^{(i)}_vp^{(i+1)}_up^{(i+1)}_v \Pr(s^{(i+1)}_v | s^{(i)}_v, s^{(i+1)}_u ) \big] \\
 \frac{\partial}{\partial x} \log L_{i,i+1} = \frac{1}{L_{i,i+1}}
 \sum_{s^{(i)}_r s^{(i+1)}_r} \bigg( p_{s^{(i)}_r}p_{s^{(i+1)}_r} G_{s^{(i)}_rs^{(i+1)}_r}  \prod_{(u,v)\in E}
@@ -308,16 +308,17 @@ would like to have the joint posterior distribution for the methylation
 states at all CpGs, or the marginal posterior distribution at each node.
 
 We update the marginal posterior iteratively through all the nodes,
-using the Markov blanket of each node. There are 9 different
-cases. The joint distribution of nodes in the Markov blanket is
-approximated with the product of their marginal distributions.
+using the Markov blanket of each node.
+Let $v_{cur}$ be the current node of interest. Let $B$ the set of
+joint states for nodes in $v_{cur}$'s Markov blanket. The joint
+distribution of nodes in the Markov blanket is approximated with the
+product of their marginal distributions.
+$$p_{b} = p_{l_{cur}}p_{m_{cur}}p_{r_{cur}}p_{v_{next}}, \forall~b\in B.$$
 
+There are 9 different cases.
 \textbf{Case 1: node $v_{cur}$ is root in the start position.} Nodes
 in its Markov blanket are the three children $l_{cur},m_{cur}
-r_{cur}$, and the $v_{next}$. Let $B$ the set of joint states for nodes in
-$v_{cur}$'s Markov blanket.
-
-$$p_{b} = p_{l_{cur}}p_{m_{cur}}p_{r_{cur}}p_{v_{next}}, \forall~b\in B.$$
+r_{cur}$, and the $v_{next}$.
 
 For each combination of Markov blanket state, the normalized
 conditional hypomethylation probability is calculated by
@@ -327,8 +328,6 @@ conditional hypomethylation probability is calculated by
 \propto & \Pr(l_{cur}| v_{cur} = u)\Pr(m_{cur}| v_{cur} = u)\Pr(r_{cur}| v_{cur} = u) \Pr(v_{next}| v_{cur} = u)
 \end{aligned}
 \end{equation*}
-The updated posterior hypomethylation probability is $p'_{v_{cur}}$
-$$ p'_{v_{cur}} = \sum_{b}p_{b}\Pr(v_{cur} = u| b)$$
 
 \textbf{Case 2: node $v_{cur}$ is root and in the end position.} Its
 Markov blanket includes $l_{cur}$, $m_{cur}$, $r_{cur}$, $l_{prev}$,
@@ -388,6 +387,10 @@ Its Markov blanket includes $v_{prev}$, $c_{prev}, c_{cur} (c\in \text{children}
 \begin{equation*}
 \Pr(v_{cur} = u|b) \propto \Pr(v_{cur} = u| m_{cur}, v_{prev}) \big(\prod_{c\in \text{children}(v)} \Pr(c_{cur}| v_{cur}=u, c_{prev})\big)\Pr(v_{next} | v_{cur}=u, m_{next})
 \end{equation*}
+
+The updated posterior hypomethylation probability is $p'_{v_{cur}}$
+$$ p'_{v_{cur}} = \sum_{b}p_{b}\Pr(v_{cur} = u| b)$$
+
 
 \bibliographystyle{plain}
 \bibliography{biblio}
