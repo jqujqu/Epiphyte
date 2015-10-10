@@ -227,6 +227,7 @@ load_full_states(const string filename,
   std::ifstream in(filename.c_str());
   if (!in)
     throw SMITHLABException("cannot read:" + filename);
+
   string line;
   while (getline(in, line)) {
     if (line[0] == '#') { //skip header lines
@@ -746,7 +747,7 @@ auxiliary(const vector<size_t> &subtree_sizes,
   G[1][0] = 1.0 - params[3];
   G[1][1] = params[3];
 
-  cerr << "In auxiliary" << endl;
+  //  cerr << "In auxiliary" << endl;
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_hme = all_states.size();
   const vector<vector<double> > mat2x2(2, vector<double>(2,0.0));
@@ -817,7 +818,6 @@ auxiliary(const vector<size_t> &subtree_sizes,
       if (j < 2 || j > 4)
         start_log_prob_derivs[i][j].logval += start_log_probs[i];
     }
-
   }
 
   //transition and derivs
@@ -1191,8 +1191,6 @@ rstr_hme_trans_prob_mat_deriv(const vector<size_t> &subtree_sizes,
 }
 
 
-
-
 static void
 forward_variables(const size_t start, const size_t end,
                   const vector<size_t> &subtree_sizes,
@@ -1225,6 +1223,7 @@ forward_variables(const size_t start, const size_t end,
   }
   if (pos %1000 == 0) cerr << ".";
 }
+
 
 static void
 forward_variables_deriv(const size_t start, const size_t end,
@@ -1645,12 +1644,11 @@ optimize_iteration(const bool FULL, const double TOL,
   const size_t n_nodes = subtree_sizes.size();
   bool SUCCESS = false;
 
-  double norm = deriv[0]*deriv[0] + deriv[1]*deriv[1];
-  norm += deriv[2]*deriv[2] + deriv[3]*deriv[3];
+  double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) + abs(deriv[3]);
   for (size_t i = 5; i < deriv.size(); ++i) {
-    norm += deriv[i]*deriv[i];
+    norm += abs(deriv[i]);
   }
-  double r = 1.0/sqrt(norm); //maximization (-1.0 if minimization)
+  double r = 1.0/norm; //maximization (-1.0 if minimization)
 
   // Find proper starting factor
   const size_t n_params = n_nodes + 4;
@@ -1680,8 +1678,7 @@ optimize_iteration(const bool FULL, const double TOL,
       cerr << "d[" << i << "]=" << deriv[i] << "\t";
     cerr << endl;
 
-
-    if (r*sqrt(norm) <= TOL) {
+    if (r*norm <= TOL) {
       CONVERGED = true;
       return SUCCESS;
     }
@@ -1825,8 +1822,7 @@ separate_regions(const size_t desert_size,
   reset_points.push_back(0);
   Site last_site = sites[0];
   for (size_t i = 1; i < totalsites; ++i) {
-    if (distance_between_sites(last_site, sites[i]) < desert_size) {
-    } else {
+    if (distance_between_sites(last_site, sites[i]) > desert_size) {
       reset_points.push_back(i);
     }
     last_site = sites[i];
@@ -1840,7 +1836,7 @@ loglik_complete_tree(const vector<string> &states,
                      const vector<size_t> &reset_points,
                      const vector<size_t> &subtree_sizes,
                      const vector<double> &params,
-                     double &llk, vector<Logscale> &param_derivs) {
+                     double &llk, vector<double> &derivs) {
 
   vector<double> start_log_probs;
   vector<vector<Logscale> > start_log_prob_derivs;
@@ -1853,13 +1849,15 @@ loglik_complete_tree(const vector<string> &states,
   for (size_t i = 0; i < n_hme; ++i) {
     all_states.push_back(dec2binary(n_nodes, i));
   }
+
   auxiliary(subtree_sizes, all_states, params,
             start_log_probs, start_log_prob_derivs,
             trans_log_probs, trans_log_prob_derivs);
 
   const size_t n_params = params.size();
-  param_derivs= vector<Logscale>(n_params,Logscale(0.0, 0.0));
+  vector<Logscale> param_derivs(n_params,Logscale(0.0, 0.0));
   llk = 0.0;
+
   for (size_t i = 0; i < reset_points.size()-1; ++i) {
     const size_t start = reset_points[i];
     const size_t end = reset_points[i+1];
@@ -1891,7 +1889,133 @@ loglik_complete_tree(const vector<string> &states,
       }
     }
   }
+  derivs = vector<double>(n_params, 0.0);
+  for (size_t i = 0; i < n_params; ++i) {
+    derivs[i] = exp(param_derivs[i].logval)*param_derivs[i].symbol;
+  }
 }
+
+static void
+complete_optimize_iteration(const double TOL,
+                            const vector<string> &states,
+                            const vector<size_t> &reset_points,
+                            const vector<size_t> &subtree_sizes,
+                            const vector<double> &params,
+                            vector <double> &newparams,
+                            double &llk) {
+
+  vector<double> deriv;
+  loglik_complete_tree(states, reset_points, subtree_sizes,
+                       params, llk, deriv);
+  const size_t n_nodes = subtree_sizes.size();
+  double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) + abs(deriv[3]);
+  double branchnorm = 0.0;
+  for (size_t i = 5; i < deriv.size(); ++i) {
+    branchnorm += abs(deriv[i]);
+  }
+  double r = 1.0/norm; //maximization (-1.0 if minimization)
+  double br = 1.0/branchnorm; //maximization (-1.0 if minimization)
+
+  // Find proper starting factor
+  const size_t n_params = n_nodes + 4;
+  for (size_t i = 0; i < 4; ++i) {
+    double candidate_param = params[i] + deriv[i]*r;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      r = r/2;
+      candidate_param = params[i] + deriv[i]*r;
+    }
+  }
+  for (size_t i = 5; i < n_params; ++i) {
+    double candidate_param = params[i] + deriv[i]*br;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      br = br/2;
+      candidate_param = params[i] + deriv[i]*br;
+    }
+  }
+
+  newparams = params;
+  // Test param point
+  for (size_t i = 0; i < 4; ++i) {
+    newparams[i] = params[i] + r*deriv[i];
+  }
+  for (size_t i = 5; i < n_params; ++i) {
+    newparams[i] = params[i] + br*deriv[i];
+  }
+
+  bool SUCCESS = false;
+  bool CONVERGED = false;
+  // Reduce factor untill improvement or convergence
+  while (!SUCCESS && !CONVERGED ) {
+    for (size_t i = 0; i < 4; ++i) {
+      newparams[i] = params[i] + r*deriv[i];
+    }
+    for (size_t i = 5; i < n_params; ++i) {
+      newparams[i] = params[i] + br*deriv[i];
+    }
+    vector<double> newderiv;
+    double newllk;
+    loglik_complete_tree(states, reset_points, subtree_sizes,
+                         newparams, newllk, newderiv);
+    if (newllk > llk) {
+      SUCCESS = true;
+      cerr << "========= Improve = " << newllk - llk << endl;
+      llk = newllk;
+      // print derivatives
+      for (size_t i = 0; i < newderiv.size(); ++i)
+        cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+      cerr << endl;
+      // print new params
+      for (size_t i = 0; i < newparams.size(); ++i) {
+        if (i < 4){
+          cerr << newparams[i] << "\t";
+        } else if (i> 4) {
+          cerr << -log(1.0-newparams[i]) << "\t";
+        }
+      }
+      cerr << endl;
+    } else {
+      r = r/2;
+      br = br/2;
+      if (r*norm <= TOL && br*norm <= TOL)
+        CONVERGED = true;
+    }
+  }
+
+}
+
+
+static void
+complete_optimize(const double TOL,
+                  const size_t MAXITER,
+                  const vector<string> &states,
+                  const vector<size_t> &reset_points,
+                  const vector<size_t> &subtree_sizes,
+                  const vector<double> &start_params,
+                  vector <double> &params,
+                  double &llk) {
+
+  size_t iter = 0;
+  double diff = std::numeric_limits<double>::max();
+
+  vector<double> old_params = start_params;
+  while (iter < MAXITER  && diff > TOL) {
+    complete_optimize_iteration(TOL, states, reset_points, subtree_sizes,
+                                old_params, params, llk);
+    cerr << "log-likelihood = " << llk << endl;
+    diff = 0;
+    for (size_t i = 0; i < params.size(); ++ i) {
+      diff += abs(old_params[i] - params[i]);
+    }
+    old_params = params;
+    cerr << "Param total diff = " << diff << endl;
+    ++iter;
+  }
+  if (iter < MAXITER)
+    cerr << "Converged at iteration " << iter << endl;
+}
+
+
+
 
 // uninitialized nodes have value -1.0
 // assuming all leaves are initialized already
@@ -1899,6 +2023,7 @@ static void
 init_internal_prob(const vector<size_t> &subtree_sizes,
                    const size_t node_id,
                    vector<double> &node_probs) {
+  const double tol = 1e-5;
   size_t count = 1;
   // Recursion
   size_t n_children = 0;
@@ -1912,7 +2037,7 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
     ++n_children;
     sum_children_prob += node_probs[child_id];
   }
-  node_probs[node_id] = sum_children_prob/n_children;
+  node_probs[node_id] = min(max(tol,sum_children_prob/n_children), 1.0-tol);
 }
 
 
@@ -1920,6 +2045,7 @@ static void
 leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   const vector<vector<double> > &meth_prob_table,
                   vector<vector<double> > &tree_prob_table) {
+  const double tol = 1e-5;
   const size_t n_sites = meth_prob_table.size();
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_leaves = meth_prob_table[0].size();
@@ -1930,7 +2056,7 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
   // copy leaves first
   for (size_t i = 0; i < n_sites; ++i) {
     for (size_t j = 0; j < n_leaves; ++j) {
-      tree_prob_table[i][leaves_preorder[j]] = meth_prob_table[i][j];
+      tree_prob_table[i][leaves_preorder[j]] = min(max(tol, meth_prob_table[i][j]), 1.0-tol);
     }
   }
   // initialize internal probs
@@ -1959,26 +2085,31 @@ posterior_start(const vector<size_t> &subtree_sizes,
   //vector<bool> updated(subtree_sizes.size(), false);
   double p_cur = 0.0;
   double mar;
-  if (subtree_sizes[node_id] == 1) {
-    double p_parent_next = meth_prob_table[pos+1][parent_id];
-    double p_parent_cur = meth_prob_table[pos][parent_id];
-    double p_next = meth_prob_table[pos+1][node_id];
+  if (subtree_sizes[node_id] == 1) { //leaf
+    bool LEAF = false;
+    if (LEAF) {
+      double p_parent_next = meth_prob_table[pos+1][parent_id];
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_next = meth_prob_table[pos+1][node_id];
 
-    for (size_t next = 0; next < 2; ++next) {
-      double next_p = (next == 0) ? p_next : 1.0 - p_next;
-      for (size_t par_next = 0; par_next <2; ++par_next) {
-        double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
-        for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
-          double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
-          mar = next_p*par_next_p*par_cur_p;
-          double p_cur_u =  time_trans_mats[node_id][par_cur][0] *
-            combined_trans_mats[node_id][0][par_next][next];
-          double p_cur_m =  time_trans_mats[node_id][par_cur][1] *
-            combined_trans_mats[node_id][1][par_next][next];
-          double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-          p_cur += p_cur_mb*mar;
+      for (size_t next = 0; next < 2; ++next) {
+        double next_p = (next == 0) ? p_next : 1.0 - p_next;
+        for (size_t par_next = 0; par_next <2; ++par_next) {
+          double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+          for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+            double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+            mar = next_p*par_next_p*par_cur_p;
+            double p_cur_u =  time_trans_mats[node_id][par_cur][0] *
+              combined_trans_mats[node_id][0][par_next][next];
+            double p_cur_m =  time_trans_mats[node_id][par_cur][1] *
+              combined_trans_mats[node_id][1][par_next][next];
+            double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+            p_cur += p_cur_mb*mar;
+          }
         }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     }
   } else {
     //check if all children are updated
@@ -2020,6 +2151,8 @@ posterior_start(const vector<size_t> &subtree_sizes,
           }
         }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     } else { // internal node // two children
       double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
       double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
@@ -2055,10 +2188,10 @@ posterior_start(const vector<size_t> &subtree_sizes,
         }
       }
     }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
   }
   updated[node_id] = true;
-  diff += abs(meth_prob_table[pos][node_id] - p_cur);
-  meth_prob_table[pos][node_id] = p_cur;
 }
 
 
@@ -2077,29 +2210,34 @@ posterior_middle(const vector<size_t> &subtree_sizes,
   double mar;
   double p_cur = 0.0;
   if (subtree_sizes[node_id] == 1) { // leaf
-    double p_prev = meth_prob_table[pos-1][parent_id];
-    double p_parent_next = meth_prob_table[pos+1][parent_id];
-    double p_parent_cur = meth_prob_table[pos][parent_id];
-    double p_next = meth_prob_table[pos+1][node_id];
+    bool LEAF = false;
+    if (LEAF) {
+      double p_prev = meth_prob_table[pos-1][parent_id];
+      double p_parent_next = meth_prob_table[pos+1][parent_id];
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_next = meth_prob_table[pos+1][node_id];
 
-    for (size_t prev = 0; prev < 2; ++prev) {
-      double prev_p = (prev == 0) ? p_prev: 1.0 - p_prev;
-      for (size_t next = 0; next < 2; ++next) {
-        double next_p = (next == 0) ? p_next : 1.0 - p_next;
-        for (size_t par_next = 0; par_next <2; ++par_next) {
-          double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
-          for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
-            double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
-            mar = prev_p*next_p*par_next_p*par_cur_p;
-            double p_cur_u =  combined_trans_mats[node_id][prev][par_cur][0] *
-              combined_trans_mats[node_id][0][par_next][next];
-            double p_cur_m =  combined_trans_mats[node_id][prev][par_cur][1] *
-              combined_trans_mats[node_id][1][par_next][next];
-            double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-            p_cur += p_cur_mb*mar;
+      for (size_t prev = 0; prev < 2; ++prev) {
+        double prev_p = (prev == 0) ? p_prev: 1.0 - p_prev;
+        for (size_t next = 0; next < 2; ++next) {
+          double next_p = (next == 0) ? p_next : 1.0 - p_next;
+          for (size_t par_next = 0; par_next <2; ++par_next) {
+            double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+            for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+              double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+              mar = prev_p*next_p*par_next_p*par_cur_p;
+              double p_cur_u =  combined_trans_mats[node_id][prev][par_cur][0] *
+                combined_trans_mats[node_id][0][par_next][next];
+              double p_cur_m =  combined_trans_mats[node_id][prev][par_cur][1] *
+                combined_trans_mats[node_id][1][par_next][next];
+              double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+              p_cur += p_cur_mb*mar;
+            }
           }
         }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     }
   } else {
     //check if all children are updated
@@ -2114,7 +2252,6 @@ posterior_middle(const vector<size_t> &subtree_sizes,
       }
       count += subtree_sizes[child_id];
     }
-
     if (node_id == 0) { //root node  //root has 3 children!
       double hypo_prob_prev = meth_prob_table[pos-1][node_id];
       double hypo_prob_next = meth_prob_table[pos+1][node_id];
@@ -2162,6 +2299,8 @@ posterior_middle(const vector<size_t> &subtree_sizes,
           }
         }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     } else { // internal node // two children
       double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
       double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
@@ -2173,11 +2312,9 @@ posterior_middle(const vector<size_t> &subtree_sizes,
       double hypo_prob_par_next = meth_prob_table[pos+1][parent_id];
 
       for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
-        double prev_c0_p =
-          (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+        double prev_c0_p = (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
         for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
-          double prev_c1_p =
-          (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+          double prev_c1_p = (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
           for (size_t prev = 0; prev < 2; ++ prev) {
             double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
             for (size_t c0 = 0; c0 < 2; ++c0) {
@@ -2187,13 +2324,10 @@ posterior_middle(const vector<size_t> &subtree_sizes,
                 for (size_t next = 0; next < 2; ++next) {
                   double next_p = (next == 0) ? hypo_prob_next : 1.0 - hypo_prob_next;
                   for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
-                    double par_cur_p =
-                      (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+                    double par_cur_p = (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
                     for (size_t par_next = 0; par_next < 2; ++par_next) {
-                      double par_next_p =
-                        (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
-                      mar = prev_c0_p* prev_c1_p*prev_p*c0_p*
-                        c1_p*next_p*par_cur_p*par_next_p;
+                      double par_next_p = (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
+                      mar = prev_c0_p*prev_c1_p*prev_p*c0_p*c1_p*next_p*par_cur_p*par_next_p;
                       double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0]*
                         combined_trans_mats[children[0]][prev_c0][0][c0]*
                         combined_trans_mats[children[1]][prev_c1][0][c1]*
@@ -2212,10 +2346,10 @@ posterior_middle(const vector<size_t> &subtree_sizes,
         }
       }
     }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
   }
   updated[node_id] = true;
-  diff += abs(meth_prob_table[pos][node_id] - p_cur);
-  meth_prob_table[pos][node_id] = p_cur;
 }
 
 
@@ -2236,18 +2370,23 @@ posterior_end(const vector<size_t> &subtree_sizes,
   double p_cur = 0.0;
 
   if (subtree_sizes[node_id] == 1) { //leaf
-    double p_parent_cur = meth_prob_table[pos][parent_id];
-    double p_prev = meth_prob_table[pos-1][node_id];
-    for (size_t prev = 0; prev < 2; ++prev) {
-      double prev_p = (prev == 0) ? p_prev : 1.0 - p_prev;
-      for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
-        double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
-        mar = prev_p*par_cur_p;
-        double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0];
-        double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1];
-        double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-        p_cur += p_cur_mb*mar;
+    bool LEAF = false;
+    if (LEAF) {
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_prev = meth_prob_table[pos-1][node_id];
+      for (size_t prev = 0; prev < 2; ++prev) {
+        double prev_p = (prev == 0) ? p_prev : 1.0 - p_prev;
+        for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+          double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+          mar = prev_p*par_cur_p;
+          double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0];
+          double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1];
+          double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+          p_cur += p_cur_mb*mar;
+        }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     }
   } else {
     //check if all children are updated
@@ -2258,7 +2397,7 @@ posterior_end(const vector<size_t> &subtree_sizes,
       children.push_back(child_id);
       if (!updated[child_id]) {
         posterior_end(subtree_sizes, G, time_trans_mats, combined_trans_mats,
-                        pos, child_id, node_id, updated, meth_prob_table, diff);
+                      pos, child_id, node_id, updated, meth_prob_table, diff);
       }
       count += subtree_sizes[child_id];
     }
@@ -2281,14 +2420,11 @@ posterior_end(const vector<size_t> &subtree_sizes,
             for (size_t c2 = 0; c2 < 2; ++c2) {
               double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
               for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
-                double prev_c0_p =
-                  (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+                double prev_c0_p = (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
                 for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
-                  double prev_c1_p =
-                    (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+                  double prev_c1_p = (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
                   for (size_t prev_c2 = 0; prev_c2 < 2; ++prev_c2) {
-                    double prev_c2_p =
-                      (prev_c2 == 0) ? hypo_prob_prev_child_2 : 1.0 - hypo_prob_prev_child_2;
+                    double prev_c2_p = (prev_c2 == 0) ? hypo_prob_prev_child_2 : 1.0 - hypo_prob_prev_child_2;
                     mar = prev_p*c0_p*c1_p*c2_p*prev_c0_p*prev_c1_p*prev_c2_p;
                     double p_cur_u = combined_trans_mats[children[0]][prev_c0][0][c0]*
                       combined_trans_mats[children[1]][prev_c1][0][c1]*
@@ -2304,6 +2440,8 @@ posterior_end(const vector<size_t> &subtree_sizes,
           }
         }
       }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     } else { // internal node // two children
       double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
       double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
@@ -2341,12 +2479,11 @@ posterior_end(const vector<size_t> &subtree_sizes,
         }
       }
     }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
   }
   updated[node_id] = true;
-  diff += abs(meth_prob_table[pos][node_id] - p_cur);
-  meth_prob_table[pos][node_id] = p_cur;
 }
-
 
 
 static void
@@ -2358,7 +2495,6 @@ iterate_update(const vector<size_t> &subtree_sizes,
                const double tolerance,
                vector<vector<double> > &meth_prob_table) {
 
-  // cerr << "iterate update" << endl;
   size_t n_nodes = subtree_sizes.size();
   size_t n_sites = meth_prob_table.size();
   double tol = tolerance *n_nodes*n_sites;
@@ -2367,7 +2503,6 @@ iterate_update(const vector<size_t> &subtree_sizes,
     double diff = std::numeric_limits<double>::max();
     size_t start = reset_points[i];
     size_t end = reset_points[i+1];
-    //cerr << "block " << i << "\t" << (n_nodes*(end-start)) << endl;
     while (diff > tol) {
       diff = 0.0;
       for (size_t j = start; j < end; ++j) {
@@ -2388,7 +2523,6 @@ iterate_update(const vector<size_t> &subtree_sizes,
                            0, updated, meth_prob_table, diff);
         }
       }
-      //cerr << "Average diff =" << diff/(n_nodes*(end-start)) << endl;
     }
   }
 }
@@ -2424,6 +2558,14 @@ approx_posterior(const vector<size_t> &subtree_sizes,
   //update iteratively
   iterate_update(subtree_sizes, reset_points, G, time_trans_mats,
                  combined_trans_mats, tolerance, meth_prob_table);
+
+  // for (size_t i = 0; i < meth_prob_table.size(); ++i) {
+  //   cerr << i << "\t";
+  //   for (size_t k = 0; k < subtree_sizes.size(); ++k) {
+  //     cerr << meth_prob_table[i][k] << "\t";
+  //   }
+  //   cerr << endl;
+  // }
 }
 
 
@@ -2456,7 +2598,6 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
                                     combined_trans_mats_dg0,
                                     combined_trans_mats_dg1,
                                     combined_trans_mats_dT);
-
   vector<vector<double> >G(2, vector<double>(2, 0.0));
   G[0][0] = g0;
   G[0][1] = 1.0 - g0;
@@ -2500,16 +2641,15 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
                   for (size_t k = 0; k < n_params; ++k) {
                     if (k == 1) { //drate
                       deriv_ele[k] += p_par*p_chi*(Ts[child_id]*(kronecker_delta(chi, 1)*2-1));
-                    } else if (k > 4) { //dT
+                    } else if (k == child_id + 4) { //dT
                       deriv_ele[k] += p_par*p_chi*Q[par][chi];
                     }
                   }
                 }
               }//end par
-
               log_prod_branches += llk_ele;
               for (size_t k = 0; k < n_params; ++k) {
-                if (k < 2 || k == child_id+4) {
+                if (k == 1 || k == child_id + 4) {
                   Logscale inc(log(abs(deriv_ele[k]))-llk_ele, sign(deriv_ele[k]));
                   Logscale result;
                   log_sum_log_sign(log_deriv_prod_branches[k], inc, result);
@@ -2523,15 +2663,11 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
           // start position log-likelihood increment
           llk_by_site[pos] = log_sum_log(llk_by_site[pos], log(p_root*pi[root]) +
                                          log_prod_branches);
-
-          Logscale pi_drate(-log(pi[root]), kronecker_delta(root,0)*2-1);
-          Logscale result;
-          log_sum_log_sign(log_deriv_prod_branches[0], pi_drate, result);
-          log_deriv_prod_branches[0].logval = result.logval;
-          log_deriv_prod_branches[0].symbol = result.symbol;
-
+          log_deriv_prod_branches[0].logval = -log(pi[root]);
+          log_deriv_prod_branches[0].symbol = kronecker_delta(root,0)*2-1;
           for (size_t k = 0; k < n_params; ++k) {
             log_deriv_prod_branches[k].logval += log(p_root*pi[root]) + log_prod_branches;
+            Logscale result;
             log_sum_log_sign(deriv_by_site[pos][k], log_deriv_prod_branches[k], result);
             deriv_by_site[pos][k].logval = result.logval;
             deriv_by_site[pos][k].symbol = result.symbol;
@@ -2539,7 +2675,8 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
         } //end root
         // start position log deriv of log-likelihood
         for (size_t k = 0; k < n_params; ++k) {
-          deriv_by_site[pos][k].logval = deriv_by_site[pos][k].logval - llk_by_site[pos];
+          if (k < 2 || k > 4)
+            deriv_by_site[pos][k].logval = deriv_by_site[pos][k].logval - llk_by_site[pos];
         }
       } else { // L_{pos-1, pos}
         for (size_t prev_root = 0; prev_root < 2; ++prev_root) {
@@ -2562,36 +2699,40 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
                       double p_prev = (prev == 0) ? meth_prob_table[pos-1][child_id] : 1.0 - meth_prob_table[pos-1][child_id];
                       llk_ele = log_sum_log(llk_ele, log(p_par*p_cur*p_prev*combined_trans_mats[child_id][prev][par][cur]));
                       deriv_ele[1] += p_par*p_cur*p_prev*combined_trans_mats_drate[child_id][prev][par][cur];
-                      deriv_ele[2] += p_par*p_cur*p_prev*combined_trans_mats_dg0[child_id][prev][par][cur];
-                      deriv_ele[3] += p_par*p_cur*p_prev*combined_trans_mats_dg1[child_id][prev][par][cur];
+                      if (prev == 0) {
+                        deriv_ele[2] += p_par*p_cur*p_prev*combined_trans_mats_dg0[child_id][prev][par][cur];
+                      } else {
+                        deriv_ele[3] += p_par*p_cur*p_prev*combined_trans_mats_dg1[child_id][prev][par][cur];
+                      }
                       deriv_ele[child_id+4] += p_par*p_cur*p_prev*combined_trans_mats_dT[child_id][prev][par][cur];
-                      //cerr << "Branches deriv\t" << deriv_ele[child_id + 4]  << "\t" << endl;
                     }
                   }
                 }
                 log_prod_branches += llk_ele;
                 for (size_t k = 0; k < n_params; ++k) {
-                  Logscale inc(log(abs(deriv_ele[k]))-llk_ele, sign(deriv_ele[k]));
-                  Logscale result;
-                  log_sum_log_sign(inc, log_deriv_prod_branches[k], result);
-                  log_deriv_prod_branches[k].logval = result.logval;
-                  log_deriv_prod_branches[k].symbol = result.symbol;
+                  if ( k!= 0 && k != 4) {
+                    Logscale inc(log(abs(deriv_ele[k]))-llk_ele, sign(deriv_ele[k]));
+                    Logscale result;
+                    log_sum_log_sign(inc, log_deriv_prod_branches[k], result);
+                    log_deriv_prod_branches[k].logval = result.logval;
+                    log_deriv_prod_branches[k].symbol = result.symbol;
+                  }
                 }
                 count += subtree_sizes[child_id];
               }
-
-              Logscale G_dg0(-log(G[prev_root][root]),
-                             sign(kronecker_delta(prev_root, root)*2 -1)*kronecker_delta(prev_root,0));
-              Logscale G_dg1(-log(G[prev_root][root]),
-                             sign(kronecker_delta(prev_root, root)*2 -1)*kronecker_delta(prev_root,1));
-              Logscale result;
-              log_sum_log_sign(G_dg0, log_deriv_prod_branches[2], result);
-              log_deriv_prod_branches[2].logval = result.logval;
-              log_deriv_prod_branches[2].symbol = result.symbol;
-              log_sum_log_sign(G_dg1, log_deriv_prod_branches[3], result);
-              log_deriv_prod_branches[3].logval = result.logval;
-              log_deriv_prod_branches[3].symbol = result.symbol;
             } // end node
+
+            Logscale G_dg0(-log(G[prev_root][root]),
+                           (kronecker_delta(prev_root, root)*2 -1)*kronecker_delta(prev_root,0));
+            Logscale G_dg1(-log(G[prev_root][root]),
+                           (kronecker_delta(prev_root, root)*2 -1)*kronecker_delta(prev_root,1));
+            Logscale result;
+            log_sum_log_sign(G_dg0, log_deriv_prod_branches[2], result);
+            log_deriv_prod_branches[2].logval = result.logval;
+            log_deriv_prod_branches[2].symbol = result.symbol;
+            log_sum_log_sign(G_dg1, log_deriv_prod_branches[3], result);
+            log_deriv_prod_branches[3].logval = result.logval;
+            log_deriv_prod_branches[3].symbol = result.symbol;
 
             double lp = log_prod_branches + log(G[prev_root][root]*p_prev_root*p_root);
             for (size_t k = 0; k < n_params; ++k) {
@@ -2603,8 +2744,7 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
                 deriv_by_site[pos][k].symbol = result.symbol;
               }
             }
-            llk_by_site[pos] =
-              log_sum_log(llk_by_site[pos], log(p_prev_root*p_root*G[prev_root][root]) + log_prod_branches);
+            llk_by_site[pos] = log_sum_log(llk_by_site[pos], lp);
           } // end root
         } //end prev_root
         for (size_t k = 0; k < n_params; ++k) {
@@ -2626,13 +2766,99 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
     }
   }
   deriv = vector<double>(n_params, 0.0);
-  cerr <<"Final log deriv\t";
   for (size_t k = 0; k < n_params; ++k) {
-    cerr << log_deriv[k].logval << "\t";
     deriv[k] = exp(log_deriv[k].logval)*log_deriv[k].symbol;
   }
-  cerr << endl;
 }
+
+
+bool
+approx_optimize_iteration(const double TOL,
+                          const vector<vector<double> > &meth_prob_table,
+                          const vector<size_t> &reset_points,
+                          const vector<size_t> &subtree_sizes,
+                          const vector<double> &params, //pi0, rate0, g0, g1, 1.0-exp(-branches)
+                          const double &llk,
+                          const vector<double> &deriv,
+                          bool &CONVERGED, vector<double> &newparams,
+                          double &newllk, vector<double> &newderiv,
+                          double &diff) {
+  cerr << "Loglikelihood = " << llk << endl;
+  for (size_t i = 0; i < deriv.size(); ++i)
+    cerr << "d[" << i << "]=" << deriv[i] << "\t";
+  cerr << endl;
+
+  const size_t n_nodes = subtree_sizes.size();
+  bool SUCCESS = false;
+
+  double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) +  abs(deriv[3]);
+  double branchnorm = 0.0;
+  for (size_t i = 5; i < deriv.size(); ++i) {
+    branchnorm += abs(deriv[i]);
+  }
+
+  double r = 1.0/norm; //maximization (-1.0 if minimization)
+  double br = 1.0/branchnorm; //maximization (-1.0 if minimization)
+
+  // Find proper starting factor
+  for (size_t i = 0; i < 4; ++i) {
+    double candidate_param = params[i] + deriv[i]*r;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      r = r/2;
+      candidate_param = params[i] + deriv[i]*r;
+    }
+  }
+
+  const size_t n_params = n_nodes + 4;
+  for (size_t i = 5; i < n_params; ++i) {
+    double candidate_param = params[i] + deriv[i]*br;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      br = br/2;
+      candidate_param = params[i] + deriv[i]*br;
+    }
+  }
+
+  newparams = vector<double>(n_params, 0.0);
+  // Reduce factor untill improvement or convergence
+  while (!SUCCESS && !CONVERGED ) {
+    for (size_t i = 0; i < n_params; ++i) {
+      double fac = 0.0;
+      diff = 0.0;
+      if (i < 4) fac = r;
+      if (i > 4) fac = br;
+      newparams[i] = params[i] + fac*deriv[i];
+      diff += abs(fac*deriv[i]);
+    }
+
+    posterior_to_llk_deriv(subtree_sizes, newparams, reset_points,
+                           meth_prob_table, newllk, newderiv);
+    if (newllk > llk) {
+      SUCCESS = true;
+      cerr << "Improve = " << newllk - llk << "\t loglikelihood = " << newllk << endl;
+    } else {
+      r = r/2;
+      br = br/2;
+      if (r*norm <= TOL && br*norm <= TOL) {
+        CONVERGED = true;
+        return SUCCESS;
+      }
+    }
+  }
+
+  cerr <<"[New param]\t";
+  for (size_t i = 0; i < newparams.size(); ++i){
+    if (i < 5) {
+      cerr << newparams[i] << "\t";
+    } else {
+      cerr << -log(1.0 - newparams[i])  << "\t";
+    }
+  }
+  cerr << endl << endl;
+  return SUCCESS;
+}
+
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -2645,6 +2871,9 @@ main(int argc, const char **argv) {
   try{
     size_t desert_size = 1000;
     size_t minCpG = 50;
+    double tolerance = 1e-10;
+    size_t MAXITER = 80;
+
 
     // run mode flags
     bool VERBOSE = false;
@@ -2703,6 +2932,26 @@ main(int argc, const char **argv) {
       cerr << "loaded tree (leaves=" << n_leaves << ")" << endl;
 
     /**************************************************************************/
+    /******************** INITIALIZE PARAMETERS *******************************/
+    double pi0 = 0.1;
+    double rate0 = 0.5;
+    double g0 = 0.75;
+    double g1 = 0.8;
+
+    vector<double> Ts;
+    for (size_t i = 0; i < branches.size(); ++i) {
+      Ts.push_back(1.0-1.0/exp(branches[i]));
+    }
+
+    const size_t n_nodes = subtree_sizes.size();
+    vector<double> start_param(n_nodes+4, 0.0);
+    start_param[0] = pi0; start_param[1] = rate0;
+    start_param[2] = g0; start_param[3] = g1;
+    for (size_t i = 1; i < n_nodes; ++i) {
+      start_param[4+i] = Ts[i];
+    }
+
+    /**************************************************************************/
     /******************** LOAD METHYLATION DATA *******************************/
     vector<Site> sites;
 
@@ -2714,33 +2963,12 @@ main(int argc, const char **argv) {
       separate_regions(desert_size, states, sites, reset_points);
       if (VERBOSE)
         cerr << "Total" << reset_points.size() -1 << "blocks" << endl;
-      //test transition probabilities.
-      double pi0 = 0.1;
-      double rate0 = 0.5;
-      double g0 = 0.8;
-      double g1 = 0.9;
-
-      vector<double> Ts;
-      for (size_t i = 0; i < branches.size(); ++i) {
-        Ts.push_back(1.0-1.0/exp(branches[i]));
-      }
-
-      const size_t n_nodes = subtree_sizes.size();
-      vector<double> start_param(n_nodes+4, 0.0);
-      start_param[0] = pi0; start_param[1] = rate0;
-      start_param[2] = g0; start_param[3] = g1;
-      for (size_t i = 1; i < n_nodes; ++i) {
-        start_param[4+i] = Ts[i];
-      }
 
       vector<Logscale> param_derivs;
+      vector<double> newparams;
       double llk;
-      loglik_complete_tree(states, reset_points, subtree_sizes,
-                           start_param, llk, param_derivs);
-      cerr << llk << endl;
-      for (size_t i = 0; i < param_derivs.size(); ++i)
-        cerr << exp(param_derivs[i].logval)*param_derivs[i].symbol << "\t" ;
-
+      complete_optimize(tolerance, MAXITER, states, reset_points,
+                        subtree_sizes, start_param, newparams,llk);
     }
 
     if (!COMPLETE) {
@@ -2785,7 +3013,6 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "Filled probabilities at missing sites" << endl;
 
-
       vector<vector<double> > tree_prob_table;
       leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
       if (VERBOSE)
@@ -2793,80 +3020,78 @@ main(int argc, const char **argv) {
 
       /**************************************************************************/
       /*************************  STARTING PARAMETERS ***************************/
-      const size_t n_nodes = subtree_sizes.size();
       const size_t n_hme = pow(2,n_nodes);
       vector<string> all_states;
       for (size_t i = 0; i < n_hme; ++i) {
         all_states.push_back(dec2binary(n_nodes, i));
       }
 
-      //test transition probabilities.
-      double pi0 = 0.11;
-      double rate0 = 0.4;
-      double g0 = 0.73;
-      double g1 = 0.79;
-      double llk = 0;
-
-      vector<double> Ts;
-      for (size_t i = 0; i < branches.size(); ++i) {
-        Ts.push_back(1.0-1.0/exp(branches[i]));
-      }
-
-      vector<double> start_param(n_nodes+4, 0.0);
-      start_param[0] = pi0; start_param[1] = rate0;
-      start_param[2] = g0; start_param[3] = g1;
-      for (size_t i = 1; i < n_nodes; ++i) {
-        start_param[4+i] = Ts[i];
-      }
-
-
       /**************************************************************************/
-      cerr << "Approx posterior" << endl;
-      double tolerance = 1e-4;
-      approx_posterior(subtree_sizes, start_param, reset_points,
-                       tolerance, tree_prob_table);
-
-      double appllk = 0.0;
-      vector<double> appderiv;
-      posterior_to_llk_deriv(subtree_sizes, start_param, reset_points,
-                             tree_prob_table, appllk, appderiv);
-
-      cerr << "appllk\t" << appllk << endl;
-      cerr << "appderiv\t";
-      for (size_t k = 0; k < appderiv.size(); ++k) {
-        cerr << appderiv[k] << "\t";
-      }
-      cerr<< endl;
-      /**************************************************************************/
-      /*************************  OPTIMIZATION **********************************/
-      bool FULL = false;
-      bool DERIV = true;
-      if (!DERIV) {
-        vector<double> deriv;
-        if (FULL) {
-          llk = llk_by_forward_algorithm_deriv(reset_points, subtree_sizes,
-                                               all_states, start_param,
-                                               meth_prob_table, deriv);
-        } else {
-          llk = llk_by_rstr_forward_algorithm_deriv(reset_points, subtree_sizes,
-                                                    all_states, start_param,
-                                                    meth_prob_table, deriv);
+      /******************** APPROXIMATE OPTIMIZATION ****************************/
+      bool APP = true;
+      if (APP) {
+        cerr << "Approx posterior" << endl;
+        double tol = 1e-5;
+        double diff = std::numeric_limits<double>::max();
+        size_t iter = 0;
+        while (iter < MAXITER && diff > tol) {
+          cerr << "Iteration " << iter << endl;
+          double appllk = 0.0;
+          vector<double> appderiv;
+          vector<double> newparams;
+          vector<double> newderiv;
+          double newllk;
+          bool CONVERGED = false;
+          leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+          approx_posterior(subtree_sizes, start_param, reset_points, tol,
+                           tree_prob_table);
+          posterior_to_llk_deriv(subtree_sizes, start_param, reset_points,
+                                 tree_prob_table, appllk, appderiv);
+          approx_optimize_iteration(tolerance, tree_prob_table, reset_points,
+                                    subtree_sizes, start_param, appllk, appderiv,
+                                    CONVERGED, newparams, newllk, newderiv, diff);
+          start_param=newparams;
+          ++iter;
         }
-        cerr << "[Log-likelihood] " << llk << endl;
-        for (size_t k = 0; k < n_nodes+4; ++k) {
-          if (k!=4)
-            cerr << deriv[k] << "\t";
-          cerr << endl;
+        if (diff <= tol)
+          cerr << "Converged at iteration " << iter << endl;
+
+        cerr << "[Results]\t";
+        for (size_t i = 5; i < start_param.size(); ++i) {
+          branches[i-4] = -log(1.0 - start_param[i]);
+          cerr << branches[i-4] << "\t";
         }
+        cerr << endl;
+
       } else {
+        bool FULL = true;
+        bool DERIV = true;
         if (FULL)
           cerr << "============== FULL TRANSITION===================" << endl;
         else
           cerr << "================ RESTRICTED ====================="<< endl;
-
-        double tolerance = 1e-10;
-        optimize(FULL, tolerance, meth_prob_table, reset_points, subtree_sizes,
-                 all_states, start_param);
+        if (!DERIV) {
+          vector<double> deriv;
+          double llk = 0;
+          if (FULL) {
+            llk = llk_by_forward_algorithm_deriv(reset_points, subtree_sizes,
+                                                 all_states, start_param,
+                                                 meth_prob_table, deriv);
+          } else {
+            llk = llk_by_rstr_forward_algorithm_deriv(reset_points, subtree_sizes,
+                                                      all_states, start_param,
+                                                      meth_prob_table, deriv);
+          }
+          cerr << "[Log-likelihood] " << llk << endl;
+          for (size_t k = 0; k < n_nodes+4; ++k) {
+            if (k!=4)
+              cerr << deriv[k] << "\t";
+            cerr << endl;
+          }
+        } else {
+          optimize(FULL, tolerance, meth_prob_table, reset_points, subtree_sizes,
+                   all_states, start_param);
+        }
       }
     }
   }
