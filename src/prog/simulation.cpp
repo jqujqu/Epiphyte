@@ -113,9 +113,9 @@ is_bg_line(const char *line){
 }
 
 void
-parse_paramfile(const string param_file, 
-                vector<double> &G, vector<double> &Q, 
-                size_t &coverage, vector<double> &F_PARAM, 
+parse_paramfile(const string param_file,
+                vector<double> &G, vector<double> &Q,
+                size_t &coverage, vector<double> &F_PARAM,
                 vector<double> &B_PARAM,
                 PhyloTreePreorder &t){
   G = vector<double>(2, 0);
@@ -128,7 +128,7 @@ parse_paramfile(const string param_file,
     throw SMITHLABException("bad file: " + param_file);
   while (!in.eof()){
     char buffer[buffer_size];
-    in.getline(buffer, buffer_size); 
+    in.getline(buffer, buffer_size);
     if (in.gcount() == buffer_size - 1)
       throw SMITHLABException("Line too long in file: " + param_file);
     std::istringstream is(buffer);
@@ -151,15 +151,15 @@ parse_paramfile(const string param_file,
 
 
 static void
-load_cpgs(const string &cpgs_file, 
+load_cpgs(const string &cpgs_file,
           vector<SimpleGenomicRegion> &cpgs){
-  
+
   vector<GenomicRegion> cpgs_in;
   ReadBEDFile(cpgs_file, cpgs_in);
   assert(check_sorted(cpgs_in));
   if (!check_sorted(cpgs_in))
     throw SMITHLABException("regions not sorted in file: " + cpgs_file);
-  
+
   for (size_t i = 0; i < cpgs_in.size(); ++i) {
     cpgs.push_back(SimpleGenomicRegion(cpgs_in[i]));
   }
@@ -170,31 +170,31 @@ load_cpgs(const string &cpgs_file,
 // true=foreground=u=hypomethylated
 // false=background=m=hypermethylated
 void sim_root_state(const bool prev,
-                    const vector<double> &G, 
+                    const vector<double> &G,
                     bool &new_state) {
-  double p = prev? G[0]: G[1]; 
+  double p = prev? G[0]: G[1];
   const gsl_rng_type * T;
   gsl_rng * r;
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
   long seed = rand();
-  gsl_rng_set (r, seed);    
+  gsl_rng_set (r, seed);
 
   size_t sample = gsl_ran_bernoulli(r, p);
   if(sample == 1)
     new_state = prev;
-  else 
-    new_state = !prev; 
+  else
+    new_state = !prev;
 
   gsl_rng_free(r);
 }
 
 //NTP: Normalized Transition Probability
 void sim_newstate(const bool prev, const bool ancestor,
-                  const vector<double> &G, 
+                  const vector<double> &G,
                   const vector<double> &Q,
-                  const double branch, 
-                  bool &new_state){ 
+                  const double branch,
+                  bool &new_state){
   double tol = 1e-10;
   double NTP = 0; //probability of getting foreground
   double t = Q[0]+Q[1];
@@ -225,22 +225,22 @@ void sim_newstate(const bool prev, const bool ancestor,
     total = (1-G[1])*p0 + G[1]*p1;
     NTP = (1-G[1])*p0/total;
   }
-  
+
   const gsl_rng_type * T;
   gsl_rng * r;
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
   long seed = rand();
-  gsl_rng_set (r, seed);    
-  new_state = gsl_ran_bernoulli(r, NTP); 
+  gsl_rng_set (r, seed);
+  new_state = gsl_ran_bernoulli(r, NTP);
   gsl_rng_free(r);
 }
 
 //simulate first positon in a segment
 void sim_newstate(const bool ancestor,
                   const vector<double> &Q,
-                  const double branch, 
-                  bool &new_state){ 
+                  const double branch,
+                  bool &new_state){
   double t = Q[0]+Q[1];
   double h = exp(-t*branch);
   double p0; //prob of transition into "u" state
@@ -255,8 +255,8 @@ void sim_newstate(const bool ancestor,
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
   long seed = rand();
-  gsl_rng_set(r, seed); 
-  new_state = gsl_ran_bernoulli(r, p0); 
+  gsl_rng_set(r, seed);
+  new_state = gsl_ran_bernoulli(r, p0);
   gsl_rng_free(r);
 }
 
@@ -265,8 +265,8 @@ void sim_newstate(const bool ancestor,
 void
 simulate_position(const bool first,
                   const vector<bool> &prev_states,
-                  const vector<double> &G, 
-                  const vector<double> &Q, 
+                  const vector<double> &G,
+                  const vector<double> &Q,
                   const vector<size_t> &subtree_sizes,
                   const vector<size_t> &tree_parent_index,
                   const vector<double> &branches,
@@ -280,7 +280,7 @@ simulate_position(const bool first,
     sim_root_state(prev_states[0], G, new_state);
   }
   states[0] = new_state;
-    
+
   for (size_t i = 1; i < subtree_sizes.size(); ++i ) {
     double b = branches[i];
     bool ancestor_state = states[tree_parent_index[i]];
@@ -295,7 +295,7 @@ simulate_position(const bool first,
 
 
 
-void 
+void
 printHME(const vector<bool> &HME) {
   for (size_t i=0; i < HME.size(); ++i) {
     if(HME[i]) cerr << 0 ;
@@ -304,8 +304,8 @@ printHME(const vector<bool> &HME) {
   cerr <<endl;
 }
 
-void 
-simulate_counts(const size_t NB_r, const double NB_p, 
+void
+simulate_counts(const size_t NB_r, const double NB_p,
                 const vector<double> &beta_params,
                 double &meth, size_t &N) {
   const gsl_rng_type * T;
@@ -313,7 +313,7 @@ simulate_counts(const size_t NB_r, const double NB_p,
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
   long seed = rand();
-  gsl_rng_set(r, seed); 
+  gsl_rng_set(r, seed);
   N =  gsl_ran_negative_binomial (r, NB_p, NB_r);
   double pm = gsl_ran_beta (r, beta_params[0], beta_params[1]);
   meth = static_cast<double>(gsl_ran_binomial (r, pm, N))/N;
@@ -334,7 +334,7 @@ bool
 write_states(std::ostream &out,
              const string &chrom, const size_t &pos,
              const string &strand, const vector<bool> &HME) {
-  
+
   string seq="";
   for(size_t i =0; i < HME.size(); ++i){
     if(HME[i]) seq +="T";
@@ -344,17 +344,37 @@ write_states(std::ostream &out,
           << "\t" << seq << '\n');
 }
 
+string
+HME_to_hypoprob(const vector<size_t> subtree_sizes,
+                const vector<bool> &HME) {
+  string s;
+  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    if (subtree_sizes[i] == 1) {
+      s+="\t";
+      s += (HME[i]) ? "1" : "0";
+    }
+  }
+  return s;
+}
 
-static void 
-get_parent_index(const vector<size_t> &subtree_sizes, 
+bool
+write_hypoprob(std::ostream &out,
+               const string &chrom, const size_t &pos,
+               const vector<size_t> &subtree_sizes,
+               const vector<bool> HME) {
+  return (out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME) << '\n' );
+}
+
+static void
+get_parent_index(const vector<size_t> &subtree_sizes,
                  vector<size_t> &tree_parent_index) {
   tree_parent_index = vector<size_t>(subtree_sizes.size(), 0);
   for (size_t i = 0; i < subtree_sizes.size(); ++i) {
     if (subtree_sizes[i] > 1) {
-      size_t count =1; 
+      size_t count =1;
       while (count < subtree_sizes[i]) {
-        size_t child = i+count; 
-        tree_parent_index[child] = i; 
+        size_t child = i+count;
+        tree_parent_index[child] = i;
         count += subtree_sizes[child];
       }
     }
@@ -363,7 +383,7 @@ get_parent_index(const vector<size_t> &subtree_sizes,
 
 
 int main(int argc, const char **argv) {
-  
+
   try {
     bool VERBOSE = false;
     bool DEBUG = false;
@@ -373,16 +393,16 @@ int main(int argc, const char **argv) {
     /****************** COMMAND LINE OPTIONS ********************/
     OptionParser opt_parse(strip_path(argv[0]), "simulate methylomes "
                            "according phylogenetic trees", "<parameter file>");
-    opt_parse.add_opt("CpG", 'c', "methcount file or bed file", 
+    opt_parse.add_opt("CpG", 'c', "methcount file or bed file",
                       true, cpgs_file);
     opt_parse.add_opt("singlesite", 's', "simulate sites independently", false, SINGLE);
-    opt_parse.add_opt("desert", 'd', "desert size (default 1000)", 
+    opt_parse.add_opt("desert", 'd', "desert size (default 1000)",
                       false, desertsize);
     opt_parse.add_opt("output", 'o', "name of output file "
                       "(default: stdout)", false, outfile);
-    opt_parse.add_opt("verbose", 'v', "print more run info", 
+    opt_parse.add_opt("verbose", 'v', "print more run info",
                       false, VERBOSE);
-    opt_parse.add_opt("debug", 'D', "print Debug info", 
+    opt_parse.add_opt("debug", 'D', "print Debug info",
                       false, DEBUG);
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
@@ -412,8 +432,8 @@ int main(int argc, const char **argv) {
 
     string tree_rep;
     vector<double> G, Q;
-    size_t coverage; 
-    vector<double> F_PARAM, B_PARAM; 
+    size_t coverage;
+    vector<double> F_PARAM, B_PARAM;
     if(VERBOSE)
       cerr << "----Reading parameters----" << endl;
     PhyloTreePreorder t;
@@ -427,7 +447,7 @@ int main(int argc, const char **argv) {
     vector<double> branches;
     t.get_branch_lengths(branches);
 
-    
+
     vector<SimpleGenomicRegion> cpgs;
     vector<pair<double, double> > meths;
     vector<size_t> reads;
@@ -441,10 +461,10 @@ int main(int argc, const char **argv) {
     srand(time(NULL));
     vector<vector<bool> > HMEs;
     vector<bool> prev_HME, HME;
-    bool first; 
+    bool first;
 
     for(size_t j = 0; j < cpgs.size(); ++j){
-      first = (j == 0 || 
+      first = (j == 0 ||
                (j > 0 && cpgs[j].distance(cpgs[j-1]) > desertsize));
       if (SINGLE) first = true;
       prev_HME = HME;
@@ -461,7 +481,7 @@ int main(int argc, const char **argv) {
       cerr << endl;
     }
 
-    vector<size_t> leafidx; 
+    vector<size_t> leafidx;
     for(size_t i = 0; i < subtree_sizes.size(); ++i){
       if (subtree_sizes[i] == 1)
         leafidx.push_back(i);
@@ -494,20 +514,33 @@ int main(int argc, const char **argv) {
       }
       of.close();
     }
-    
+
     string state_outfile = outfile + "_treestates";
     std::ofstream of;
     if (!state_outfile.empty()) of.open(state_outfile.c_str());
     std::ostream out(outfile.empty() ? cout.rdbuf() : of.rdbuf());
     if(VERBOSE) cerr << "Writing to " << state_outfile << endl;
-        
     out << "##" << t.Newick_format() << endl;
     for(size_t j = 0; j < cpgs.size(); ++j)
       write_states(out, cpgs[j].get_chrom(), cpgs[j].get_start(),
                    "+", HMEs[j]);
     of.close();
 
-    
+    string hypoprob_outfile = outfile + "_hypoprobs";
+    if (!hypoprob_outfile.empty()) of.open(hypoprob_outfile.c_str());
+    std::ostream hout(outfile.empty() ? cout.rdbuf() : of.rdbuf());
+    if(VERBOSE) cerr << "Writing to " << hypoprob_outfile << endl;
+
+    for (size_t i = 0; i < leaf_names.size(); ++i) {
+      out << leaf_names[i] << "\t";
+    }
+    out << "\n";
+    for(size_t j = 0; j < cpgs.size(); ++j)
+      write_hypoprob(hout, cpgs[j].get_chrom(), cpgs[j].get_start(),
+                     subtree_sizes, HMEs[j]);
+    of.close();
+
+
   }catch (const SMITHLABException &e) {
     cerr << e.what() << endl;
     return EXIT_FAILURE;
