@@ -294,7 +294,8 @@ simulate_position(const bool first,
 }
 
 
-
+// HME: true = hypo = 0 = T;
+//      false = hyper = 1 = C;
 void
 printHME(const vector<bool> &HME) {
   for (size_t i=0; i < HME.size(); ++i) {
@@ -344,6 +345,7 @@ write_states(std::ostream &out,
           << "\t" << seq << '\n');
 }
 
+// hypoprob = 1 <=> true, hypo, state="0", "T"
 string
 HME_to_hypoprob(const vector<size_t> subtree_sizes,
                 const vector<bool> &HME) {
@@ -351,7 +353,7 @@ HME_to_hypoprob(const vector<size_t> subtree_sizes,
   for (size_t i = 0; i < subtree_sizes.size(); ++i) {
     if (subtree_sizes[i] == 1) {
       s+="\t";
-      s += (HME[i]) ? "1" : "0";
+      s += (HME[i]) ? "1.0" : "0.0";
     }
   }
   return s;
