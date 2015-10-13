@@ -322,7 +322,7 @@ separate_regions(const bool VERBOSE,
                  const size_t min_site_per_block,
                  vector<vector<double> > &meth, vector<Site> &sites,
                  vector<size_t> &reset_points,
-                 double &g0_est, double &g1_est) {
+                 double &g0_est, double &g1_est, double &pi0_est) {
   const size_t nleaf = meth[0].size();
   const size_t totalsites = sites.size();
 
@@ -420,6 +420,7 @@ separate_regions(const bool VERBOSE,
   }
   g0_est = (g00+1)/(g01+g00+1);
   g1_est = (g11+1)/(g11+g10+1);
+  pi0_est = (g00+g01)/(g00+g01+g11+g10);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1838,6 +1839,7 @@ loglik_complete_tree(const vector<string> &states,
                      const vector<double> &params,
                      double &llk, vector<double> &derivs) {
 
+  cerr << "loglik_complete_tree" << endl;
   vector<double> start_log_probs;
   vector<vector<Logscale> > start_log_prob_derivs;
   vector<vector<double> > trans_log_probs;
@@ -1907,6 +1909,7 @@ complete_optimize_iteration(const double TOL,
   vector<double> deriv;
   loglik_complete_tree(states, reset_points, subtree_sizes,
                        params, llk, deriv);
+  cerr << "------" << llk << "-------" << endl;
   const size_t n_nodes = subtree_sizes.size();
   double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) + abs(deriv[3]);
   double branchnorm = 0.0;
@@ -1999,6 +2002,7 @@ complete_optimize(const double TOL,
 
   vector<double> old_params = start_params;
   while (iter < MAXITER  && diff > TOL) {
+    cerr << "complete_optimize_iter " << iter << endl;
     complete_optimize_iteration(TOL, states, reset_points, subtree_sizes,
                                 old_params, params, llk);
     cerr << "log-likelihood = " << llk << endl;
@@ -2013,8 +2017,6 @@ complete_optimize(const double TOL,
   if (iter < MAXITER)
     cerr << "Converged at iteration " << iter << endl;
 }
-
-
 
 
 // uninitialized nodes have value -1.0
@@ -2553,19 +2555,9 @@ approx_posterior(const vector<size_t> &subtree_sizes,
   G[1][0] = 1.0 - g1;
   G[1][1] = g1;
 
-  //initialize internal posteriors
-
   //update iteratively
   iterate_update(subtree_sizes, reset_points, G, time_trans_mats,
                  combined_trans_mats, tolerance, meth_prob_table);
-
-  // for (size_t i = 0; i < meth_prob_table.size(); ++i) {
-  //   cerr << i << "\t";
-  //   for (size_t k = 0; k < subtree_sizes.size(); ++k) {
-  //     cerr << meth_prob_table[i][k] << "\t";
-  //   }
-  //   cerr << endl;
-  // }
 }
 
 
@@ -2773,87 +2765,126 @@ posterior_to_llk_deriv(const vector<size_t> &subtree_sizes,
 
 
 bool
-approx_optimize_iteration(const double TOL,
+approx_optimize_iteration(const bool VERBOSE, const double TOL,
                           const vector<vector<double> > &meth_prob_table,
                           const vector<size_t> &reset_points,
                           const vector<size_t> &subtree_sizes,
                           const vector<double> &params, //pi0, rate0, g0, g1, 1.0-exp(-branches)
-                          const double &llk,
-                          const vector<double> &deriv,
+                          double llk,
+                          vector<double> deriv,
                           bool &CONVERGED, vector<double> &newparams,
                           double &newllk, vector<double> &newderiv,
                           double &diff) {
+
   cerr << "Loglikelihood = " << llk << endl;
   for (size_t i = 0; i < deriv.size(); ++i)
     cerr << "d[" << i << "]=" << deriv[i] << "\t";
   cerr << endl;
 
   const size_t n_nodes = subtree_sizes.size();
+  const size_t n_params = n_nodes + 4;
   bool SUCCESS = false;
 
-  double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) +  abs(deriv[3]);
-  double branchnorm = 0.0;
-  for (size_t i = 5; i < deriv.size(); ++i) {
-    branchnorm += abs(deriv[i]);
-  }
-
-  double r = 1.0/norm; //maximization (-1.0 if minimization)
-  double br = 1.0/branchnorm; //maximization (-1.0 if minimization)
-
-  // Find proper starting factor
-  for (size_t i = 0; i < 4; ++i) {
-    double candidate_param = params[i] + deriv[i]*r;
-    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-      r = r/2;
-      candidate_param = params[i] + deriv[i]*r;
-    }
-  }
-
-  const size_t n_params = n_nodes + 4;
-  for (size_t i = 5; i < n_params; ++i) {
-    double candidate_param = params[i] + deriv[i]*br;
-    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-      br = br/2;
-      candidate_param = params[i] + deriv[i]*br;
-    }
-  }
-
   newparams = vector<double>(n_params, 0.0);
+  vector<double> cur_deriv = deriv;
+  vector<double> cur_params = params;
   // Reduce factor untill improvement or convergence
-  while (!SUCCESS && !CONVERGED ) {
+  double norm =  abs(cur_deriv[1]); // + abs(cur_deriv[0])  + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+  double branchnorm = 0.0;
+  for (size_t i = 5; i < cur_deriv.size(); ++i) {
+    branchnorm += abs(cur_deriv[i]);
+  }
+
+  double r = 1.0/norm;
+  double br = 1.0/branchnorm;
+  while (!SUCCESS || !CONVERGED ) {
+    // Find proper starting factor
+    for (size_t i = 1; i < 2; ++i) { //  for (size_t i = 0; i < 4; ++i) {
+      double candidate_param = cur_params[i] + cur_deriv[i]*r;
+      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+        r = r/2;
+        candidate_param = cur_params[i] + cur_deriv[i]*r;
+      }
+    }
+
+    for (size_t i = 5; i < n_params; ++i) {
+      double candidate_param = cur_params[i] + cur_deriv[i]*br;
+      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+        br = br/2;
+        candidate_param = cur_params[i] + cur_deriv[i]*br;
+      }
+    }
+
     for (size_t i = 0; i < n_params; ++i) {
       double fac = 0.0;
       diff = 0.0;
-      if (i < 4) fac = r;
+      if (i ==1) fac = r; // if (i < 4) fac = r;
       if (i > 4) fac = br;
-      newparams[i] = params[i] + fac*deriv[i];
-      diff += abs(fac*deriv[i]);
+      newparams[i] = cur_params[i] + fac*cur_deriv[i];
+      diff += abs(newparams[i]- params[i]);
     }
 
     posterior_to_llk_deriv(subtree_sizes, newparams, reset_points,
                            meth_prob_table, newllk, newderiv);
     if (newllk > llk) {
       SUCCESS = true;
-      cerr << "Improve = " << newllk - llk << "\t loglikelihood = " << newllk << endl;
+
+      if (VERBOSE) {
+        cerr << "Improve = " << newllk - llk << "\t loglikelihood = " << newllk << endl;
+      }
+
+      if (abs((newllk - llk)/newllk) < TOL)
+        CONVERGED = true;
+      cur_deriv = newderiv;
+      cur_params = newparams;
+      llk = newllk;
+
+      norm = abs(cur_deriv[1]); // + abs(cur_deriv[0]) + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+      branchnorm = 0.0;
+      for (size_t i = 5; i < cur_deriv.size(); ++i) {
+        branchnorm += abs(cur_deriv[i]);
+      }
+      r = 1.0/norm;
+      br = 1.0/branchnorm;
+
+      if (VERBOSE) {
+        for (size_t i = 0; i < deriv.size(); ++i)
+        cerr << "d[" << i << "]=" << cur_deriv[i] << "\t";
+        cerr << endl;
+        cerr <<"[New param]\t";
+        for (size_t i = 0; i < newparams.size(); ++i){
+          if (i < 5) {
+            cerr << newparams[i] << "\t";
+          } else {
+            cerr << -log(1.0 - newparams[i])  << "\t";
+          }
+        }
+        cerr << endl;
+      }
+
     } else {
       r = r/2;
       br = br/2;
-      if (r*norm <= TOL && br*norm <= TOL) {
-        CONVERGED = true;
-        return SUCCESS;
+      if (VERBOSE) {
+        cerr << "half\t" << r*norm << "\t" << br*branchnorm << endl;
       }
+    }
+    if (r*norm <= TOL && br*branchnorm <= TOL) {
+      CONVERGED = true;
     }
   }
 
-  cerr <<"[New param]\t";
-  for (size_t i = 0; i < newparams.size(); ++i){
-    if (i < 5) {
-      cerr << newparams[i] << "\t";
-    } else {
-      cerr << -log(1.0 - newparams[i])  << "\t";
+  if (VERBOSE) {
+    cerr <<"[End of iteration]\t";
+    for (size_t i = 0; i < newparams.size(); ++i){
+      if (i < 5) {
+        cerr << newparams[i] << "\t";
+      } else {
+        cerr << -log(1.0 - newparams[i])  << "\t";
+      }
     }
+    cerr << endl << endl;
   }
-  cerr << endl << endl;
   return SUCCESS;
 }
 
@@ -2871,8 +2902,9 @@ main(int argc, const char **argv) {
   try{
     size_t desert_size = 1000;
     size_t minCpG = 50;
-    double tolerance = 1e-10;
-    size_t MAXITER = 80;
+    double tolerance = 1e-5;
+    size_t MAXITER = 20;
+    string outfile;
 
 
     // run mode flags
@@ -2887,6 +2919,8 @@ main(int argc, const char **argv) {
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
+    opt_parse.add_opt("output", 'o', "output file name", false, outfile);
+
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
     if (argc == 1 || opt_parse.help_requested()) {
@@ -2964,11 +2998,18 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "Total" << reset_points.size() -1 << "blocks" << endl;
 
-      vector<Logscale> param_derivs;
       vector<double> newparams;
       double llk;
       complete_optimize(tolerance, MAXITER, states, reset_points,
                         subtree_sizes, start_param, newparams,llk);
+      if (VERBOSE) {
+        cerr << "[Results]\t";
+        for (size_t i = 5; i < newparams.size(); ++i) {
+          branches[i-4] = -log(1.0 - newparams[i]);
+          cerr << branches[i-4] << "\t";
+        }
+        cerr << endl;
+      }
     }
 
     if (!COMPLETE) {
@@ -3001,9 +3042,13 @@ main(int argc, const char **argv) {
         cerr << "Read in total " << sites.size() << " sites" << endl
              << "Separating sites" << endl;
       vector<size_t> reset_points;
-      double g0_est, g1_est;
+      double g0_est, g1_est, pi0_est;
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
-                       sites, reset_points, g0_est, g1_est);
+                       sites, reset_points, g0_est, g1_est, pi0_est);
+
+      start_param[0] = pi0_est;
+      start_param[2] = g0_est;
+      start_param[3] = g1_est;
 
       if (VERBOSE)
         cerr << "After filtering: " << sites.size()
@@ -3031,7 +3076,7 @@ main(int argc, const char **argv) {
       bool APP = true;
       if (APP) {
         cerr << "Approx posterior" << endl;
-        double tol = 1e-5;
+        const double tol = 1e-5;
         double diff = std::numeric_limits<double>::max();
         size_t iter = 0;
         while (iter < MAXITER && diff > tol) {
@@ -3042,26 +3087,78 @@ main(int argc, const char **argv) {
           vector<double> newderiv;
           double newllk;
           bool CONVERGED = false;
-          leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+          //leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
           approx_posterior(subtree_sizes, start_param, reset_points, tol,
                            tree_prob_table);
-          posterior_to_llk_deriv(subtree_sizes, start_param, reset_points,
-                                 tree_prob_table, appllk, appderiv);
-          approx_optimize_iteration(tolerance, tree_prob_table, reset_points,
-                                    subtree_sizes, start_param, appllk, appderiv,
-                                    CONVERGED, newparams, newllk, newderiv, diff);
+
+          vector<string> states;
+          for (size_t i = 0; i < sites.size(); ++i) {
+            string state;
+            for (size_t j = 0; j < n_nodes; ++j ) {
+              state += ((tree_prob_table[i][j] < 0.5) ? '1' : '0' );
+            }
+            states.push_back(state);
+          }
+
+          double llk;
+          const size_t cmp_maxiter = 3;
+          complete_optimize(tol, cmp_maxiter, states, reset_points,
+                            subtree_sizes, start_param, newparams, llk);
+          diff = 0.0;
+          for (size_t i = 0; i < newparams.size(); ++i) {
+            diff += abs(newparams[i]-start_param[i]);
+          }
+
+          // posterior_to_llk_deriv(subtree_sizes, start_param, reset_points,
+          //                        tree_prob_table, appllk, appderiv);
+          // approx_optimize_iteration(VERBOSE, tolerance, tree_prob_table, reset_points,
+          //                           subtree_sizes, start_param, appllk, appderiv,
+          //                           CONVERGED, newparams, newllk, newderiv, diff);
           start_param=newparams;
+          // Fix pi0, g0, g1
+          start_param[0] = pi0_est;
+          start_param[2] = g0_est;
+          start_param[3] = g1_est;
           ++iter;
         }
-        if (diff <= tol)
+        if (diff <= tol && VERBOSE)
           cerr << "Converged at iteration " << iter << endl;
 
-        cerr << "[Results]\t";
         for (size_t i = 5; i < start_param.size(); ++i) {
           branches[i-4] = -log(1.0 - start_param[i]);
-          cerr << branches[i-4] << "\t";
         }
-        cerr << endl;
+        t.set_branch_lengths(branches);
+
+        if (VERBOSE) {
+          cerr << "[Results]\t";
+          for (size_t i = 5; i < start_param.size(); ++i) {
+            cerr << branches[i-4] << "\t";
+          }
+          cerr << endl;
+          cerr << "Final pass of posterior approximation" << endl;
+        }
+
+        leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+        approx_posterior(subtree_sizes, start_param, reset_points, tol,
+                         tree_prob_table);
+
+        if (!outfile.empty()) {
+          std::ofstream out(outfile.c_str());
+          if (!out)
+            throw SMITHLABException("bad output file: " + outfile);
+
+          out << "#" << t.Newick_format() << endl;
+          for (size_t i = 0; i < sites.size(); ++i) {
+            out << sites[i].chrom <<":" << sites[i].pos << "\t";
+            for (size_t j = 0; j < n_nodes; ++j ) {
+              out <<  ((tree_prob_table[i][j] < 0.5) ? 'C' : 'T' );
+            }
+            for (size_t j = 0; j < n_nodes; ++j ) {
+              out <<  "\t" << tree_prob_table[i][j];
+            }
+            out << endl;
+          }
+        }
 
       } else {
         bool FULL = true;
