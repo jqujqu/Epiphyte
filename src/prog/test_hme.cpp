@@ -278,6 +278,7 @@ load_meth_table(const string &filename, vector<Site> &sites,
 static void
 read_params(const bool VERBOSE, const string &paramfile,
             double &root_unmeth_prob, double &rate0,
+            double &g0, double &g1,
             PhyloTreePreorder &t) {
   std::ifstream in(paramfile.c_str());
   if (!in)
@@ -292,13 +293,19 @@ read_params(const bool VERBOSE, const string &paramfile,
          << t.tostring() << endl;
 
   getline(in, line);
-  istringstream issp(line);
-  issp >> root_unmeth_prob >> rate0;
+  istringstream issp_1(line);
+  issp_1 >> root_unmeth_prob >> rate0;
+  getline(in, line);
+  istringstream issp_2(line);
+  issp_2 >> g0 >> g1;
   if (VERBOSE)
     cerr << "Root_unmeth_prob=" << root_unmeth_prob
-         << "\trate=" <<  rate0 << endl;
+         << "\trate=" <<  rate0
+         << "\tg0=" << g0
+         << "\tg1" << g1 << endl;
   if (root_unmeth_prob >= 1.0 || root_unmeth_prob <= 0.0 ||
-      rate0 >= 1.0 || rate0 <= 0.0)
+      rate0 >= 1.0 || rate0 <= 0.0 || g0 >=1.0 || g0 <= 0.0 ||
+      g1 >= 1.0 || g1 <= 0.0)
     throw SMITHLABException("wrong parameter range: " + paramfile);
 }
 
@@ -316,6 +323,62 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
   return leaf_names == meth_table_species;
 }
 
+
+
+static void
+fill_leaf_prob(const vector<Site> &sites,
+               const size_t desert_size,
+               vector<vector<double> > &hypo_prob_table) {
+  size_t nsites = hypo_prob_table.size();
+  size_t n_leaf = hypo_prob_table[0].size();
+  for (size_t i = 0; i < n_leaf; ++i) {
+    size_t prev = 0;
+    size_t next = 0;
+    size_t count = 0;
+    double mean_hypo_prob = 0.0;
+    size_t obs = 0;
+    for (size_t j = 0; j < nsites; ++j) {
+      if (hypo_prob_table[j][i] >= 0 ) {
+        mean_hypo_prob += hypo_prob_table[j][i] ;
+        ++obs;
+      }
+    }
+    mean_hypo_prob = mean_hypo_prob/obs;
+    cerr << mean_hypo_prob << endl;
+
+    for (size_t j = 0; j < nsites; ++j) {
+      if (hypo_prob_table[j][i] >= 0) {
+        prev = j;
+        next = j;
+      } else {
+        if (j > next) {
+          while (next < nsites-1 && hypo_prob_table[next][i]<0) ++next;
+        }
+        size_t d1 = distance_between_sites(sites[j], sites[prev]);
+        size_t d2 = distance_between_sites(sites[j], sites[next]);
+        if (j > prev && j < next && d1 < desert_size && d2 < desert_size) {
+          hypo_prob_table[j][i] = (hypo_prob_table[prev][i]*d2 +
+                                   hypo_prob_table[next][i]*d1)/(d1+d2);
+          ++count;
+        } else if (prev < j && d1 < desert_size) {
+          hypo_prob_table[j][i] = (mean_hypo_prob*d1 + hypo_prob_table[prev][i]*(desert_size - d1))/desert_size;
+          assert(hypo_prob_table[j][i] >= 0);
+          ++count;
+        } else if (j < next && d2 < desert_size){
+          hypo_prob_table[j][i] = (mean_hypo_prob*d2 + hypo_prob_table[next][i]*(desert_size - d2))/desert_size;
+          assert(hypo_prob_table[j][i] >= 0);
+          ++count;
+        } else {
+          hypo_prob_table[j][i] = mean_hypo_prob;
+        }
+      }
+    }
+    cerr << "Filled " << count << " missing sites in leaf" << i << endl;
+  }
+}
+
+
+
 static void
 separate_regions(const bool VERBOSE,
                  const size_t desert_size,
@@ -325,6 +388,9 @@ separate_regions(const bool VERBOSE,
                  double &g0_est, double &g1_est, double &pi0_est) {
   const size_t nleaf = meth[0].size();
   const size_t totalsites = sites.size();
+
+  vector<vector<double> > meth_aug = meth;
+  fill_leaf_prob(sites, desert_size, meth_aug);
 
   //scan desert
   //uncovered site has prob value set to -1.0
@@ -362,7 +428,7 @@ separate_regions(const bool VERBOSE,
       cerr << "[Done]" << endl;
   }
 
-  size_t good =0;
+  size_t good = 0;
   for (size_t i = 0; i < totalsites; ++i) {
     if (!is_desert[i]) ++good;
   }
@@ -380,7 +446,7 @@ separate_regions(const bool VERBOSE,
         !is_desert[i]) {
       // Add new site
       sites_copy.push_back(sites[i]);
-      meth_copy.push_back(meth[i]);
+      meth_copy.push_back(meth_aug[i]);
       ++ last_block_size;
       // Maintain blocks
       if (sites_copy.size()==1) {
@@ -529,6 +595,9 @@ evaluate_emission(const vector<size_t> &subtree_sizes,
   return llk;
 }
 
+
+// P(T)[0,0]: hypo -> hypo prob
+// P(T)[1,1]: hyper -> hyper prob
 static void
 temporal_trans_prob_mat(const double T, const double rate0,
                         vector<vector<double> > &time_transition_matrix) {
@@ -597,8 +666,7 @@ trans_deriv(const vector<vector<double> > &Q,
     d_g0= time_trans_mat[anc][cur]/denom*term;
   } else {
     d_g0 = 0;
-    term = kronecker_delta(cur, 1)*2 - 1.0 -
-      G[prev][cur]*(time_trans_mat[anc][1] - time_trans_mat[anc][0])/denom;
+    term = kronecker_delta(cur, 1)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][1] - time_trans_mat[anc][0])/denom;
     d_g1 = time_trans_mat[anc][cur]/denom*term;
   }
   term = Q[anc][cur] - time_trans_mat[anc][cur]*(G[prev][0]*Q[anc][0]+G[prev][1]*Q[anc][1])/denom;
@@ -671,8 +739,8 @@ combined_trans_prob_mat_deriv(const double rate0,
 //////////////////////       Units grouped       ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 static void
-collect_transition_matrices(const double g0, const double g1,
-                            const double rate0, const vector<double> &Ts,
+collect_transition_matrices(const double rate0, const double g0, const double g1,
+                            const vector<double> &Ts,
                             vector<vector<vector<double> > > &time_trans_mats,
                             vector<vector<vector<vector<double> > > > &combined_trans_mats) {
   assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
@@ -760,10 +828,10 @@ auxiliary(const vector<size_t> &subtree_sizes,
   vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
   vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
   vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
-  double rate0 = params[1];
-  double g0 = params[2];
-  double g1 = params[3];
-  vector<double> Ts(params.begin()+4, params.end());
+  const double rate0 = params[1];
+  const double g0 = params[2];
+  const double g1 = params[3];
+  const vector<double> Ts(params.begin()+4, params.end());
   collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
                                     combined_trans_mats,
                                     combined_trans_mats_drate,
@@ -777,11 +845,9 @@ auxiliary(const vector<size_t> &subtree_sizes,
   start_log_prob_derivs = vector<vector<Logscale> >(n_hme, vector<Logscale>(n_params, Logscale(0.0, 0.0)));
   for (size_t i = 0; i < n_hme; ++i) {
     string states = all_states[i];
-    start_log_probs[i] =
-      (states[0] == '0') ? log(params[0]) : log(1.0-params[0]);
+    start_log_probs[i] = (states[0] == '0') ? log(params[0]) : log(1.0-params[0]);
     // d_pi0 factor
-    start_log_prob_derivs[i][0].logval =
-      (states[0] == '0') ? - 1.0*log(params[0]) : -1.0*log(1.0-params[0]);
+    start_log_prob_derivs[i][0].logval = -1.0*start_log_probs[i];
     start_log_prob_derivs[i][0].symbol = (states[0] == '0') ? 1.0 : -1.0;
 
     for (size_t j = 0; j < n_nodes; ++j) {
@@ -1765,46 +1831,6 @@ optimize(const bool FULL,
 }
 
 
-static void
-fill_leaf_prob(const vector<Site> &sites,
-               const size_t desert_size,
-               vector<vector<double> > &meth_prob_table) {
-  size_t nsites = meth_prob_table.size();
-  size_t n_leaf = meth_prob_table[0].size();
-  for (size_t i = 0; i < n_leaf; ++i) {
-    size_t prev = 0;
-    size_t next = 0;
-    size_t count = 0;
-    for (size_t j = 0; j < nsites; ++j) {
-      if (meth_prob_table[j][i] >= 0) {
-        prev = j;
-        next = j;
-      } else {
-        if (j > next) {
-          while (next < nsites-1 && meth_prob_table[next][i]<0) ++next;
-        }
-        size_t d1 = distance_between_sites(sites[j], sites[prev]);
-        size_t d2 = distance_between_sites(sites[j], sites[next]);
-        if (j > prev && j < next && d1 < desert_size && d2 < desert_size) {
-          meth_prob_table[j][i] = (meth_prob_table[prev][i]*d2 +
-                                   meth_prob_table[next][i]*d1)/(d1+d2);
-          ++count;
-        } else if (prev < j && d1 < desert_size) {
-          meth_prob_table[j][i] = (0.5*d1 + meth_prob_table[prev][i]*(desert_size - d1))/desert_size;
-          assert( meth_prob_table[j][i] >= 0);
-          ++count;
-        } else if (j < next && d2 < desert_size){
-          meth_prob_table[j][i] = (0.5*d1 + meth_prob_table[next][i]*(desert_size - d2))/desert_size;
-          assert( meth_prob_table[j][i] >= 0);
-          ++count;
-        } else {
-          meth_prob_table[j][i] = 0.5;
-        }
-      }
-    }
-    cerr << "Filled " << count << " missing sites in leaf" << i << endl;
-  }
-}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1839,7 +1865,6 @@ loglik_complete_tree(const vector<string> &states,
                      const vector<double> &params,
                      double &llk, vector<double> &derivs) {
 
-  cerr << "loglik_complete_tree" << endl;
   vector<double> start_log_probs;
   vector<vector<Logscale> > start_log_prob_derivs;
   vector<vector<double> > trans_log_probs;
@@ -1898,7 +1923,8 @@ loglik_complete_tree(const vector<string> &states,
 }
 
 static void
-complete_optimize_iteration(const double TOL,
+complete_optimize_iteration(const bool VERBOSE,
+                            const double TOL,
                             const vector<string> &states,
                             const vector<size_t> &reset_points,
                             const vector<size_t> &subtree_sizes,
@@ -1911,17 +1937,24 @@ complete_optimize_iteration(const double TOL,
                        params, llk, deriv);
   cerr << "------" << llk << "-------" << endl;
   const size_t n_nodes = subtree_sizes.size();
-  double norm = abs(deriv[0]) + abs(deriv[1]) + abs(deriv[2]) + abs(deriv[3]);
+  const size_t n_params = n_nodes + 4;
+  double mutnorm = abs(deriv[1]);
+  double norm = abs(deriv[2]) + abs(deriv[3]);
   double branchnorm = 0.0;
   for (size_t i = 5; i < deriv.size(); ++i) {
     branchnorm += abs(deriv[i]);
   }
+  double mutr = 1.0/mutnorm;
   double r = 1.0/norm; //maximization (-1.0 if minimization)
   double br = 1.0/branchnorm; //maximization (-1.0 if minimization)
 
-  // Find proper starting factor
-  const size_t n_params = n_nodes + 4;
-  for (size_t i = 0; i < 4; ++i) {
+  // Find proper starting factors: mutr, r, br
+  double candidate_param = params[1] + deriv[1]*mutr;
+  while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+    mutr = mutr/2;
+    candidate_param = params[1] + deriv[1]*mutr;
+  }
+  for (size_t i = 2; i < 4; ++i) {
     double candidate_param = params[i] + deriv[i]*r;
     while (candidate_param < TOL || candidate_param > 1.0-TOL) {
       r = r/2;
@@ -1936,59 +1969,61 @@ complete_optimize_iteration(const double TOL,
     }
   }
 
-  newparams = params;
-  // Test param point
-  for (size_t i = 0; i < 4; ++i) {
-    newparams[i] = params[i] + r*deriv[i];
-  }
-  for (size_t i = 5; i < n_params; ++i) {
-    newparams[i] = params[i] + br*deriv[i];
-  }
-
   bool SUCCESS = false;
   bool CONVERGED = false;
   // Reduce factor untill improvement or convergence
   while (!SUCCESS && !CONVERGED ) {
-    for (size_t i = 0; i < 4; ++i) {
+    cerr << ".";
+
+    // Test param point
+    newparams = params;
+    newparams[1] = params[1] + mutr*deriv[1];
+    for (size_t i = 2; i < 4; ++i) {
       newparams[i] = params[i] + r*deriv[i];
     }
     for (size_t i = 5; i < n_params; ++i) {
       newparams[i] = params[i] + br*deriv[i];
     }
+
     vector<double> newderiv;
     double newllk;
     loglik_complete_tree(states, reset_points, subtree_sizes,
                          newparams, newllk, newderiv);
     if (newllk > llk) {
-      SUCCESS = true;
-      cerr << "========= Improve = " << newllk - llk << endl;
-      llk = newllk;
       // print derivatives
-      for (size_t i = 0; i < newderiv.size(); ++i)
-        cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-      cerr << endl;
-      // print new params
-      for (size_t i = 0; i < newparams.size(); ++i) {
-        if (i < 4){
-          cerr << newparams[i] << "\t";
-        } else if (i> 4) {
-          cerr << -log(1.0-newparams[i]) << "\t";
+      if (VERBOSE) {
+        cerr << "========= Improve = " << newllk - llk << endl;
+        for (size_t i = 0; i < newderiv.size(); ++i)
+          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+        cerr << endl;
+        // print new params
+        for (size_t i = 0; i < newparams.size(); ++i) {
+          if (i < 4){
+            cerr << newparams[i] << "\t";
+          } else if (i > 4) {
+            cerr << -log(1.0-newparams[i]) << "\t";
+          }
         }
+        cerr << endl;
       }
-      cerr << endl;
+
+      SUCCESS = true;
+      llk = newllk;
+
     } else {
+      if (mutr*mutnorm + r*norm + br*branchnorm <= TOL)
+        CONVERGED = true;
+      mutr = mutr/2;
       r = r/2;
       br = br/2;
-      if (r*norm <= TOL && br*norm <= TOL)
-        CONVERGED = true;
     }
   }
-
 }
 
 
 static void
-complete_optimize(const double TOL,
+complete_optimize(const bool VERBOSE,
+                  const double TOL,
                   const size_t MAXITER,
                   const vector<string> &states,
                   const vector<size_t> &reset_points,
@@ -2002,19 +2037,24 @@ complete_optimize(const double TOL,
 
   vector<double> old_params = start_params;
   while (iter < MAXITER  && diff > TOL) {
-    cerr << "complete_optimize_iter " << iter << endl;
-    complete_optimize_iteration(TOL, states, reset_points, subtree_sizes,
+    if (VERBOSE)
+      cerr << "complete_optimize_iter " << iter << endl;
+    complete_optimize_iteration(VERBOSE, TOL, states, reset_points, subtree_sizes,
                                 old_params, params, llk);
-    cerr << "log-likelihood = " << llk << endl;
     diff = 0;
     for (size_t i = 0; i < params.size(); ++ i) {
       diff += abs(old_params[i] - params[i]);
     }
     old_params = params;
-    cerr << "Param total diff = " << diff << endl;
     ++iter;
+
+    if (VERBOSE) {
+      cerr << "log-likelihood = " << llk << "\t"
+           << "Param total diff = " << diff << endl;
+    }
+
   }
-  if (iter < MAXITER)
+  if (iter < MAXITER && VERBOSE)
     cerr << "Converged at iteration " << iter << endl;
 }
 
@@ -2036,8 +2076,12 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
       init_internal_prob(subtree_sizes, child_id, node_probs);
     }
     count += subtree_sizes[child_id];
-    ++n_children;
-    sum_children_prob += node_probs[child_id];
+  }
+  for (size_t i = 1; i < subtree_sizes[node_id]; ++i) {
+    if (subtree_sizes[i+node_id]==1) {
+      ++n_children;
+      sum_children_prob += node_probs[i+node_id];
+    }
   }
   node_probs[node_id] = min(max(tol,sum_children_prob/n_children), 1.0-tol);
 }
@@ -2074,7 +2118,8 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 
 static void
-posterior_start(const vector<size_t> &subtree_sizes,
+posterior_start(const bool LEAF,
+                const vector<size_t> &subtree_sizes,
                 const vector<vector<double> >&G,
                 const vector<vector<vector<double> > > &time_trans_mats,
                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
@@ -2088,7 +2133,6 @@ posterior_start(const vector<size_t> &subtree_sizes,
   double p_cur = 0.0;
   double mar;
   if (subtree_sizes[node_id] == 1) { //leaf
-    bool LEAF = false;
     if (LEAF) {
       double p_parent_next = meth_prob_table[pos+1][parent_id];
       double p_parent_cur = meth_prob_table[pos][parent_id];
@@ -2121,7 +2165,7 @@ posterior_start(const vector<size_t> &subtree_sizes,
       size_t child_id = node_id + count;
       children.push_back(child_id);
       if (!updated[child_id]) {
-        posterior_start(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+        posterior_start(LEAF, subtree_sizes, G, time_trans_mats, combined_trans_mats,
                         pos, child_id, node_id, updated, meth_prob_table, diff);
       }
       count += subtree_sizes[child_id];
@@ -2198,7 +2242,8 @@ posterior_start(const vector<size_t> &subtree_sizes,
 
 
 static void
-posterior_middle(const vector<size_t> &subtree_sizes,
+posterior_middle(const bool LEAF,
+                 const vector<size_t> &subtree_sizes,
                  const vector<vector<double> >&G,
                  const vector<vector<vector<double> > > &time_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats,
@@ -2212,7 +2257,6 @@ posterior_middle(const vector<size_t> &subtree_sizes,
   double mar;
   double p_cur = 0.0;
   if (subtree_sizes[node_id] == 1) { // leaf
-    bool LEAF = false;
     if (LEAF) {
       double p_prev = meth_prob_table[pos-1][parent_id];
       double p_parent_next = meth_prob_table[pos+1][parent_id];
@@ -2249,7 +2293,7 @@ posterior_middle(const vector<size_t> &subtree_sizes,
       size_t child_id = node_id + count;
       children.push_back(child_id);
       if (!updated[child_id]) {
-        posterior_middle(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+        posterior_middle(LEAF, subtree_sizes, G, time_trans_mats, combined_trans_mats,
                         pos, child_id, node_id, updated, meth_prob_table, diff);
       }
       count += subtree_sizes[child_id];
@@ -2357,7 +2401,8 @@ posterior_middle(const vector<size_t> &subtree_sizes,
 
 
 static void
-posterior_end(const vector<size_t> &subtree_sizes,
+posterior_end(const bool LEAF,
+              const vector<size_t> &subtree_sizes,
               const vector<vector<double> >&G,
               const vector<vector<vector<double> > > &time_trans_mats,
               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
@@ -2372,7 +2417,6 @@ posterior_end(const vector<size_t> &subtree_sizes,
   double p_cur = 0.0;
 
   if (subtree_sizes[node_id] == 1) { //leaf
-    bool LEAF = false;
     if (LEAF) {
       double p_parent_cur = meth_prob_table[pos][parent_id];
       double p_prev = meth_prob_table[pos-1][node_id];
@@ -2398,7 +2442,7 @@ posterior_end(const vector<size_t> &subtree_sizes,
       size_t child_id = node_id + count;
       children.push_back(child_id);
       if (!updated[child_id]) {
-        posterior_end(subtree_sizes, G, time_trans_mats, combined_trans_mats,
+        posterior_end(LEAF, subtree_sizes, G, time_trans_mats, combined_trans_mats,
                       pos, child_id, node_id, updated, meth_prob_table, diff);
       }
       count += subtree_sizes[child_id];
@@ -2495,36 +2539,36 @@ iterate_update(const vector<size_t> &subtree_sizes,
                const vector<vector<vector<double> > > &time_trans_mats,
                const vector<vector<vector<vector<double> > > > &combined_trans_mats,
                const double tolerance,
-               vector<vector<double> > &meth_prob_table) {
+               const size_t MAXITER,
+               vector<vector<double> > &tree_hypo_prob_table) {
 
   size_t n_nodes = subtree_sizes.size();
-  size_t n_sites = meth_prob_table.size();
-  double tol = tolerance *n_nodes*n_sites;
-
+  bool LEAF = false;
   for (size_t i = 0; i < reset_points.size()-1; ++i) {
     double diff = std::numeric_limits<double>::max();
     size_t start = reset_points[i];
     size_t end = reset_points[i+1];
-    while (diff > tol) {
+    double tol = (LEAF) ? tolerance*n_nodes*(end-start) : tolerance*n_nodes*(end-start)/2;
+    size_t iter = 0;
+    while (diff > tol && iter < MAXITER) {
       diff = 0.0;
       for (size_t j = start; j < end; ++j) {
+        vector<bool> updated (subtree_sizes.size(), false);
         if (j == start) {
-          vector<bool> updated (subtree_sizes.size(), false);
-          posterior_start(subtree_sizes, G, time_trans_mats,
+          posterior_start(LEAF, subtree_sizes, G, time_trans_mats,
                           combined_trans_mats, j, 0,
-                          0, updated, meth_prob_table, diff);
+                          0, updated, tree_hypo_prob_table, diff);
         } else if (j == end -1) {
-          vector<bool> updated (subtree_sizes.size(), false);
-          posterior_end(subtree_sizes, G, time_trans_mats,
+          posterior_end(LEAF, subtree_sizes, G, time_trans_mats,
                         combined_trans_mats, j, 0,
-                        0, updated, meth_prob_table, diff);
+                        0, updated, tree_hypo_prob_table, diff);
         } else {
-          vector<bool> updated (subtree_sizes.size(), false);
-          posterior_middle(subtree_sizes, G, time_trans_mats,
+          posterior_middle(LEAF, subtree_sizes, G, time_trans_mats,
                            combined_trans_mats, j, 0,
-                           0, updated, meth_prob_table, diff);
+                           0, updated, tree_hypo_prob_table, diff);
         }
       }
+      ++iter;
     }
   }
 }
@@ -2535,6 +2579,7 @@ approx_posterior(const vector<size_t> &subtree_sizes,
                  const vector<double> &params,
                  const vector<size_t> &reset_points,
                  const double tolerance,
+                 const size_t MAXITER,
                  vector<vector<double> > &meth_prob_table) {
 
   const size_t n_nodes = subtree_sizes.size();
@@ -2557,7 +2602,7 @@ approx_posterior(const vector<size_t> &subtree_sizes,
 
   //update iteratively
   iterate_update(subtree_sizes, reset_points, G, time_trans_mats,
-                 combined_trans_mats, tolerance, meth_prob_table);
+                 combined_trans_mats, tolerance, MAXITER, meth_prob_table);
 }
 
 
@@ -2889,8 +2934,6 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
 }
 
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////          MAIN             ///////////////////////////////
@@ -2900,12 +2943,12 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
 int
 main(int argc, const char **argv) {
   try{
-    size_t desert_size = 1000;
+    size_t desert_size = 200;
     size_t minCpG = 50;
     double tolerance = 1e-5;
-    size_t MAXITER = 20;
+    size_t MAXITER = 5;
     string outfile;
-
+    string paramfile;
 
     // run mode flags
     bool VERBOSE = false;
@@ -2915,10 +2958,13 @@ main(int argc, const char **argv) {
                            "<newick> <meth-tab>");
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block"
                       "(default: 50)", false, minCpG);
+    opt_parse.add_opt("maxiter", 'i', "maximum iteration"
+                      "(default: 5)", false, MAXITER);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
+    opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
     opt_parse.add_opt("output", 'o', "output file name", false, outfile);
 
     vector<string> leftover_args;
@@ -2968,10 +3014,17 @@ main(int argc, const char **argv) {
     /**************************************************************************/
     /******************** INITIALIZE PARAMETERS *******************************/
     double pi0 = 0.1;
-    double rate0 = 0.5;
-    double g0 = 0.75;
-    double g1 = 0.8;
+    double rate0 = 0.9;
+    double g0 = 0.798451;
+    double g1 = 0.822142;
 
+    bool PARAMFIX = false;
+    if (!paramfile.empty()) {
+      read_params(VERBOSE, paramfile, pi0, rate0, g0, g1, t);
+      PARAMFIX = true;
+      branches.clear();
+      t.get_branch_lengths(branches);
+    }
     vector<double> Ts;
     for (size_t i = 0; i < branches.size(); ++i) {
       Ts.push_back(1.0-1.0/exp(branches[i]));
@@ -3000,7 +3053,7 @@ main(int argc, const char **argv) {
 
       vector<double> newparams;
       double llk;
-      complete_optimize(tolerance, MAXITER, states, reset_points,
+      complete_optimize(VERBOSE, tolerance, MAXITER, states, reset_points,
                         subtree_sizes, start_param, newparams,llk);
       if (VERBOSE) {
         cerr << "[Results]\t";
@@ -3046,25 +3099,31 @@ main(int argc, const char **argv) {
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
 
-      start_param[0] = pi0_est;
-      start_param[2] = g0_est;
-      start_param[3] = g1_est;
+      if (!PARAMFIX) {
+        start_param[0] = pi0_est;
+        start_param[2] = g0_est;
+        start_param[3] = g1_est;
+      }
 
-      if (VERBOSE)
+      if (VERBOSE) {
         cerr << "After filtering: " << sites.size()
              << "in " << reset_points.size() -1 << "blocks" << endl;
 
-      fill_leaf_prob(sites, desert_size, meth_prob_table);
-      if (VERBOSE)
-        cerr << "Filled probabilities at missing sites" << endl;
+        if (PARAMFIX) cerr << "Given parameter:\t";
+        else cerr << "Start parameter:\t";
+        for (size_t i = 0; i < start_param.size(); ++i) {
+          if (i < 4) cerr << start_param[i] << "\t";
+          if (i > 4) cerr << "[branch "<< i-4 <<"]=" << -log(1.0-start_param[i]) << "\t";
+        }
+        cerr << endl;
+      }
+
 
       vector<vector<double> > tree_prob_table;
       leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
       if (VERBOSE)
         cerr << "Initialized internal probability" << endl;
 
-      /**************************************************************************/
-      /*************************  STARTING PARAMETERS ***************************/
       const size_t n_hme = pow(2,n_nodes);
       vector<string> all_states;
       for (size_t i = 0; i < n_hme; ++i) {
@@ -3075,52 +3134,44 @@ main(int argc, const char **argv) {
       /******************** APPROXIMATE OPTIMIZATION ****************************/
       bool APP = true;
       if (APP) {
-        cerr << "Approx posterior" << endl;
+        if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
         const double tol = 1e-5;
+        const size_t max_app_iter = 100;
+
         double diff = std::numeric_limits<double>::max();
         size_t iter = 0;
+
         while (iter < MAXITER && diff > tol) {
           cerr << "Iteration " << iter << endl;
-          double appllk = 0.0;
           vector<double> appderiv;
           vector<double> newparams;
           vector<double> newderiv;
-          double newllk;
-          bool CONVERGED = false;
-          //leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
-          approx_posterior(subtree_sizes, start_param, reset_points, tol,
-                           tree_prob_table);
+          approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
+                           max_app_iter, tree_prob_table);
 
           vector<string> states;
           for (size_t i = 0; i < sites.size(); ++i) {
             string state;
             for (size_t j = 0; j < n_nodes; ++j ) {
-              state += ((tree_prob_table[i][j] < 0.5) ? '1' : '0' );
+              double x = ((double)rand() / (double)RAND_MAX);
+              state += ((x > tree_prob_table[i][j]) ? '1' : '0' );
             }
             states.push_back(state);
           }
 
           double llk;
-          const size_t cmp_maxiter = 3;
-          complete_optimize(tol, cmp_maxiter, states, reset_points,
+          const size_t cmp_maxiter = 5;
+          complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
                             subtree_sizes, start_param, newparams, llk);
           diff = 0.0;
           for (size_t i = 0; i < newparams.size(); ++i) {
             diff += abs(newparams[i]-start_param[i]);
           }
 
-          // posterior_to_llk_deriv(subtree_sizes, start_param, reset_points,
-          //                        tree_prob_table, appllk, appderiv);
-          // approx_optimize_iteration(VERBOSE, tolerance, tree_prob_table, reset_points,
-          //                           subtree_sizes, start_param, appllk, appderiv,
-          //                           CONVERGED, newparams, newllk, newderiv, diff);
-          start_param=newparams;
-          // Fix pi0, g0, g1
-          start_param[0] = pi0_est;
-          start_param[2] = g0_est;
-          start_param[3] = g1_est;
+          start_param = newparams;
           ++iter;
         }
+
         if (diff <= tol && VERBOSE)
           cerr << "Converged at iteration " << iter << endl;
 
@@ -3139,8 +3190,18 @@ main(int argc, const char **argv) {
         }
 
         leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
-        approx_posterior(subtree_sizes, start_param, reset_points, tol,
-                         tree_prob_table);
+        double hypo = 0.0;
+        for (size_t i = 0; i < meth_prob_table.size(); ++i) {
+          hypo += tree_prob_table[i][0];
+        }
+        cerr << "=====\t" << hypo/tree_prob_table.size() << "\t=======" << endl;
+        approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
+                         max_app_iter, tree_prob_table);
+        hypo = 0.0;
+        for (size_t i = 0; i < meth_prob_table.size(); ++i) {
+          hypo += tree_prob_table[i][0];
+        }
+        cerr << "=====\t" << hypo/tree_prob_table.size() << "\t=======" << endl;
 
         if (!outfile.empty()) {
           std::ofstream out(outfile.c_str());
@@ -3151,7 +3212,7 @@ main(int argc, const char **argv) {
           for (size_t i = 0; i < sites.size(); ++i) {
             out << sites[i].chrom <<":" << sites[i].pos << "\t";
             for (size_t j = 0; j < n_nodes; ++j ) {
-              out <<  ((tree_prob_table[i][j] < 0.5) ? 'C' : 'T' );
+              out <<  ((tree_prob_table[i][j] < 0.9) ? 'C' : 'T' );
             }
             for (size_t j = 0; j < n_nodes; ++j ) {
               out <<  "\t" << tree_prob_table[i][j];
