@@ -1929,43 +1929,30 @@ complete_optimize_iteration(const bool VERBOSE,
                             const vector<size_t> &reset_points,
                             const vector<size_t> &subtree_sizes,
                             const vector<double> &params,
+                            const vector<double> &deriv,
+                            const double llk,
                             vector <double> &newparams,
-                            double &llk) {
+                            vector <double> &newderiv,
+                            double &newllk) {
 
-  vector<double> deriv;
-  loglik_complete_tree(states, reset_points, subtree_sizes,
-                       params, llk, deriv);
-  cerr << "------" << llk << "-------" << endl;
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_params = n_nodes + 4;
-  double mutnorm = abs(deriv[1]);
-  double norm = abs(deriv[2]) + abs(deriv[3]);
-  double branchnorm = 0.0;
-  for (size_t i = 5; i < deriv.size(); ++i) {
-    branchnorm += abs(deriv[i]);
-  }
-  double mutr = 1.0/mutnorm;
-  double r = 1.0/norm; //maximization (-1.0 if minimization)
-  double br = 1.0/branchnorm; //maximization (-1.0 if minimization)
+  double norm = 0.0;
 
-  // Find proper starting factors: mutr, r, br
-  double candidate_param = params[1] + deriv[1]*mutr;
-  while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-    mutr = mutr/2;
-    candidate_param = params[1] + deriv[1]*mutr;
+  /********* update first group of parameters **********/
+  cerr << "[Part 1]\t";
+  for (size_t i = 0; i < deriv.size(); ++i) {
+    if (i < 2 || i > 4) norm += abs(deriv[i]);
   }
-  for (size_t i = 2; i < 4; ++i) {
-    double candidate_param = params[i] + deriv[i]*r;
-    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-      r = r/2;
-      candidate_param = params[i] + deriv[i]*r;
-    }
-  }
-  for (size_t i = 5; i < n_params; ++i) {
-    double candidate_param = params[i] + deriv[i]*br;
-    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-      br = br/2;
-      candidate_param = params[i] + deriv[i]*br;
+
+  double r = 1.0/norm; //maximization (-1.0 if minimization)
+  for (size_t i = 0; i < n_params; ++i) {
+    if (i < 2 || i > 4){
+      double candidate_param = params[i] + deriv[i]*r;
+      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+        r = r/2;
+        candidate_param = params[i] + deriv[i]*r;
+      }
     }
   }
 
@@ -1977,25 +1964,21 @@ complete_optimize_iteration(const bool VERBOSE,
 
     // Test param point
     newparams = params;
-    newparams[1] = params[1] + mutr*deriv[1];
-    for (size_t i = 2; i < 4; ++i) {
-      newparams[i] = params[i] + r*deriv[i];
-    }
-    for (size_t i = 5; i < n_params; ++i) {
-      newparams[i] = params[i] + br*deriv[i];
+    for (size_t i = 0; i < n_params; ++i) {
+      double factor = 0.0;
+      if (i < 2 || i > 4) factor = r;
+      newparams[i] = params[i] + factor*deriv[i];
     }
 
-    vector<double> newderiv;
-    double newllk;
     loglik_complete_tree(states, reset_points, subtree_sizes,
                          newparams, newllk, newderiv);
+
     if (newllk > llk) {
+      SUCCESS = true;
+
       // print derivatives
       if (VERBOSE) {
-        cerr << "========= Improve = " << newllk - llk << endl;
-        for (size_t i = 0; i < newderiv.size(); ++i)
-          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-        cerr << endl;
+        cerr << "\t Improve = " << newllk - llk << endl;
         // print new params
         for (size_t i = 0; i < newparams.size(); ++i) {
           if (i < 4){
@@ -2005,18 +1988,77 @@ complete_optimize_iteration(const bool VERBOSE,
           }
         }
         cerr << endl;
+        for (size_t i = 0; i < newderiv.size(); ++i)
+          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+        cerr << endl;
       }
-
-      SUCCESS = true;
-      llk = newllk;
-
     } else {
-      if (mutr*mutnorm + r*norm + br*branchnorm <= TOL)
-        CONVERGED = true;
-      mutr = mutr/2;
+      if (r*norm <= TOL) CONVERGED = true;
       r = r/2;
-      br = br/2;
     }
+  }
+  if (!SUCCESS) {
+    newparams = params;
+    newderiv = deriv;
+    newllk = llk;
+  }
+
+  vector<double> p1_params = newparams;
+  double p1_llk = newllk;
+  vector<double> p1_deriv = newderiv;
+
+  /******** upddate FF and BB parameters **********/
+  cerr << "[Part 2]\t";
+  norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
+  r = 1.0/norm; //maximization (-1.0 if minimization)
+  for (size_t i = 2; i < 4; ++i) {
+    double candidate_param = p1_params[i] + p1_deriv[i]*r;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      r = r/2;
+      candidate_param = p1_params[i] + p1_deriv[i]*r;
+    }
+  }
+  bool SUCCESS_p2 = false;
+  bool CONVERGED_p2 = false;
+  // Reduce factor untill improvement or convergence
+  while (!SUCCESS_p2 && !CONVERGED_p2) {
+    cerr << ".";
+    // Test param point
+    newparams = p1_params;
+    for (size_t i = 2; i < 4; ++i) {
+      newparams[i] = p1_params[i] + r*p1_deriv[i];
+    }
+
+    loglik_complete_tree(states, reset_points, subtree_sizes,
+                         newparams, newllk, newderiv);
+    if (newllk > p1_llk) {
+      SUCCESS_p2 = true;
+
+      if (VERBOSE) {
+        cerr << "========= Improve = " << newllk - p1_llk << endl;
+        // print new params
+        for (size_t i = 0; i < newparams.size(); ++i) {
+          if (i < 4){
+            cerr << newparams[i] << "\t";
+          } else if (i > 4) {
+            cerr << -log(1.0-newparams[i]) << "\t";
+          }
+        }
+        cerr << endl;
+        // print derivatives
+        for (size_t i = 0; i < newderiv.size(); ++i)
+          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+        cerr << endl;
+      }
+    } else {
+      if (r*norm <= TOL) CONVERGED_p2 = true;
+      r = r/2;
+    }
+  }
+  if (!SUCCESS_p2) {
+    newllk = p1_llk;
+    newparams = p1_params;
+    newderiv = p1_deriv;
   }
 }
 
@@ -2034,13 +2076,25 @@ complete_optimize(const bool VERBOSE,
 
   size_t iter = 0;
   double diff = std::numeric_limits<double>::max();
-
   vector<double> old_params = start_params;
+  vector<double> old_deriv;
+  double old_llk;
+  loglik_complete_tree(states, reset_points, subtree_sizes,
+                       old_params, old_llk, old_deriv);
+  if (VERBOSE) {
+    cerr << "------" << old_llk << "-------" << endl;
+    for (size_t i = 0; i < old_deriv.size(); ++i)
+      cerr << "d[" << i << "]=" << old_deriv[i] << "\t";
+    cerr << endl;
+  }
+
+  vector<double> deriv;
   while (iter < MAXITER  && diff > TOL) {
     if (VERBOSE)
       cerr << "complete_optimize_iter " << iter << endl;
     complete_optimize_iteration(VERBOSE, TOL, states, reset_points, subtree_sizes,
-                                old_params, params, llk);
+                                old_params,  old_deriv, old_llk, params, deriv, llk);
+
     diff = 0;
     for (size_t i = 0; i < params.size(); ++ i) {
       diff += abs(old_params[i] - params[i]);
@@ -2053,6 +2107,9 @@ complete_optimize(const bool VERBOSE,
            << "Param total diff = " << diff << endl;
     }
 
+    old_params = params;
+    old_deriv = deriv;
+    old_llk = llk;
   }
   if (iter < MAXITER && VERBOSE)
     cerr << "Converged at iteration " << iter << endl;
@@ -2077,13 +2134,33 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
     }
     count += subtree_sizes[child_id];
   }
+
+  double direction = 0.0;
   for (size_t i = 1; i < subtree_sizes[node_id]; ++i) {
     if (subtree_sizes[i+node_id]==1) {
       ++n_children;
       sum_children_prob += node_probs[i+node_id];
+      direction += (node_probs[i+node_id] > 0.5) ? 1.0 : -1.0;
     }
   }
-  node_probs[node_id] = min(max(tol,sum_children_prob/n_children), 1.0-tol);
+
+
+  if (node_id!=0 && abs(direction) < n_children) {
+    double sum_extra_leaf_hypo_prob = 0.0;
+    size_t n_extra_leaves = 0;
+    // children disagree, find majority state of leaf species outside this subtree
+    for(size_t i = 0; i < subtree_sizes.size(); ++i) {
+      if (subtree_sizes[i] == 1 &&
+          (i < node_id || i >= node_id+subtree_sizes[node_id])) {
+        sum_extra_leaf_hypo_prob += node_probs[i];
+        n_extra_leaves +=1;
+      }
+    }
+    sum_children_prob += sum_extra_leaf_hypo_prob/(n_extra_leaves+tol);
+    n_children += n_extra_leaves;
+  }
+
+  node_probs[node_id] = min(max(tol, sum_children_prob/n_children), 1.0 - tol);
 }
 
 
@@ -2834,7 +2911,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
   vector<double> cur_deriv = deriv;
   vector<double> cur_params = params;
   // Reduce factor untill improvement or convergence
-  double norm =  abs(cur_deriv[1]); // + abs(cur_deriv[0])  + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+  double norm =  abs(cur_deriv[1]) + abs(cur_deriv[0])  + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
   double branchnorm = 0.0;
   for (size_t i = 5; i < cur_deriv.size(); ++i) {
     branchnorm += abs(cur_deriv[i]);
@@ -2844,7 +2921,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
   double br = 1.0/branchnorm;
   while (!SUCCESS || !CONVERGED ) {
     // Find proper starting factor
-    for (size_t i = 1; i < 2; ++i) { //  for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < 4; ++i) {
       double candidate_param = cur_params[i] + cur_deriv[i]*r;
       while (candidate_param < TOL || candidate_param > 1.0-TOL) {
         r = r/2;
@@ -2863,7 +2940,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
     for (size_t i = 0; i < n_params; ++i) {
       double fac = 0.0;
       diff = 0.0;
-      if (i ==1) fac = r; // if (i < 4) fac = r;
+      if (i < 4) fac = r;
       if (i > 4) fac = br;
       newparams[i] = cur_params[i] + fac*cur_deriv[i];
       diff += abs(newparams[i]- params[i]);
@@ -2884,7 +2961,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
       cur_params = newparams;
       llk = newllk;
 
-      norm = abs(cur_deriv[1]); // + abs(cur_deriv[0]) + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+      norm = abs(cur_deriv[1]) + abs(cur_deriv[0]) + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
       branchnorm = 0.0;
       for (size_t i = 5; i < cur_deriv.size(); ++i) {
         branchnorm += abs(cur_deriv[i]);
@@ -2914,9 +2991,8 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
         cerr << "half\t" << r*norm << "\t" << br*branchnorm << endl;
       }
     }
-    if (r*norm <= TOL && br*branchnorm <= TOL) {
-      CONVERGED = true;
-    }
+    if (r*norm <= TOL && br*branchnorm <= TOL)  CONVERGED = true;
+
   }
 
   if (VERBOSE) {
@@ -2934,6 +3010,74 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
 }
 
 
+static void
+tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
+                    vector<string> &states) {
+  const size_t n_nodes = tree_prob_table[0].size();
+  for (size_t i = 0; i < tree_prob_table.size(); ++i) {
+    string state;
+    for (size_t j = 0; j < n_nodes; ++j ) {
+      state += ((tree_prob_table[i][j] <= 0.5) ? '1' : '0' );
+    }
+    states.push_back(state);
+  }
+}
+
+
+static void
+build_domain(const size_t minCpG,
+             const size_t desert_size,
+             const vector<Site> &sites,
+             const vector<string> &states,
+             vector<GenomicRegion> &domains) {
+  // first round collapsing
+  GenomicRegion cpg;
+  cpg.set_chrom(sites[0].chrom);
+  cpg.set_start(sites[0].pos);
+  cpg.set_end(sites[0].pos+1);
+  cpg.set_name(states[0]);
+  cpg.set_score(1.0);
+  for (size_t i = 1; i < sites.size(); ++i) {
+    size_t d = distance_between_sites(sites[i], sites[i-1]);
+    if (d < desert_size && states[i] == states[i-1]) {
+      cpg.set_score(1.0+ cpg.get_score());
+      cpg.set_end(sites[i].pos);
+    } else {
+      domains.push_back(cpg);
+      cpg.set_chrom(sites[i].chrom);
+      cpg.set_start(sites[i].pos);
+      cpg.set_end(sites[i].pos+1);
+      cpg.set_name(states[i]);
+      cpg.set_score(1.0);
+    }
+  }
+  domains.push_back(cpg);
+  cerr << domains.size() << endl;
+
+  // Iteratively merge domains
+  for (size_t i = 1; i <= minCpG; ++i) {
+    vector<GenomicRegion> merging_domains;
+    size_t skip = 0;
+    for (size_t j = 0; j < domains.size(); ++j) {
+      if (domains[j].get_score() <= i) {
+        skip += domains[j].get_score();
+      } else {
+        if (merging_domains.size() > 0 &&
+            domains[j].get_name() == merging_domains.back().get_name() &&
+            domains[j].distance(merging_domains.back()) < desert_size ) {
+          merging_domains.back().set_score(merging_domains.back().get_score() +
+                                           domains[j].get_score() + skip);
+          skip = 0;
+        } else {
+          merging_domains.push_back(domains[j]);
+        }
+      }
+    }
+    domains.swap(merging_domains);
+    cerr << domains.size() << endl;
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////          MAIN             ///////////////////////////////
@@ -2945,8 +3089,8 @@ main(int argc, const char **argv) {
   try{
     size_t desert_size = 200;
     size_t minCpG = 50;
-    double tolerance = 1e-5;
-    size_t MAXITER = 5;
+    double tolerance = 1e-4;
+    size_t MAXITER = 10;
     string outfile;
     string paramfile;
 
@@ -3013,10 +3157,10 @@ main(int argc, const char **argv) {
 
     /**************************************************************************/
     /******************** INITIALIZE PARAMETERS *******************************/
-    double pi0 = 0.1;
-    double rate0 = 0.9;
-    double g0 = 0.798451;
-    double g1 = 0.822142;
+    double pi0 = 0.16181;
+    double rate0 = 0.767393;
+    double g0 = 0.99013;
+    double g1 = 0.983651;
 
     bool PARAMFIX = false;
     if (!paramfile.empty()) {
@@ -3099,6 +3243,7 @@ main(int argc, const char **argv) {
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
 
+
       if (!PARAMFIX) {
         start_param[0] = pi0_est;
         start_param[2] = g0_est;
@@ -3118,7 +3263,6 @@ main(int argc, const char **argv) {
         cerr << endl;
       }
 
-
       vector<vector<double> > tree_prob_table;
       leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
       if (VERBOSE)
@@ -3135,7 +3279,7 @@ main(int argc, const char **argv) {
       bool APP = true;
       if (APP) {
         if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
-        const double tol = 1e-5;
+        const double tol = 1e-4;
         const size_t max_app_iter = 100;
 
         double diff = std::numeric_limits<double>::max();
@@ -3150,14 +3294,7 @@ main(int argc, const char **argv) {
                            max_app_iter, tree_prob_table);
 
           vector<string> states;
-          for (size_t i = 0; i < sites.size(); ++i) {
-            string state;
-            for (size_t j = 0; j < n_nodes; ++j ) {
-              double x = ((double)rand() / (double)RAND_MAX);
-              state += ((x > tree_prob_table[i][j]) ? '1' : '0' );
-            }
-            states.push_back(state);
-          }
+          tree_prob_to_states(tree_prob_table, states);
 
           double llk;
           const size_t cmp_maxiter = 5;
@@ -3207,17 +3344,14 @@ main(int argc, const char **argv) {
           std::ofstream out(outfile.c_str());
           if (!out)
             throw SMITHLABException("bad output file: " + outfile);
-
+          vector<string> states;
+          vector<GenomicRegion> domains;
+          tree_prob_to_states(tree_prob_table, states);
+          build_domain(5, desert_size, sites, states, domains);
+          cerr << domains.size() << endl;
           out << "#" << t.Newick_format() << endl;
-          for (size_t i = 0; i < sites.size(); ++i) {
-            out << sites[i].chrom <<":" << sites[i].pos << "\t";
-            for (size_t j = 0; j < n_nodes; ++j ) {
-              out <<  ((tree_prob_table[i][j] < 0.9) ? 'C' : 'T' );
-            }
-            for (size_t j = 0; j < n_nodes; ++j ) {
-              out <<  "\t" << tree_prob_table[i][j];
-            }
-            out << endl;
+          for (size_t i = 0; i < domains.size(); ++i) {
+            out << domains[i] << '\n';
           }
         }
 
