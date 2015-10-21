@@ -326,11 +326,14 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
 
 
 static void
-fill_leaf_prob(const vector<Site> &sites,
+fill_leaf_prob(const bool VERBOSE,
+               const vector<Site> &sites,
                const size_t desert_size,
-               vector<vector<double> > &hypo_prob_table) {
+               vector<vector<double> > &hypo_prob_table,
+               double &pi0_est) {
   size_t nsites = hypo_prob_table.size();
   size_t n_leaf = hypo_prob_table[0].size();
+  pi0_est = 0.0;
   for (size_t i = 0; i < n_leaf; ++i) {
     size_t prev = 0;
     size_t next = 0;
@@ -344,7 +347,8 @@ fill_leaf_prob(const vector<Site> &sites,
       }
     }
     mean_hypo_prob = mean_hypo_prob/obs;
-    cerr << mean_hypo_prob << endl;
+    pi0_est += mean_hypo_prob;
+    if (VERBOSE) cerr << mean_hypo_prob << endl;
 
     for (size_t j = 0; j < nsites; ++j) {
       if (hypo_prob_table[j][i] >= 0) {
@@ -373,8 +377,9 @@ fill_leaf_prob(const vector<Site> &sites,
         }
       }
     }
-    cerr << "Filled " << count << " missing sites in leaf" << i << endl;
+    if (VERBOSE) cerr << "Filled " << count << " missing sites in leaf" << i << endl;
   }
+  pi0_est = pi0_est/n_leaf;
 }
 
 
@@ -390,7 +395,7 @@ separate_regions(const bool VERBOSE,
   const size_t totalsites = sites.size();
 
   vector<vector<double> > meth_aug = meth;
-  fill_leaf_prob(sites, desert_size, meth_aug);
+  fill_leaf_prob(VERBOSE, sites, desert_size, meth_aug, pi0_est);
 
   //scan desert
   //uncovered site has prob value set to -1.0
@@ -475,8 +480,8 @@ separate_regions(const bool VERBOSE,
 
   double g00= 0.0, g01=0.0, g10=0.0, g11=0.0;
   for (size_t i = 0; i < nleaf; ++i) {
-    for (size_t j = 0; j < meth.size()-1;++j){
-      if (meth[j][i] >= 0 && meth[j+1][i]>=0) {
+    for (size_t j = 0; j < meth.size()-1; ++j) {
+      if (meth[j][i] >= 0 && meth[j+1][i] >= 0) {
         g00 += meth[j][i]*meth[j+1][i];
         g01 += meth[j][i]*(1.0-meth[j+1][i]);
         g10 += (1.0- meth[j][i])*meth[j+1][i];
@@ -484,9 +489,8 @@ separate_regions(const bool VERBOSE,
       }
     }
   }
-  g0_est = (g00+1)/(g01+g00+1);
-  g1_est = (g11+1)/(g11+g10+1);
-  pi0_est = (g00+g01)/(g00+g01+g11+g10);
+  g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
+  g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
