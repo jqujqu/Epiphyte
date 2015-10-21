@@ -473,7 +473,17 @@ separate_regions(const bool VERBOSE,
         last_site = sites_copy.back();
     }
   }
-  reset_points.push_back(sites_copy.size());
+
+  if (last_block_size < min_site_per_block) { //remove small block
+    size_t start = reset_points.back();
+    sites_copy.erase(sites_copy.begin()+start, sites_copy.end() );
+    meth_copy.erase(meth_copy.begin()+start, meth_copy.end());
+    reset_points.pop_back();
+    last_block_size =
+      reset_points.empty()? 0 : meth_copy.size()-reset_points.back();
+  } else {
+    reset_points.push_back(sites_copy.size());
+  }
 
   meth.swap(meth_copy);
   sites.swap(sites_copy);
@@ -2623,9 +2633,12 @@ iterate_update(const vector<size_t> &subtree_sizes,
                const size_t MAXITER,
                vector<vector<double> > &tree_hypo_prob_table) {
 
+  cerr << "DEBUG: In iterate_update" << endl;
+
   size_t n_nodes = subtree_sizes.size();
   bool LEAF = false;
   for (size_t i = 0; i < reset_points.size()-1; ++i) {
+    cerr << "DEBUG: block" << i << "size = " << reset_points[i+1]-reset_points[i] << endl;
     double diff = std::numeric_limits<double>::max();
     size_t start = reset_points[i];
     size_t end = reset_points[i+1];
@@ -2634,6 +2647,7 @@ iterate_update(const vector<size_t> &subtree_sizes,
     while (diff > tol && iter < MAXITER) {
       diff = 0.0;
       for (size_t j = start; j < end; ++j) {
+        //        cerr << "DEBUG: " << j <<  endl;
         vector<bool> updated (subtree_sizes.size(), false);
         if (j == start) {
           posterior_start(LEAF, subtree_sizes, G, time_trans_mats,
@@ -2651,6 +2665,7 @@ iterate_update(const vector<size_t> &subtree_sizes,
       }
       ++iter;
     }
+    cerr << "DEBUG: block" << i << "done" << endl;
   }
 }
 
@@ -2674,6 +2689,9 @@ approx_posterior(const vector<size_t> &subtree_sizes,
   vector<double> Ts(params.begin()+4, params.end());
   collect_transition_matrices(rate0, g0, g1, Ts, time_trans_mats,
                               combined_trans_mats);
+
+  cerr << "DEBUG: after collect_transition_matrices" << endl;
+
 
   vector<vector<double> >G(2, vector<double>(2, 0.0));
   G[0][0] = g0;
@@ -3283,7 +3301,7 @@ main(int argc, const char **argv) {
       bool APP = true;
       if (APP) {
         if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
-        const double tol = 1e-4;
+        const double tol = 1e-3;
         const size_t max_app_iter = 100;
 
         double diff = std::numeric_limits<double>::max();
@@ -3297,6 +3315,7 @@ main(int argc, const char **argv) {
           approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                            max_app_iter, tree_prob_table);
 
+          cerr << "DEBUG: after approx_posterior" << endl;
           vector<string> states;
           tree_prob_to_states(tree_prob_table, states);
 
@@ -3304,6 +3323,8 @@ main(int argc, const char **argv) {
           const size_t cmp_maxiter = 5;
           complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
                             subtree_sizes, start_param, newparams, llk);
+          cerr << "DEBUG: after complete_optimize" << endl;
+
           diff = 0.0;
           for (size_t i = 0; i < newparams.size(); ++i) {
             diff += abs(newparams[i]-start_param[i]);
