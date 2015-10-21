@@ -3089,6 +3089,7 @@ build_domain(const size_t minCpG,
             domains[j].distance(merging_domains.back()) < desert_size ) {
           merging_domains.back().set_score(merging_domains.back().get_score() +
                                            domains[j].get_score() + skip);
+          merging_domains.back().set_end(domains[j].get_end());
           skip = 0;
         } else {
           merging_domains.push_back(domains[j]);
