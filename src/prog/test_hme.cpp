@@ -2633,12 +2633,9 @@ iterate_update(const vector<size_t> &subtree_sizes,
                const size_t MAXITER,
                vector<vector<double> > &tree_hypo_prob_table) {
 
-  cerr << "DEBUG: In iterate_update" << endl;
-
   size_t n_nodes = subtree_sizes.size();
   bool LEAF = false;
   for (size_t i = 0; i < reset_points.size()-1; ++i) {
-    cerr << "DEBUG: block" << i << "size = " << reset_points[i+1]-reset_points[i] << endl;
     double diff = std::numeric_limits<double>::max();
     size_t start = reset_points[i];
     size_t end = reset_points[i+1];
@@ -2647,7 +2644,6 @@ iterate_update(const vector<size_t> &subtree_sizes,
     while (diff > tol && iter < MAXITER) {
       diff = 0.0;
       for (size_t j = start; j < end; ++j) {
-        //        cerr << "DEBUG: " << j <<  endl;
         vector<bool> updated (subtree_sizes.size(), false);
         if (j == start) {
           posterior_start(LEAF, subtree_sizes, G, time_trans_mats,
@@ -2665,7 +2661,6 @@ iterate_update(const vector<size_t> &subtree_sizes,
       }
       ++iter;
     }
-    cerr << "DEBUG: block" << i << "done" << endl;
   }
 }
 
@@ -2689,9 +2684,6 @@ approx_posterior(const vector<size_t> &subtree_sizes,
   vector<double> Ts(params.begin()+4, params.end());
   collect_transition_matrices(rate0, g0, g1, Ts, time_trans_mats,
                               combined_trans_mats);
-
-  cerr << "DEBUG: after collect_transition_matrices" << endl;
-
 
   vector<vector<double> >G(2, vector<double>(2, 0.0));
   G[0][0] = g0;
@@ -2933,7 +2925,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
   vector<double> cur_deriv = deriv;
   vector<double> cur_params = params;
   // Reduce factor untill improvement or convergence
-  double norm =  abs(cur_deriv[1]) + abs(cur_deriv[0])  + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+  double norm = abs(cur_deriv[1]) + abs(cur_deriv[0]) + abs(cur_deriv[2]) + abs(cur_deriv[3]);
   double branchnorm = 0.0;
   for (size_t i = 5; i < cur_deriv.size(); ++i) {
     branchnorm += abs(cur_deriv[i]);
@@ -2983,7 +2975,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
       cur_params = newparams;
       llk = newllk;
 
-      norm = abs(cur_deriv[1]) + abs(cur_deriv[0]) + abs(cur_deriv[2]) +  abs(cur_deriv[3]);
+      norm = abs(cur_deriv[1]) + abs(cur_deriv[0]) + abs(cur_deriv[2]) + abs(cur_deriv[3]);
       branchnorm = 0.0;
       for (size_t i = 5; i < cur_deriv.size(); ++i) {
         branchnorm += abs(cur_deriv[i]);
@@ -3074,7 +3066,7 @@ build_domain(const size_t minCpG,
     }
   }
   domains.push_back(cpg);
-  cerr << domains.size() << endl;
+  cerr << "DEBUG:" << domains.size() << endl;
 
   // Iteratively merge domains
   for (size_t i = 1; i <= minCpG; ++i) {
@@ -3097,7 +3089,7 @@ build_domain(const size_t minCpG,
       }
     }
     domains.swap(merging_domains);
-    cerr << domains.size() << endl;
+    cerr << "DEBUG:" << domains.size() << endl;
   }
 }
 
@@ -3122,7 +3114,7 @@ main(int argc, const char **argv) {
     bool COMPLETE = false;
     OptionParser opt_parse(strip_path(argv[0]), "test funcitonality of "
                            "phylo-methylome segmentation",
-                           "<newick> <meth-tab>");
+                           "<newick> <hypoprob-tab>");
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block"
                       "(default: 50)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
@@ -3266,7 +3258,6 @@ main(int argc, const char **argv) {
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
 
-
       if (!PARAMFIX) {
         start_param[0] = pi0_est;
         start_param[2] = g0_est;
@@ -3316,7 +3307,6 @@ main(int argc, const char **argv) {
           approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                            max_app_iter, tree_prob_table);
 
-          cerr << "DEBUG: after approx_posterior" << endl;
           vector<string> states;
           tree_prob_to_states(tree_prob_table, states);
 
@@ -3324,7 +3314,6 @@ main(int argc, const char **argv) {
           const size_t cmp_maxiter = 5;
           complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
                             subtree_sizes, start_param, newparams, llk);
-          cerr << "DEBUG: after complete_optimize" << endl;
 
           diff = 0.0;
           for (size_t i = 0; i < newparams.size(); ++i) {
