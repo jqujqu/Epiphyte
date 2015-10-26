@@ -3037,6 +3037,30 @@ tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
   }
 }
 
+static void
+write_treeprob_states(const vector<size_t> &subtree_sizes,
+                      const vector<Site> &sites,
+                      const vector<vector<double> > &tree_prob_table,
+                      std::ofstream &out) {
+  const size_t n_nodes = subtree_sizes.size();
+  for (size_t i = 0; i < sites.size(); ++i) {
+    string state;
+    string pme;
+    for (size_t j = 0; j < n_nodes; ++j ) {
+      state += ((tree_prob_table[i][j] <= 0.5) ? '1' : '0' );
+      if (subtree_sizes[j] == 1)
+        pme += ((tree_prob_table[i][j] <= 0.5) ? '1' : '0' );
+    }
+
+    out << sites[i].chrom << "\t" << sites[i].pos << "\t"
+        << sites[i].pos + 1 << "\t" << state << "\t0\t+\t";
+    out << pme;
+    for (size_t j = 0; j < n_nodes; ++j)
+      out << "\t" << tree_prob_table[i][j];
+    out << "\n";
+  }
+}
+
 
 static void
 build_domain(const size_t minCpG,
@@ -3066,7 +3090,6 @@ build_domain(const size_t minCpG,
     }
   }
   domains.push_back(cpg);
-  cerr << "DEBUG:" << domains.size() << endl;
 
   // Iteratively merge domains
   for (size_t i = 1; i <= minCpG; ++i) {
@@ -3089,7 +3112,6 @@ build_domain(const size_t minCpG,
       }
     }
     domains.swap(merging_domains);
-    cerr << "DEBUG:" << domains.size() << endl;
   }
 }
 
@@ -3102,8 +3124,9 @@ build_domain(const size_t minCpG,
 int
 main(int argc, const char **argv) {
   try{
-    size_t desert_size = 200;
-    size_t minCpG = 50;
+    size_t desert_size = 1000;
+    size_t minCpG = 10;
+    size_t minfragcpg = 5;
     double tolerance = 1e-4;
     size_t MAXITER = 10;
     string outfile;
@@ -3112,6 +3135,7 @@ main(int argc, const char **argv) {
     // run mode flags
     bool VERBOSE = false;
     bool COMPLETE = false;
+    bool SINGLE = false;
     OptionParser opt_parse(strip_path(argv[0]), "test funcitonality of "
                            "phylo-methylome segmentation",
                            "<newick> <hypoprob-tab>");
@@ -3125,6 +3149,10 @@ main(int argc, const char **argv) {
                       false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
     opt_parse.add_opt("output", 'o', "output file name", false, outfile);
+    opt_parse.add_opt("minfragCpG", 'f', "ignore fragments with fewer CpG sites"
+                      "(default: 5)", false, minfragcpg);
+    opt_parse.add_opt("single", 's', "also output states by sites (when -o is used)",
+                      false, SINGLE);
 
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
@@ -3362,11 +3390,20 @@ main(int argc, const char **argv) {
           vector<string> states;
           vector<GenomicRegion> domains;
           tree_prob_to_states(tree_prob_table, states);
-          build_domain(5, desert_size, sites, states, domains);
+          build_domain(minfragcpg, desert_size, sites, states, domains);
           cerr << domains.size() << endl;
+
           out << "#" << t.Newick_format() << endl;
           for (size_t i = 0; i < domains.size(); ++i) {
             out << domains[i] << '\n';
+          }
+
+          if (SINGLE) {
+            string outssfile = outfile + "_bysite";
+            std::ofstream outss(outssfile.c_str());
+            if (!outss)
+              throw SMITHLABException("bad output file: " + outssfile);
+            write_treeprob_states(subtree_sizes, sites, tree_prob_table, outss);
           }
         }
 
