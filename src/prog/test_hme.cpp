@@ -2139,8 +2139,8 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
   const double tol = 1e-5;
   size_t count = 1;
   // Recursion
-  size_t n_children = 0;
-  double sum_children_prob = 0;
+  size_t n_desc_leaf = 0;
+  double sum_desc_leaf_prob = 0;
   while (count < subtree_sizes[node_id]) {
     const size_t child_id = node_id + count;
     if (node_probs[child_id] < 0) {
@@ -2152,14 +2152,14 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
   double direction = 0.0;
   for (size_t i = 1; i < subtree_sizes[node_id]; ++i) {
     if (subtree_sizes[i+node_id]==1) {
-      ++n_children;
-      sum_children_prob += node_probs[i+node_id];
+      ++n_desc_leaf;
+      sum_desc_leaf_prob += node_probs[i+node_id];
       direction += (node_probs[i+node_id] > 0.5) ? 1.0 : -1.0;
     }
   }
 
 
-  if (node_id!=0 && abs(direction) < n_children) {
+  if (node_id!=0 && abs(direction) < n_desc_leaf) {
     double sum_extra_leaf_hypo_prob = 0.0;
     size_t n_extra_leaves = 0;
     // children disagree, find majority state of leaf species outside this subtree
@@ -2167,14 +2167,14 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
       if (subtree_sizes[i] == 1 &&
           (i < node_id || i >= node_id+subtree_sizes[node_id])) {
         sum_extra_leaf_hypo_prob += node_probs[i];
-        n_extra_leaves +=1;
+        ++n_extra_leaves;
       }
     }
-    sum_children_prob += sum_extra_leaf_hypo_prob/(n_extra_leaves+tol);
-    n_children += n_extra_leaves;
+    sum_desc_leaf_prob += sum_extra_leaf_hypo_prob/(n_extra_leaves + tol);
+    ++n_desc_leaf;
   }
 
-  node_probs[node_id] = min(max(tol, sum_children_prob/n_children), 1.0 - tol);
+  node_probs[node_id] = min(max(tol, sum_desc_leaf_prob/n_desc_leaf), 1.0 - tol);
 }
 
 
