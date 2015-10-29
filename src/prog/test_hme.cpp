@@ -1755,9 +1755,9 @@ optimize_iteration(const bool FULL, const double TOL,
     r = r/2;
     cerr << r << endl;
 
-    for (size_t i = 0; i < deriv.size(); ++i)
-      cerr << "d[" << i << "]=" << deriv[i] << "\t";
-    cerr << endl;
+    // for (size_t i = 0; i < deriv.size(); ++i)
+    //   cerr << "d[" << i << "]=" << deriv[i] << "\t";
+    // cerr << endl;
 
     if (r*norm <= TOL) {
       CONVERGED = true;
@@ -1938,6 +1938,7 @@ loglik_complete_tree(const vector<string> &states,
 
 static void
 complete_optimize_iteration(const bool VERBOSE,
+                            const bool PART2,
                             const double TOL,
                             const vector<string> &states,
                             const vector<size_t> &reset_points,
@@ -2002,9 +2003,9 @@ complete_optimize_iteration(const bool VERBOSE,
           }
         }
         cerr << endl;
-        for (size_t i = 0; i < newderiv.size(); ++i)
-          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-        cerr << endl;
+        // for (size_t i = 0; i < newderiv.size(); ++i)
+        //   cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+        // cerr << endl;
       }
     } else {
       if (r*norm <= TOL) CONVERGED = true;
@@ -2021,59 +2022,63 @@ complete_optimize_iteration(const bool VERBOSE,
   double p1_llk = newllk;
   vector<double> p1_deriv = newderiv;
 
-  /******** upddate FF and BB parameters **********/
-  cerr << "[Part 2]\t";
-  norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
-  r = 1.0/norm; //maximization (-1.0 if minimization)
-  for (size_t i = 2; i < 4; ++i) {
-    double candidate_param = p1_params[i] + p1_deriv[i]*r;
-    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-      r = r/2;
-      candidate_param = p1_params[i] + p1_deriv[i]*r;
-    }
-  }
-  bool SUCCESS_p2 = false;
-  bool CONVERGED_p2 = false;
-  // Reduce factor untill improvement or convergence
-  while (!SUCCESS_p2 && !CONVERGED_p2) {
-    cerr << ".";
-    // Test param point
-    newparams = p1_params;
+
+  if (PART2) {
+    /******** upddate FF and BB parameters **********/
+    cerr << "[Part 2]\t";
+    norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
+    r = 1.0/norm; //maximization (-1.0 if minimization)
     for (size_t i = 2; i < 4; ++i) {
-      newparams[i] = p1_params[i] + r*p1_deriv[i];
-    }
-
-    loglik_complete_tree(states, reset_points, subtree_sizes,
-                         newparams, newllk, newderiv);
-    if (newllk > p1_llk) {
-      SUCCESS_p2 = true;
-
-      if (VERBOSE) {
-        cerr << "========= Improve = " << newllk - p1_llk << endl;
-        // print new params
-        for (size_t i = 0; i < newparams.size(); ++i) {
-          if (i < 4){
-            cerr << newparams[i] << "\t";
-          } else if (i > 4) {
-            cerr << -log(1.0-newparams[i]) << "\t";
-          }
-        }
-        cerr << endl;
-        // print derivatives
-        for (size_t i = 0; i < newderiv.size(); ++i)
-          cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-        cerr << endl;
+      double candidate_param = p1_params[i] + p1_deriv[i]*r;
+      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+        r = r/2;
+        candidate_param = p1_params[i] + p1_deriv[i]*r;
       }
-    } else {
-      if (r*norm <= TOL) CONVERGED_p2 = true;
-      r = r/2;
+    }
+    bool SUCCESS_p2 = false;
+    bool CONVERGED_p2 = false;
+    // Reduce factor untill improvement or convergence
+    while (!SUCCESS_p2 && !CONVERGED_p2) {
+      cerr << ".";
+      // Test param point
+      newparams = p1_params;
+      for (size_t i = 2; i < 4; ++i) {
+        newparams[i] = p1_params[i] + r*p1_deriv[i];
+      }
+
+      loglik_complete_tree(states, reset_points, subtree_sizes,
+                           newparams, newllk, newderiv);
+      if (newllk > p1_llk) {
+        SUCCESS_p2 = true;
+
+        if (VERBOSE) {
+          cerr << "========= Improve = " << newllk - p1_llk << endl;
+          // print new params
+          for (size_t i = 0; i < newparams.size(); ++i) {
+            if (i < 4){
+              cerr << newparams[i] << "\t";
+            } else if (i > 4) {
+              cerr << -log(1.0-newparams[i]) << "\t";
+            }
+          }
+          cerr << endl;
+          // // print derivatives
+          // for (size_t i = 0; i < newderiv.size(); ++i)
+          //   cerr << "d[" << i << "]=" << newderiv[i] << "\t";
+          // cerr << endl;
+        }
+      } else {
+        if (r*norm <= TOL) CONVERGED_p2 = true;
+        r = r/2;
+      }
+    }
+    if (!SUCCESS_p2) {
+      newllk = p1_llk;
+      newparams = p1_params;
+      newderiv = p1_deriv;
     }
   }
-  if (!SUCCESS_p2) {
-    newllk = p1_llk;
-    newparams = p1_params;
-    newderiv = p1_deriv;
-  }
+
 }
 
 
@@ -2085,11 +2090,10 @@ complete_optimize(const bool VERBOSE,
                   const vector<size_t> &reset_points,
                   const vector<size_t> &subtree_sizes,
                   const vector<double> &start_params,
+                  bool &OPTIMIZE_FFBB,
                   vector <double> &params,
                   double &llk) {
 
-  size_t iter = 0;
-  double diff = std::numeric_limits<double>::max();
   vector<double> old_params = start_params;
   vector<double> old_deriv;
   double old_llk;
@@ -2097,17 +2101,24 @@ complete_optimize(const bool VERBOSE,
                        old_params, old_llk, old_deriv);
   if (VERBOSE) {
     cerr << "------" << old_llk << "-------" << endl;
-    for (size_t i = 0; i < old_deriv.size(); ++i)
-      cerr << "d[" << i << "]=" << old_deriv[i] << "\t";
-    cerr << endl;
+    // for (size_t i = 0; i < old_deriv.size(); ++i)
+    //   cerr << "d[" << i << "]=" << old_deriv[i] << "\t";
+    // cerr << endl;
   }
 
+  size_t iter = 0;
+  double diff = std::numeric_limits<double>::max();
+  double FFBBdiff = 0;
   vector<double> deriv;
   while (iter < MAXITER  && diff > TOL) {
-    if (VERBOSE)
-      cerr << "complete_optimize_iter " << iter << endl;
-    complete_optimize_iteration(VERBOSE, TOL, states, reset_points, subtree_sizes,
+    // if (VERBOSE)
+    //   cerr << "complete_optimize_iter " << iter << endl;
+    complete_optimize_iteration(VERBOSE, OPTIMIZE_FFBB, TOL, states, reset_points, subtree_sizes,
                                 old_params,  old_deriv, old_llk, params, deriv, llk);
+
+    FFBBdiff = abs(old_params[2] - params[2]) +  abs(old_params[1] - params[1]);
+    if (OPTIMIZE_FFBB && FFBBdiff < TOL)
+      OPTIMIZE_FFBB = false;
 
     diff = 0;
     for (size_t i = 0; i < params.size(); ++ i) {
@@ -3240,8 +3251,10 @@ main(int argc, const char **argv) {
 
       vector<double> newparams;
       double llk;
+      bool OPTIMIZE_FFBB = true;
       complete_optimize(VERBOSE, tolerance, MAXITER, states, reset_points,
-                        subtree_sizes, start_param, newparams,llk);
+                        subtree_sizes, start_param,
+                        OPTIMIZE_FFBB, newparams,llk);
       if (VERBOSE) {
         cerr << "[Results]\t";
         for (size_t i = 5; i < newparams.size(); ++i) {
@@ -3326,7 +3339,7 @@ main(int argc, const char **argv) {
 
         double diff = std::numeric_limits<double>::max();
         size_t iter = 0;
-
+        bool OPTIMIZE_FFBB = true;
         while (iter < MAXITER && diff > tol) {
           cerr << "Iteration " << iter << endl;
           vector<double> appderiv;
@@ -3341,7 +3354,8 @@ main(int argc, const char **argv) {
           double llk;
           const size_t cmp_maxiter = 5;
           complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
-                            subtree_sizes, start_param, newparams, llk);
+                            subtree_sizes, start_param,
+                            OPTIMIZE_FFBB, newparams, llk);
 
           diff = 0.0;
           for (size_t i = 0; i < newparams.size(); ++i) {
