@@ -2116,7 +2116,7 @@ complete_optimize(const bool VERBOSE,
     complete_optimize_iteration(VERBOSE, OPTIMIZE_FFBB, TOL, states, reset_points, subtree_sizes,
                                 old_params,  old_deriv, old_llk, params, deriv, llk);
 
-    FFBBdiff = abs(old_params[2] - params[2]) +  abs(old_params[1] - params[1]);
+    FFBBdiff = abs(old_params[2] - params[2]) +  abs(old_params[3] - params[3]);
     if (OPTIMIZE_FFBB && FFBBdiff < TOL)
       OPTIMIZE_FFBB = false;
 
