@@ -3042,7 +3042,7 @@ tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
   for (size_t i = 0; i < tree_prob_table.size(); ++i) {
     string state;
     for (size_t j = 0; j < n_nodes; ++j ) {
-      state += ((tree_prob_table[i][j] <= 0.5) ? '1' : '0' );
+      state += ((tree_prob_table[i][j] <= 0.9) ? '1' : '0' );
     }
     states.push_back(state);
   }
@@ -3225,7 +3225,7 @@ main(int argc, const char **argv) {
     }
     vector<double> Ts;
     for (size_t i = 0; i < branches.size(); ++i) {
-      Ts.push_back(1.0-1.0/exp(branches[i]));
+      Ts.push_back(1.0 - 1.0/exp(branches[i]));
     }
 
     const size_t n_nodes = subtree_sizes.size();
@@ -3313,7 +3313,7 @@ main(int argc, const char **argv) {
         else cerr << "Start parameter:\t";
         for (size_t i = 0; i < start_param.size(); ++i) {
           if (i < 4) cerr << start_param[i] << "\t";
-          if (i > 4) cerr << "[branch "<< i-4 <<"]=" << -log(1.0-start_param[i]) << "\t";
+          if (i > 4) cerr << "[branch "<< i-4 <<"]=" << -log(1.0 - start_param[i]) << "\t";
         }
         cerr << endl;
       }
@@ -3337,42 +3337,44 @@ main(int argc, const char **argv) {
         const double tol = 1e-3;
         const size_t max_app_iter = 100;
 
-        double diff = std::numeric_limits<double>::max();
-        size_t iter = 0;
-        bool OPTIMIZE_FFBB = true;
-        while (iter < MAXITER && diff > tol) {
-          cerr << "Iteration " << iter << endl;
-          vector<double> appderiv;
-          vector<double> newparams;
-          vector<double> newderiv;
-          approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
-                           max_app_iter, tree_prob_table);
+        if (!PARAMFIX) {
+          double diff = std::numeric_limits<double>::max();
+          size_t iter = 0;
+          bool OPTIMIZE_FFBB = true;
+          while (iter < MAXITER && diff > tol) {
+            cerr << "Iteration " << iter << endl;
+            vector<double> appderiv;
+            vector<double> newparams;
+            vector<double> newderiv;
+            approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
+                             max_app_iter, tree_prob_table);
 
-          vector<string> states;
-          tree_prob_to_states(tree_prob_table, states);
+            vector<string> states;
+            tree_prob_to_states(tree_prob_table, states);
 
-          double llk;
-          const size_t cmp_maxiter = 5;
-          complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
-                            subtree_sizes, start_param,
-                            OPTIMIZE_FFBB, newparams, llk);
+            double llk;
+            const size_t cmp_maxiter = 5;
+            complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
+                              subtree_sizes, start_param,
+                              OPTIMIZE_FFBB, newparams, llk);
 
-          diff = 0.0;
-          for (size_t i = 0; i < newparams.size(); ++i) {
-            diff += abs(newparams[i]-start_param[i]);
+            diff = 0.0;
+            for (size_t i = 0; i < newparams.size(); ++i) {
+              diff += abs(newparams[i]-start_param[i]);
+            }
+
+            start_param = newparams;
+            ++iter;
           }
 
-          start_param = newparams;
-          ++iter;
-        }
+          if (diff <= tol && VERBOSE)
+            cerr << "Converged at iteration " << iter << endl;
 
-        if (diff <= tol && VERBOSE)
-          cerr << "Converged at iteration " << iter << endl;
-
-        for (size_t i = 5; i < start_param.size(); ++i) {
-          branches[i-4] = -log(1.0 - start_param[i]);
+          for (size_t i = 5; i < start_param.size(); ++i) {
+            branches[i-4] = -log(1.0 - start_param[i]);
+          }
+          t.set_branch_lengths(branches);
         }
-        t.set_branch_lengths(branches);
 
         if (VERBOSE) {
           cerr << "[Results]\t";
@@ -3384,18 +3386,9 @@ main(int argc, const char **argv) {
         }
 
         leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
-        double hypo = 0.0;
-        for (size_t i = 0; i < meth_prob_table.size(); ++i) {
-          hypo += tree_prob_table[i][0];
-        }
-        cerr << "=====\t" << hypo/tree_prob_table.size() << "\t=======" << endl;
+
         approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                          max_app_iter, tree_prob_table);
-        hypo = 0.0;
-        for (size_t i = 0; i < meth_prob_table.size(); ++i) {
-          hypo += tree_prob_table[i][0];
-        }
-        cerr << "=====\t" << hypo/tree_prob_table.size() << "\t=======" << endl;
 
         if (!outfile.empty()) {
           std::ofstream out(outfile.c_str());
