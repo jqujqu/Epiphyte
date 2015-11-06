@@ -3037,12 +3037,13 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
 
 static void
 tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
+                    const double cutoff,
                     vector<string> &states) {
   const size_t n_nodes = tree_prob_table[0].size();
   for (size_t i = 0; i < tree_prob_table.size(); ++i) {
     string state;
     for (size_t j = 0; j < n_nodes; ++j ) {
-      state += ((tree_prob_table[i][j] <= 0.9) ? '1' : '0' );
+      state += ((tree_prob_table[i][j] <= cutoff) ? '1' : '0' );
     }
     states.push_back(state);
   }
@@ -3350,7 +3351,8 @@ main(int argc, const char **argv) {
                              max_app_iter, tree_prob_table);
 
             vector<string> states;
-            tree_prob_to_states(tree_prob_table, states);
+            double cutoff = 0.8;
+            tree_prob_to_states(tree_prob_table, cutoff, states);
 
             double llk;
             const size_t cmp_maxiter = 5;
@@ -3396,7 +3398,8 @@ main(int argc, const char **argv) {
             throw SMITHLABException("bad output file: " + outfile);
           vector<string> states;
           vector<GenomicRegion> domains;
-          tree_prob_to_states(tree_prob_table, states);
+          double cutoff = 0.5;
+          tree_prob_to_states(tree_prob_table, cutoff, states);
           build_domain(minfragcpg, desert_size, sites, states, domains);
           cerr << domains.size() << endl;
 
