@@ -1,4 +1,5 @@
-/*    simulation: a program to simulate methylation states for species
+/*****************************************************************************
+ *  simulation: a program to simulate methylation states for species
  *    in a phylogenetic tree according to inheritance and
  *    auto-correlation of methylation states, and WGBS data sets for
  *    extant species.
@@ -20,7 +21,8 @@
  *
  *    You should have received a copy of the GNU General Public License
  *    along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+ *****************************************************************************/
+
 
 
 #include <string>
@@ -364,7 +366,8 @@ write_hypoprob(std::ostream &out,
                const string &chrom, const size_t &pos,
                const vector<size_t> &subtree_sizes,
                const vector<bool> HME) {
-  return (out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME) << '\n' );
+  return (out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME)
+          << '\n' );
 }
 
 static void
@@ -394,10 +397,12 @@ int main(int argc, const char **argv) {
     bool SINGLE = false;
     /****************** COMMAND LINE OPTIONS ********************/
     OptionParser opt_parse(strip_path(argv[0]), "simulate methylomes "
-                           "according phylogenetic trees", "<parameter file>");
+                           "according to a phylogenetic tree",
+                           "<parameter file>");
     opt_parse.add_opt("CpG", 'c', "methcount file or bed file",
                       true, cpgs_file);
-    opt_parse.add_opt("singlesite", 's', "simulate sites independently", false, SINGLE);
+    opt_parse.add_opt("singlesite", 's', "simulate sites independently",
+                      false, SINGLE);
     opt_parse.add_opt("desert", 'd', "desert size (default 1000)",
                       false, desertsize);
     opt_parse.add_opt("output", 'o', "name of output file "
