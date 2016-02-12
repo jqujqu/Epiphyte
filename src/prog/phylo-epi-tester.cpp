@@ -342,157 +342,157 @@ unitrate_trans_prob_mat(const double rate0,
 }
 
 
-static void
-get_rate_helper_inc(const double u, const double m,
-                    const double u_dr, const double m_dr,
-                    const double unmeth_child_lik, const double meth_child_lik,
-                    const vector<vector<double> > &child_trans_mat,
-                    const double exp_branch,
-                    double &u_inc, double &m_inc){
-  u_inc =
-    (u_dr*child_trans_mat[0][0] + u*(1.0/exp_branch - 1.0) +
-     m_dr*child_trans_mat[0][1] + m*(1.0-1.0/exp_branch))/unmeth_child_lik;
-  m_inc =
-    (u_dr*child_trans_mat[1][0] + u*(1.0/exp_branch - 1.0) +
-     m_dr*child_trans_mat[1][1] + m*(1.0-1.0/exp_branch))/meth_child_lik;
-}
+// static void
+// get_rate_helper_inc(const double u, const double m,
+//                     const double u_dr, const double m_dr,
+//                     const double unmeth_child_lik, const double meth_child_lik,
+//                     const vector<vector<double> > &child_trans_mat,
+//                     const double exp_branch,
+//                     double &u_inc, double &m_inc){
+//   u_inc =
+//     (u_dr*child_trans_mat[0][0] + u*(1.0/exp_branch - 1.0) +
+//      m_dr*child_trans_mat[0][1] + m*(1.0-1.0/exp_branch))/unmeth_child_lik;
+//   m_inc =
+//     (u_dr*child_trans_mat[1][0] + u*(1.0/exp_branch - 1.0) +
+//      m_dr*child_trans_mat[1][1] + m*(1.0-1.0/exp_branch))/meth_child_lik;
+// }
 
 
-static void
-update_bysite(const vector<size_t> &subtree_sizes,
-              const size_t tree_start,
-              const size_t child_start,
-              const vector<vector<double> > &Q,
-              const vector<vector<double> > &child_trans_mat,
-              const double u, const double m,
-              const double u_dr, const double m_dr,
-              const vector<double> &u_db, const vector<double> &m_db,
-              const vector<double> &exp_branches,
-              double &subtree_lik_given_root_unmeth,
-              double &subtree_lik_given_root_meth,
-              double &rate_helper_u,
-              double &rate_helper_m,
-              vector<double> &branch_helper_u,
-              vector<double> &branch_helper_m){
-  const double unmeth_child_lik =
-    child_trans_mat[0][0]*u + child_trans_mat[0][1]*m;
-  const double meth_child_lik =
-    child_trans_mat[1][0]*u + child_trans_mat[1][1]*m;
+// static void
+// update_bysite(const vector<size_t> &subtree_sizes,
+//               const size_t tree_start,
+//               const size_t child_start,
+//               const vector<vector<double> > &Q,
+//               const vector<vector<double> > &child_trans_mat,
+//               const double u, const double m,
+//               const double u_dr, const double m_dr,
+//               const vector<double> &u_db, const vector<double> &m_db,
+//               const vector<double> &exp_branches,
+//               double &subtree_lik_given_root_unmeth,
+//               double &subtree_lik_given_root_meth,
+//               double &rate_helper_u,
+//               double &rate_helper_m,
+//               vector<double> &branch_helper_u,
+//               vector<double> &branch_helper_m){
+//   const double unmeth_child_lik =
+//     child_trans_mat[0][0]*u + child_trans_mat[0][1]*m;
+//   const double meth_child_lik =
+//     child_trans_mat[1][0]*u + child_trans_mat[1][1]*m;
 
-  //likelihood
-  subtree_lik_given_root_unmeth *= unmeth_child_lik;
-  subtree_lik_given_root_meth *= meth_child_lik;
+//   //likelihood
+//   subtree_lik_given_root_unmeth *= unmeth_child_lik;
+//   subtree_lik_given_root_meth *= meth_child_lik;
 
-  //deriv_rate helper
-  double exp_branch = exp_branches[child_start];
-  double u_inc, m_inc;
-  get_rate_helper_inc(u, m, u_dr, m_dr,
-                      unmeth_child_lik, meth_child_lik,
-                      child_trans_mat, exp_branch, u_inc, m_inc);
-  rate_helper_u += u_inc;
-  rate_helper_m += m_inc;
+//   //deriv_rate helper
+//   double exp_branch = exp_branches[child_start];
+//   double u_inc, m_inc;
+//   get_rate_helper_inc(u, m, u_dr, m_dr,
+//                       unmeth_child_lik, meth_child_lik,
+//                       child_trans_mat, exp_branch, u_inc, m_inc);
+//   rate_helper_u += u_inc;
+//   rate_helper_m += m_inc;
 
-  //deriv_branch helper
-  branch_helper_u[child_start - tree_start] =
-    (u*Q[0][0] + m*Q[0][1])/exp_branches[child_start]/unmeth_child_lik;
-  branch_helper_m[child_start - tree_start] =
-    (u*Q[1][0] + m*Q[1][1])/exp_branches[child_start]/meth_child_lik;
+//   //deriv_branch helper
+//   branch_helper_u[child_start - tree_start] =
+//     (u*Q[0][0] + m*Q[0][1])/exp_branches[child_start]/unmeth_child_lik;
+//   branch_helper_m[child_start - tree_start] =
+//     (u*Q[1][0] + m*Q[1][1])/exp_branches[child_start]/meth_child_lik;
 
-  for (size_t i = 1; i < subtree_sizes[child_start]; ++i) {
-    const size_t subtree_branch_id = i + child_start - tree_start;
-    branch_helper_u[subtree_branch_id] =
-      (u_db[i]*child_trans_mat[0][0] + m_db[i]*child_trans_mat[0][1])/unmeth_child_lik;
-    branch_helper_m[subtree_branch_id] =
-      (u_db[i]*child_trans_mat[1][0] + m_db[i]*child_trans_mat[1][1])/meth_child_lik;
-  }
-}
+//   for (size_t i = 1; i < subtree_sizes[child_start]; ++i) {
+//     const size_t subtree_branch_id = i + child_start - tree_start;
+//     branch_helper_u[subtree_branch_id] =
+//       (u_db[i]*child_trans_mat[0][0] + m_db[i]*child_trans_mat[0][1])/unmeth_child_lik;
+//     branch_helper_m[subtree_branch_id] =
+//       (u_db[i]*child_trans_mat[1][0] + m_db[i]*child_trans_mat[1][1])/meth_child_lik;
+//   }
+// }
 
 
-static void
-subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
-                         const double &rate,
-                         const vector<double> &expbranches,
-                         const size_t tree_start,
-                         const vector<vector<double> > &states,
-                         vector<double> &subtree_lik_given_root_unmeth,
-                         vector<double> &subtree_lik_given_root_meth,
-                         vector<double> &deriv_rate_given_root_unmeth,
-                         vector<double> &deriv_rate_given_root_meth,
-                         vector<vector<double> > &deriv_branches_given_root_unmeth,
-                         vector<vector<double> > &deriv_branches_given_root_meth) {
-  const size_t nsites = states[0].size();
-  vector<double> empty_dbranch(subtree_sizes[tree_start], 0.0); //for branches in the subtree
-  deriv_branches_given_root_unmeth =
-    vector<vector<double> >(nsites, empty_dbranch);
-  deriv_branches_given_root_meth =
-    vector<vector<double> >(nsites, empty_dbranch);
+// static void
+// subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
+//                          const double &rate,
+//                          const vector<double> &expbranches,
+//                          const size_t tree_start,
+//                          const vector<vector<double> > &states,
+//                          vector<double> &subtree_lik_given_root_unmeth,
+//                          vector<double> &subtree_lik_given_root_meth,
+//                          vector<double> &deriv_rate_given_root_unmeth,
+//                          vector<double> &deriv_rate_given_root_meth,
+//                          vector<vector<double> > &deriv_branches_given_root_unmeth,
+//                          vector<vector<double> > &deriv_branches_given_root_meth) {
+//   const size_t nsites = states[0].size();
+//   vector<double> empty_dbranch(subtree_sizes[tree_start], 0.0); //for branches in the subtree
+//   deriv_branches_given_root_unmeth =
+//     vector<vector<double> >(nsites, empty_dbranch);
+//   deriv_branches_given_root_meth =
+//     vector<vector<double> >(nsites, empty_dbranch);
 
-  if (subtree_sizes[tree_start] == 1) {
-    for (size_t pos = 0; pos < nsites; ++pos) {
-      assert(states[tree_start][pos] >= 0);
-      subtree_lik_given_root_unmeth.push_back(states[tree_start][pos]);
-      subtree_lik_given_root_meth.push_back(1.0 - states[tree_start][pos]);
-    }
-    deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
-    deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
-  }
-  else {
-    vector<vector<double> > Q(2, vector<double>(2, 0.0));
-    Q[0][0] = 0.0 - rate;
-    Q[0][1] = rate;
-    Q[1][0] = 1.0 - rate;
-    Q[1][1] = rate - 1.0;
+//   if (subtree_sizes[tree_start] == 1) {
+//     for (size_t pos = 0; pos < nsites; ++pos) {
+//       assert(states[tree_start][pos] >= 0);
+//       subtree_lik_given_root_unmeth.push_back(states[tree_start][pos]);
+//       subtree_lik_given_root_meth.push_back(1.0 - states[tree_start][pos]);
+//     }
+//     deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
+//     deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
+//   }
+//   else {
+//     vector<vector<double> > Q(2, vector<double>(2, 0.0));
+//     Q[0][0] = 0.0 - rate;
+//     Q[0][1] = rate;
+//     Q[1][0] = 1.0 - rate;
+//     Q[1][1] = rate - 1.0;
 
-    subtree_lik_given_root_unmeth = vector<double>(nsites, 1.0);
-    subtree_lik_given_root_meth = vector<double>(nsites, 1.0);
-    deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
-    deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
+//     subtree_lik_given_root_unmeth = vector<double>(nsites, 1.0);
+//     subtree_lik_given_root_meth = vector<double>(nsites, 1.0);
+//     deriv_rate_given_root_unmeth = vector<double>(nsites, 0.0);
+//     deriv_rate_given_root_meth = vector<double>(nsites, 0.0);
 
-    vector<vector<double> > branch_helper_u(nsites, empty_dbranch);
-    vector<vector<double> > branch_helper_m(nsites, empty_dbranch);
+//     vector<vector<double> > branch_helper_u(nsites, empty_dbranch);
+//     vector<vector<double> > branch_helper_m(nsites, empty_dbranch);
 
-    vector<double> rate_helper_u(nsites, 0.0);
-    vector<double> rate_helper_m(nsites, 0.0);
+//     vector<double> rate_helper_u(nsites, 0.0);
+//     vector<double> rate_helper_m(nsites, 0.0);
 
-    size_t child_start = 0;
-    for (size_t count = 1; count < subtree_sizes[tree_start];
-         count += subtree_sizes[child_start]) {
-      child_start = tree_start + count;
-      vector<vector<double> > child_trans_mat;
-      unitrate_trans_prob_mat(rate, expbranches[child_start], child_trans_mat);
-      vector<double> u, m, u_dr, m_dr;
-      vector<vector<double> > u_db, m_db;
-      subtree_likelihood_deriv(subtree_sizes, rate, expbranches, child_start,
-                               states, u, m, u_dr, m_dr, u_db, m_db);
+//     size_t child_start = 0;
+//     for (size_t count = 1; count < subtree_sizes[tree_start];
+//          count += subtree_sizes[child_start]) {
+//       child_start = tree_start + count;
+//       vector<vector<double> > child_trans_mat;
+//       unitrate_trans_prob_mat(rate, expbranches[child_start], child_trans_mat);
+//       vector<double> u, m, u_dr, m_dr;
+//       vector<vector<double> > u_db, m_db;
+//       subtree_likelihood_deriv(subtree_sizes, rate, expbranches, child_start,
+//                                states, u, m, u_dr, m_dr, u_db, m_db);
 
-      for (size_t pos = 0; pos < nsites; ++pos) {
-        update_bysite(subtree_sizes, tree_start, child_start, Q, child_trans_mat,
-                      u[pos], m[pos], u_dr[pos], m_dr[pos],
-                      u_db[pos], m_db[pos], expbranches,
-                      subtree_lik_given_root_unmeth[pos],
-                      subtree_lik_given_root_meth[pos],
-                      rate_helper_u[pos], rate_helper_m[pos],
-                      branch_helper_u[pos], branch_helper_m[pos]);
-      }
-    }
+//       for (size_t pos = 0; pos < nsites; ++pos) {
+//         update_bysite(subtree_sizes, tree_start, child_start, Q, child_trans_mat,
+//                       u[pos], m[pos], u_dr[pos], m_dr[pos],
+//                       u_db[pos], m_db[pos], expbranches,
+//                       subtree_lik_given_root_unmeth[pos],
+//                       subtree_lik_given_root_meth[pos],
+//                       rate_helper_u[pos], rate_helper_m[pos],
+//                       branch_helper_u[pos], branch_helper_m[pos]);
+//       }
+//     }
 
-    for (size_t pos = 0; pos < nsites; ++pos) {
-      //deriv_rate
-      deriv_rate_given_root_unmeth[pos] =
-        rate_helper_u[pos]*subtree_lik_given_root_unmeth[pos];
-      deriv_rate_given_root_meth[pos] =
-        rate_helper_m[pos]*subtree_lik_given_root_meth[pos];
+//     for (size_t pos = 0; pos < nsites; ++pos) {
+//       //deriv_rate
+//       deriv_rate_given_root_unmeth[pos] =
+//         rate_helper_u[pos]*subtree_lik_given_root_unmeth[pos];
+//       deriv_rate_given_root_meth[pos] =
+//         rate_helper_m[pos]*subtree_lik_given_root_meth[pos];
 
-      //deriv_branches
-      for (size_t i = 1; i < subtree_sizes[tree_start]; ++i) {
-        deriv_branches_given_root_unmeth[pos][i] =
-          branch_helper_u[pos][i]*subtree_lik_given_root_unmeth[pos];
-        deriv_branches_given_root_meth[pos][i]=
-          branch_helper_m[pos][i]*subtree_lik_given_root_meth[pos];
-      }
-    }
-  }
-}
+//       //deriv_branches
+//       for (size_t i = 1; i < subtree_sizes[tree_start]; ++i) {
+//         deriv_branches_given_root_unmeth[pos][i] =
+//           branch_helper_u[pos][i]*subtree_lik_given_root_unmeth[pos];
+//         deriv_branches_given_root_meth[pos][i]=
+//           branch_helper_m[pos][i]*subtree_lik_given_root_meth[pos];
+//       }
+//     }
+//   }
+// }
 
 
 
@@ -607,7 +607,8 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
 
       for (size_t pos = 0; pos < n_sites; ++pos) {
 
-        const um_val child_lik_trans(dot(child_lik[pos], P->u), dot(child_lik[pos], P->m));
+        const um_val child_lik_trans(dot(child_lik[pos], P->u),
+                                     dot(child_lik[pos], P->m));
 
         // conditional likelihoods
         likelihood[pos].u *= child_lik_trans.u;
@@ -615,15 +616,21 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
 
         // compute the helpers for rate derivatives
         const double common = dot(expbranch_helper, child_lik[pos]);
-        rate_helper[pos].u += (dot(child_rate_deriv[pos], P->u) + common)/child_lik_trans.u;
-        rate_helper[pos].m += (dot(child_rate_deriv[pos], P->m) + common)/child_lik_trans.m;
+        rate_helper[pos].u +=
+          (dot(child_rate_deriv[pos], P->u) + common)/child_lik_trans.u;
+        rate_helper[pos].m +=
+          (dot(child_rate_deriv[pos], P->m) + common)/child_lik_trans.m;
 
         // compute the helpers for branch derivatives
-        branch_helper[pos][i].u = (dot(child_lik[pos], Q.u)/expbranch)/child_lik_trans.u;
-        branch_helper[pos][i].m = (dot(child_lik[pos], Q.m)/expbranch)/child_lik_trans.m;
+        branch_helper[pos][i].u =
+          (dot(child_lik[pos], Q.u)/expbranch)/child_lik_trans.u;
+        branch_helper[pos][i].m =
+          (dot(child_lik[pos], Q.m)/expbranch)/child_lik_trans.m;
         for (size_t j = 1; j < subtree_sizes[child_idx]; ++j) {
-          branch_helper[pos][i + j].u = dot(child_branch_deriv[pos][j], P->u)/child_lik_trans.u;
-          branch_helper[pos][i + j].m = dot(child_branch_deriv[pos][j], P->m)/child_lik_trans.m;
+          branch_helper[pos][i + j].u =
+            dot(child_branch_deriv[pos][j], P->u)/child_lik_trans.u;
+          branch_helper[pos][i + j].m =
+            dot(child_branch_deriv[pos][j], P->m)/child_lik_trans.m;
         }
       }
       i += subtree_sizes[child_idx];
@@ -648,103 +655,103 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
 
 
 
-static void
-subtree_likelihood_site_deriv(const vector<size_t> &subtree_sizes,
-                              const double &rate,
-                              const vector<double> &expbranches,
-                              const size_t tree_start,
-                              const vector<vector<double> > &states,
-                              const size_t &pos,
-                              double &subtree_lik_given_root_unmeth,
-                              double &subtree_lik_given_root_meth,
-                              double &deriv_rate_given_root_unmeth,
-                              double &deriv_rate_given_root_meth,
-                              vector<double> &deriv_branches_given_root_unmeth,
-                              vector<double> &deriv_branches_given_root_meth) {
+// static void
+// subtree_likelihood_site_deriv(const vector<size_t> &subtree_sizes,
+//                               const double &rate,
+//                               const vector<double> &expbranches,
+//                               const size_t tree_start,
+//                               const vector<vector<double> > &states,
+//                               const size_t &pos,
+//                               double &subtree_lik_given_root_unmeth,
+//                               double &subtree_lik_given_root_meth,
+//                               double &deriv_rate_given_root_unmeth,
+//                               double &deriv_rate_given_root_meth,
+//                               vector<double> &deriv_branches_given_root_unmeth,
+//                               vector<double> &deriv_branches_given_root_meth) {
 
-  double deriv_rate_helper_u = 0.0;
-  double deriv_rate_helper_m = 0.0;
+//   double deriv_rate_helper_u = 0.0;
+//   double deriv_rate_helper_m = 0.0;
 
-  vector<double> deriv_branches_helper_u(subtree_sizes[tree_start], 0.0);
-  vector<double> deriv_branches_helper_m(subtree_sizes[tree_start], 0.0);
+//   vector<double> deriv_branches_helper_u(subtree_sizes[tree_start], 0.0);
+//   vector<double> deriv_branches_helper_m(subtree_sizes[tree_start], 0.0);
 
-  if (subtree_sizes[tree_start] == 1) {
-    assert(states[tree_start][pos] >= 0);
-    subtree_lik_given_root_unmeth = states[tree_start][pos];
-    subtree_lik_given_root_meth = 1.0 - states[tree_start][pos];
-    deriv_rate_given_root_unmeth = 0.0;
-    deriv_rate_given_root_meth = 0.0;
-  } else {
-    size_t count = 1;
-    subtree_lik_given_root_unmeth = 1.0;
-    subtree_lik_given_root_meth = 1.0;
+//   if (subtree_sizes[tree_start] == 1) {
+//     assert(states[tree_start][pos] >= 0);
+//     subtree_lik_given_root_unmeth = states[tree_start][pos];
+//     subtree_lik_given_root_meth = 1.0 - states[tree_start][pos];
+//     deriv_rate_given_root_unmeth = 0.0;
+//     deriv_rate_given_root_meth = 0.0;
+//   } else {
+//     size_t count = 1;
+//     subtree_lik_given_root_unmeth = 1.0;
+//     subtree_lik_given_root_meth = 1.0;
 
-    while (count < subtree_sizes[tree_start]) {
-      size_t child_start = tree_start + count;
-      double u, m, u_dr, m_dr;
-      vector<double> u_db, m_db;
-      subtree_likelihood_site_deriv(subtree_sizes, rate, expbranches,
-                                    child_start, states, pos, u, m, u_dr, m_dr,
-                                    u_db, m_db);
-      const double expbranch = expbranches[child_start];
-      vector<vector<double> > child_trans_mat;
-      unitrate_trans_prob_mat(rate, expbranch, child_trans_mat);
-      const double unmeth_child_lik =
-        child_trans_mat[0][0]*u + child_trans_mat[0][1]*m;
-      const double meth_child_lik =
-        child_trans_mat[1][0]*u + child_trans_mat[1][1]*m;
+//     while (count < subtree_sizes[tree_start]) {
+//       size_t child_start = tree_start + count;
+//       double u, m, u_dr, m_dr;
+//       vector<double> u_db, m_db;
+//       subtree_likelihood_site_deriv(subtree_sizes, rate, expbranches,
+//                                     child_start, states, pos, u, m, u_dr, m_dr,
+//                                     u_db, m_db);
+//       const double expbranch = expbranches[child_start];
+//       vector<vector<double> > child_trans_mat;
+//       unitrate_trans_prob_mat(rate, expbranch, child_trans_mat);
+//       const double unmeth_child_lik =
+//         child_trans_mat[0][0]*u + child_trans_mat[0][1]*m;
+//       const double meth_child_lik =
+//         child_trans_mat[1][0]*u + child_trans_mat[1][1]*m;
 
-      //likelihood
-      subtree_lik_given_root_unmeth =
-        subtree_lik_given_root_unmeth*unmeth_child_lik;
-      subtree_lik_given_root_meth =
-        subtree_lik_given_root_meth*meth_child_lik;
+//       //likelihood
+//       subtree_lik_given_root_unmeth =
+//         subtree_lik_given_root_unmeth*unmeth_child_lik;
+//       subtree_lik_given_root_meth =
+//         subtree_lik_given_root_meth*meth_child_lik;
 
-      //deriv_rate
-      deriv_rate_helper_u +=
-        (u_dr*child_trans_mat[0][0] + u*(1.0/expbranch - 1.0) +
-         m_dr*child_trans_mat[0][1] + m*(1.0-1.0/expbranch))/unmeth_child_lik;
-      deriv_rate_helper_m +=
-        (u_dr*child_trans_mat[1][0] + u*(1.0/expbranch - 1.0) +
-         m_dr*child_trans_mat[1][1] + m*(1.0-1.0/expbranch))/meth_child_lik;
+//       //deriv_rate
+//       deriv_rate_helper_u +=
+//         (u_dr*child_trans_mat[0][0] + u*(1.0/expbranch - 1.0) +
+//          m_dr*child_trans_mat[0][1] + m*(1.0-1.0/expbranch))/unmeth_child_lik;
+//       deriv_rate_helper_m +=
+//         (u_dr*child_trans_mat[1][0] + u*(1.0/expbranch - 1.0) +
+//          m_dr*child_trans_mat[1][1] + m*(1.0-1.0/expbranch))/meth_child_lik;
 
-      vector<vector<double> > Q(2, vector<double>(2, 0.0));
-      Q[0][0] = 0.0 - rate;
-      Q[0][1] = rate;
-      Q[1][0] = 1.0 - rate;
-      Q[1][1] = rate - 1.0;
+//       vector<vector<double> > Q(2, vector<double>(2, 0.0));
+//       Q[0][0] = 0.0 - rate;
+//       Q[0][1] = rate;
+//       Q[1][0] = 1.0 - rate;
+//       Q[1][1] = rate - 1.0;
 
-      deriv_branches_helper_u[count] =
-        (u*Q[0][0] + m*Q[0][1])/expbranch/unmeth_child_lik;
-      deriv_branches_helper_m[count] =
-        (u*Q[1][0] + m*Q[1][1])/expbranch/meth_child_lik;
+//       deriv_branches_helper_u[count] =
+//         (u*Q[0][0] + m*Q[0][1])/expbranch/unmeth_child_lik;
+//       deriv_branches_helper_m[count] =
+//         (u*Q[1][0] + m*Q[1][1])/expbranch/meth_child_lik;
 
-      for (size_t i = 1; i < subtree_sizes[child_start]; ++i) {
-          deriv_branches_helper_u[i + count] = 1.0/unmeth_child_lik*
-            (u_db[i]*child_trans_mat[0][0] + m_db[i]*child_trans_mat[0][1]);
-          deriv_branches_helper_m[i + count] = 1.0/meth_child_lik*
-            (u_db[i]*child_trans_mat[1][0] + m_db[i]*child_trans_mat[1][1]);
-      }
-      count += subtree_sizes[child_start];
-    }
+//       for (size_t i = 1; i < subtree_sizes[child_start]; ++i) {
+//           deriv_branches_helper_u[i + count] = 1.0/unmeth_child_lik*
+//             (u_db[i]*child_trans_mat[0][0] + m_db[i]*child_trans_mat[0][1]);
+//           deriv_branches_helper_m[i + count] = 1.0/meth_child_lik*
+//             (u_db[i]*child_trans_mat[1][0] + m_db[i]*child_trans_mat[1][1]);
+//       }
+//       count += subtree_sizes[child_start];
+//     }
 
-    //deriv_rate
-    deriv_rate_given_root_unmeth =
-      deriv_rate_helper_u*subtree_lik_given_root_unmeth;
-    deriv_rate_given_root_meth =
-      deriv_rate_helper_m*subtree_lik_given_root_meth;
+//     //deriv_rate
+//     deriv_rate_given_root_unmeth =
+//       deriv_rate_helper_u*subtree_lik_given_root_unmeth;
+//     deriv_rate_given_root_meth =
+//       deriv_rate_helper_m*subtree_lik_given_root_meth;
 
-    //deriv_branches
-    deriv_branches_given_root_unmeth = vector<double>(subtree_sizes[tree_start], 0.0);
-    deriv_branches_given_root_meth = vector<double>(subtree_sizes[tree_start], 0.0);
-    for (size_t i = 1; i < subtree_sizes[tree_start]; ++i) {
-      deriv_branches_given_root_unmeth[i] =
-        deriv_branches_helper_u[i]*subtree_lik_given_root_unmeth;
-      deriv_branches_given_root_meth[i]=
-        deriv_branches_helper_m[i]*subtree_lik_given_root_meth;
-    }
-  }
-}
+//     //deriv_branches
+//     deriv_branches_given_root_unmeth = vector<double>(subtree_sizes[tree_start], 0.0);
+//     deriv_branches_given_root_meth = vector<double>(subtree_sizes[tree_start], 0.0);
+//     for (size_t i = 1; i < subtree_sizes[tree_start]; ++i) {
+//       deriv_branches_given_root_unmeth[i] =
+//         deriv_branches_helper_u[i]*subtree_lik_given_root_unmeth;
+//       deriv_branches_given_root_meth[i]=
+//         deriv_branches_helper_m[i]*subtree_lik_given_root_meth;
+//     }
+//   }
+// }
 
 
 static void
@@ -1189,7 +1196,8 @@ sign(const double val) {
 
 double
 optimize_rootdist(const bool VERBOSE,
-                  const double TOLERANCE,
+                  const double LIKTOL,
+                  const double PARTOL,
                   const double STEPSIZE,
                   const vector<size_t> &subtree_sizes,
                   const double &rate, const vector<double> &branches,
@@ -1209,16 +1217,16 @@ optimize_rootdist(const bool VERBOSE,
     do {
       new_val = prev_val + STEPSIZE*sign(deriv_root_u)*fac;
       fac = fac*0.5;
-    } while (new_val < TOLERANCE || new_val + TOLERANCE > 1.0);
+    } while (new_val < PARTOL || new_val + PARTOL > 1.0);
 
     double new_llk =
       tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate, branches,
                                         states, deriv_root_u);
 
-    while (new_llk < prev_llk && abs(new_val - prev_val) > TOLERANCE) {
+    while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
       fac = fac*0.5;
-      new_val = max(TOLERANCE,
-                    min(1.0 - TOLERANCE,
+      new_val = max(PARTOL,
+                    min(1.0 - PARTOL,
                         prev_val + STEPSIZE*sign(deriv_root_u)*fac));
       new_llk =
         tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate,
@@ -1227,7 +1235,7 @@ optimize_rootdist(const bool VERBOSE,
     if (VERBOSE)
       cerr << "param = " << new_val << "\t"<< new_llk
            << "\tImprove = " << new_llk - prev_llk << endl;
-    if (new_llk - prev_llk < TOLERANCE) {
+    if (new_llk - prev_llk < LIKTOL) {
       converged = true;
     } else {
       prev_llk = new_llk;
@@ -1241,7 +1249,8 @@ optimize_rootdist(const bool VERBOSE,
 
 double
 optimize_rate(const bool VERBOSE,
-              const double TOLERANCE,
+              const double LIKTOL,
+              const double PARTOL,
               const double STEPSIZE,
               const vector<size_t> &subtree_sizes,
               const double root_unmeth_prob, const vector<double> &branches,
@@ -1260,15 +1269,15 @@ optimize_rate(const bool VERBOSE,
     do {
       new_rate = prev_rate + STEPSIZE*sign(deriv_rate)*fac;
       fac = fac*0.5;
-    } while (new_rate < TOLERANCE || new_rate > 1.0 - TOLERANCE);
+    } while (new_rate < PARTOL || new_rate > 1.0 - PARTOL);
 
     new_llk =
       tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob, new_rate,
                                     branches, states, deriv_rate);
-    while (new_llk < prev_llk && abs(new_rate - prev_rate) > TOLERANCE) {
+    while (new_llk < prev_llk && abs(new_rate - prev_rate) > PARTOL) {
       fac = fac*0.5;
-      new_rate = max(TOLERANCE, min(prev_rate + STEPSIZE*sign(deriv_rate)*fac,
-                                    1.0 - TOLERANCE));
+      new_rate = max(PARTOL, min(prev_rate + STEPSIZE*sign(deriv_rate)*fac,
+                                    1.0 - PARTOL));
       new_llk =
         tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob,
                                       new_rate, branches, states, deriv_rate);
@@ -1276,7 +1285,7 @@ optimize_rate(const bool VERBOSE,
     if (VERBOSE)
       cerr << "param = " << new_rate << "\t"<< new_llk
            << "\tImprove = " << new_llk - prev_llk << endl;
-    if (new_llk - prev_llk < TOLERANCE) {
+    if (new_llk - prev_llk < LIKTOL) {
       converged = true;
     } else {
       prev_llk = new_llk;
@@ -1290,7 +1299,8 @@ optimize_rate(const bool VERBOSE,
 
 double
 optimize_branch(const bool VERBOSE,
-                const double TOLERANCE,
+                const double LIKTOL,
+                const double PARTOL,
                 const double STEPSIZE,
                 const vector<size_t> &subtree_sizes,
                 const double root_unmeth_prob,
@@ -1312,16 +1322,16 @@ optimize_branch(const bool VERBOSE,
     do {
       new_val = prev_val + STEPSIZE*sign(deriv_branch)*fac;
       fac = fac*0.5;
-    } while (new_val < TOLERANCE);
+    } while (new_val < PARTOL);
 
     branches[which_branch] = new_val;
     new_llk =
       tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
                                       branches, states, which_branch,
                                       deriv_branch);
-    while (new_llk < prev_llk && abs(new_val - prev_val) > TOLERANCE) {
+    while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
       fac = fac*0.5;
-      new_val = max(TOLERANCE,
+      new_val = max(PARTOL,
                     prev_val + STEPSIZE*sign(deriv_branch)*fac);
       branches[which_branch] = new_val;
       new_llk =
@@ -1334,7 +1344,7 @@ optimize_branch(const bool VERBOSE,
       cerr << "param = " << new_val << "\t"<< new_llk
            << "\tImprove = " << new_llk-prev_llk << endl;
 
-    if (new_llk-prev_llk < TOLERANCE) {
+    if (new_llk - prev_llk < LIKTOL) {
       converged = true;
     } else {
       prev_llk = new_llk;
@@ -1349,8 +1359,8 @@ optimize_branch(const bool VERBOSE,
 
 
 double
-optimize(const bool VERBOSE, const size_t MAXITER, const double TOLERANCE,
-         const double paramtol, const double stepsize,
+optimize(const bool VERBOSE, const size_t MAXITER, const double LIKTOL,
+         const double PARTOL, const double stepsize,
          const vector<size_t> &subtree_sizes,
          double &root_unmeth_prob,
          double &lam,
@@ -1367,28 +1377,28 @@ optimize(const bool VERBOSE, const size_t MAXITER, const double TOLERANCE,
            << "-----------------" << endl;
     prev_llk = llk;
 
-    llk = optimize_rootdist(true, paramtol, stepsize, subtree_sizes,
+    llk = optimize_rootdist(true, LIKTOL, PARTOL, stepsize, subtree_sizes,
                             lam, branches, states, root_unmeth_prob);
     if (VERBOSE)
       cerr << "[root_unmeth_prob]\t" << root_unmeth_prob
            << "\t[log-likelihood]\t" << llk << endl;
 
-    llk = optimize_rate(true, paramtol, stepsize, subtree_sizes, root_unmeth_prob,
-                        branches, states, lam);
+    llk = optimize_rate(true, LIKTOL, PARTOL, stepsize, subtree_sizes,
+                        root_unmeth_prob, branches, states, lam);
     if (VERBOSE)
       cerr << "[rate]\t" << lam
            << "\t[log-likelihood]\t" << llk << endl;
 
     for (size_t i = 1; i < branches.size(); ++i) {
-      llk = optimize_branch(true, paramtol, stepsize, subtree_sizes, root_unmeth_prob,
-                            states, lam, i, branches);
+      llk = optimize_branch(true, LIKTOL, PARTOL, stepsize, subtree_sizes,
+                            root_unmeth_prob, states, lam, i, branches);
       if (VERBOSE)
         cerr << "[branch_" << i <<"]\t"<< branches[i]
              << "\t[log-likelihood]\t" << llk << endl;
     }
     if (VERBOSE)
-      cerr << "[Improved] "<< llk- prev_llk << "(TOL=" << TOLERANCE << ")"<< endl;
-    if (abs(llk - prev_llk) < TOLERANCE) {
+      cerr << "[Improved] "<< llk- prev_llk << "(TOL=" << LIKTOL << ")"<< endl;
+    if (abs(llk - prev_llk) < LIKTOL) {
       if (VERBOSE)
         cerr << "Converged at iteration " << iter << endl;
       break;
@@ -1537,9 +1547,9 @@ main(int argc, const char **argv) {
     bool COUNT = false;
     bool NODEMAP = false;
 
-    double TOLERANCE = 1e-4;
-    size_t MAXITER = 10;
-    double PARAM_TOL = 1e-4;
+    double LIKTOL = 1e-2;
+    size_t MAXITER = 20;
+    double PARTOL = 1e-4;
     double STEP_SIZE = 0.1;
 
     string outfile;
@@ -1551,8 +1561,8 @@ main(int argc, const char **argv) {
                            "<newick> <meth-tab>");
     opt_parse.add_opt("counts", 'c', "meth-tab contains read counts instead"
                       "of state probability (default: false)", false, COUNT);
-    opt_parse.add_opt("params", 'p', "use parameters from file and skip optimization",
-                      false, paramfile);
+    opt_parse.add_opt("params", 'p', "use parameters from file "
+                      "and skip optimization", false, paramfile);
     opt_parse.add_opt("iteration", 'i', "max iteration (default: 10)",
                       false, MAXITER);
     opt_parse.add_opt("nodemap", 'n', "output  MAP states at each node"
@@ -1665,7 +1675,7 @@ main(int argc, const char **argv) {
     if (paramfile.empty()) {
       // initialize rate between (0,1)
       lam = 0.4;
-      llk = optimize(VERBOSE, MAXITER, TOLERANCE, PARAM_TOL, STEP_SIZE,
+      llk = optimize(VERBOSE, MAXITER, LIKTOL, PARTOL, STEP_SIZE,
                      subtree_sizes, root_unmeth_prob, lam, branches, states);
       t.set_branch_lengths(branches);
     } else {
