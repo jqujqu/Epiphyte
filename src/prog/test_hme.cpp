@@ -615,11 +615,11 @@ evaluate_emission(const vector<size_t> &subtree_sizes,
 static void
 temporal_trans_prob_mat(const double T, const double rate0,
                         vector<vector<double> > &time_transition_matrix) {
-  assert(rate0 > 0 && rate0 < 1 && T <1 && T>0);
+  assert(rate0 > 0 && rate0 < 1 && T < 1 && T > 0);
   time_transition_matrix = vector<vector<double> >(2, vector<double>(2, 0.0));
   time_transition_matrix[0][0] = 1.0 - rate0*T;
   time_transition_matrix[0][1] = rate0*T;
-  time_transition_matrix[1][0] = (1.0-rate0)*T;
+  time_transition_matrix[1][0] = (1.0 - rate0)*T;
   time_transition_matrix[1][1] = 1.0 - (1.0-rate0)*T;
 }
 
@@ -636,8 +636,8 @@ combined_trans_prob_mat(const double g0, const double g1,
 
   // normalization denominators
   vector<vector<double> > prev_anc_denom(2, vector<double>(2,0.0));
-  for (size_t prev = 0; prev < 2; ++ prev) {
-    for (size_t anc = 0; anc < 2; ++ anc) {
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
       prev_anc_denom[prev][anc] = G[prev][0]*time_trans_mat[anc][0] +
         G[prev][1]*time_trans_mat[anc][1];
     }
@@ -647,7 +647,7 @@ combined_trans_prob_mat(const double g0, const double g1,
     vector<vector<vector<double> > >(2, vector<vector<double> >(2,vector<double>(2,0.0)));
   for (size_t prev = 0; prev < 2; ++prev) {
     for (size_t anc = 0; anc < 2; ++anc) {
-      for (size_t cur = 0; cur < 2; ++ cur) {
+      for (size_t cur = 0; cur < 2; ++cur) {
         combined_trans_mat[prev][anc][cur] =
           G[prev][cur]*time_trans_mat[anc][cur]/prev_anc_denom[prev][anc];
       }
@@ -943,8 +943,7 @@ auxiliary(const vector<size_t> &subtree_sizes,
             if (prev==0) {
               inc.symbol = sign(combined_trans_mats_dg0[child][prev][anc][cur]);
               inc.logval = log(abs(combined_trans_mats_dg0[child][prev][anc][cur])) - lp;
-              log_sum_log_sign(transition_log_prob_derivs[i][j][2],
-                               inc, result);
+              log_sum_log_sign(transition_log_prob_derivs[i][j][2], inc, result);
               transition_log_prob_derivs[i][j][2].logval = result.logval;
               transition_log_prob_derivs[i][j][2].symbol = result.symbol;
             }
@@ -954,8 +953,7 @@ auxiliary(const vector<size_t> &subtree_sizes,
               inc.symbol = sign(combined_trans_mats_dg1[child][prev][anc][cur]);
               inc.logval =
                 log(abs(combined_trans_mats_dg1[child][prev][anc][cur])) - lp;
-              log_sum_log_sign(transition_log_prob_derivs[i][j][3],
-                               inc, result);
+              log_sum_log_sign(transition_log_prob_derivs[i][j][3], inc, result);
               transition_log_prob_derivs[i][j][3].logval = result.logval;
               transition_log_prob_derivs[i][j][3].symbol = result.symbol;
             }
@@ -963,8 +961,7 @@ auxiliary(const vector<size_t> &subtree_sizes,
             //d_T factor
             inc.symbol = sign(combined_trans_mats_dT[child][prev][anc][cur]);
             inc.logval = log(abs(combined_trans_mats_dT[child][prev][anc][cur])) - lp;
-            log_sum_log_sign(transition_log_prob_derivs[i][j][child+4],
-                             inc, result);
+            log_sum_log_sign(transition_log_prob_derivs[i][j][child+4], inc, result);
             transition_log_prob_derivs[i][j][child+4].logval = result.logval;
             transition_log_prob_derivs[i][j][child+4].symbol = result.symbol;
             count += subtree_sizes[child];
@@ -972,7 +969,7 @@ auxiliary(const vector<size_t> &subtree_sizes,
         }
       }
 
-      // multiply factor to transition probability (rate, T, g0, g1)
+      // multiply factor to transition probability (rate, g0, g1, T)
       transition_log_prob_derivs[i][j][1].logval += transition_log_probs[i][j];
       if (transition_log_prob_derivs[i][j][2].symbol != 0)
         transition_log_prob_derivs[i][j][2].logval += transition_log_probs[i][j];
@@ -1049,8 +1046,8 @@ auxiliary(const vector<size_t> &subtree_sizes,
     string prevstates = all_states[i];
     for (size_t j = 0; j < n_hme; ++j) {
       string curstates = all_states[j];
-      size_t prev = (prevstates[0]=='0') ? 0 : 1;
-      size_t cur = (curstates[0]=='0') ? 0 : 1;
+      size_t prev = (prevstates[0] == '0')? 0 : 1;
+      size_t cur = (curstates[0] == '0')? 0 : 1;
       transition_log_probs[i][j] = log(G[prev][cur]);
       for (size_t k = 0; k < n_nodes; ++k) {
         size_t anc = (curstates[k] == '0')? 0 : 1;
@@ -1082,7 +1079,7 @@ dec2binary(const size_t len, size_t n) {
   string result;
   do result.push_back( '0' + (n & 1) );
   while (n >>= 1);
-  while (result.length()<len) {
+  while (result.length() < len) {
     result.push_back('0');
   }
   reverse(result.begin(), result.end());
@@ -1996,16 +1993,10 @@ complete_optimize_iteration(const bool VERBOSE,
         cerr << "\t Improve = " << newllk - llk << endl;
         // print new params
         for (size_t i = 0; i < newparams.size(); ++i) {
-          if (i < 4){
-            cerr << newparams[i] << "\t";
-          } else if (i > 4) {
-            cerr << -log(1.0-newparams[i]) << "\t";
-          }
+          if (i!=4)
+            cerr << ( (i<4)? newparams[i] : -log(1.0-newparams[i]) ) << "\t";
         }
         cerr << endl;
-        // for (size_t i = 0; i < newderiv.size(); ++i)
-        //   cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-        // cerr << endl;
       }
     } else {
       if (r*norm <= TOL) CONVERGED = true;
@@ -2022,11 +2013,12 @@ complete_optimize_iteration(const bool VERBOSE,
   double p1_llk = newllk;
   vector<double> p1_deriv = newderiv;
 
-
   if (PART2) {
     /******** upddate FF and BB parameters **********/
     cerr << "[Part 2]\t";
     norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
+
+    // Choose proper r value
     r = 1.0/norm; //maximization (-1.0 if minimization)
     for (size_t i = 2; i < 4; ++i) {
       double candidate_param = p1_params[i] + p1_deriv[i]*r;
@@ -2035,6 +2027,7 @@ complete_optimize_iteration(const bool VERBOSE,
         candidate_param = p1_params[i] + p1_deriv[i]*r;
       }
     }
+
     bool SUCCESS_p2 = false;
     bool CONVERGED_p2 = false;
     // Reduce factor untill improvement or convergence
@@ -2048,37 +2041,31 @@ complete_optimize_iteration(const bool VERBOSE,
 
       loglik_complete_tree(states, reset_points, subtree_sizes,
                            newparams, newllk, newderiv);
+
       if (newllk > p1_llk) {
         SUCCESS_p2 = true;
 
         if (VERBOSE) {
           cerr << "========= Improve = " << newllk - p1_llk << endl;
-          // print new params
           for (size_t i = 0; i < newparams.size(); ++i) {
-            if (i < 4){
-              cerr << newparams[i] << "\t";
-            } else if (i > 4) {
-              cerr << -log(1.0-newparams[i]) << "\t";
-            }
+            if (i!= 4)
+              cerr << ( (i<4)? newparams[i] : -log(1.0-newparams[i]) )  << "\t";
           }
           cerr << endl;
-          // // print derivatives
-          // for (size_t i = 0; i < newderiv.size(); ++i)
-          //   cerr << "d[" << i << "]=" << newderiv[i] << "\t";
-          // cerr << endl;
         }
+
       } else {
         if (r*norm <= TOL) CONVERGED_p2 = true;
         r = r/2;
       }
     }
     if (!SUCCESS_p2) {
+      // didn't find better solution, keep the old one
       newllk = p1_llk;
       newparams = p1_params;
       newderiv = p1_deriv;
     }
   }
-
 }
 
 
@@ -2101,9 +2088,6 @@ complete_optimize(const bool VERBOSE,
                        old_params, old_llk, old_deriv);
   if (VERBOSE) {
     cerr << "------" << old_llk << "-------" << endl;
-    // for (size_t i = 0; i < old_deriv.size(); ++i)
-    //   cerr << "d[" << i << "]=" << old_deriv[i] << "\t";
-    // cerr << endl;
   }
 
   size_t iter = 0;
@@ -2111,8 +2095,6 @@ complete_optimize(const bool VERBOSE,
   double FFBBdiff = 0;
   vector<double> deriv;
   while (iter < MAXITER  && diff > TOL) {
-    // if (VERBOSE)
-    //   cerr << "complete_optimize_iter " << iter << endl;
     complete_optimize_iteration(VERBOSE, OPTIMIZE_FFBB, TOL, states, reset_points, subtree_sizes,
                                 old_params,  old_deriv, old_llk, params, deriv, llk);
 
@@ -2136,6 +2118,7 @@ complete_optimize(const bool VERBOSE,
     old_deriv = deriv;
     old_llk = llk;
   }
+
   if (iter < MAXITER && VERBOSE)
     cerr << "Converged at iteration " << iter << endl;
 }
@@ -3256,13 +3239,28 @@ main(int argc, const char **argv) {
       complete_optimize(VERBOSE, tolerance, MAXITER, states, reset_points,
                         subtree_sizes, start_param,
                         OPTIMIZE_FFBB, newparams,llk);
+
+      for (size_t i = 5; i < newparams.size(); ++i) {
+        branches[i-4] = -log(1.0 - newparams[i]);
+      }
+
+      t.set_branch_lengths(branches);
+
       if (VERBOSE) {
         cerr << "[Results]\t";
         for (size_t i = 5; i < newparams.size(); ++i) {
-          branches[i-4] = -log(1.0 - newparams[i]);
           cerr << branches[i-4] << "\t";
         }
         cerr << endl;
+      }
+
+      if (!outfile.empty()) {
+        std::ofstream out(outfile.c_str());
+        if (!out)
+          throw SMITHLABException("bad output file: " + outfile);
+        out << "#" << t.Newick_format() << endl;
+        out << "#pi=" << newparams[0] << "\trate=" << newparams[1]
+            << "\tFF=" << newparams[2] << "\tBB=" << newparams[3] << endl;
       }
     }
 
