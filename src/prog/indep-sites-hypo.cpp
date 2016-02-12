@@ -119,6 +119,15 @@ read_site(std::istream &in, Site &s, double &meth, size_t &coverage) {
 }
 
 
+double
+log_sum_log(const double p, const double q) {
+  if (p == 0) {return q;}
+  else if (q == 0) {return p;}
+  const double larger = (p > q) ? p : q;
+  const double smaller = (p > q) ? q : p;
+  return larger + log(1.0 + exp(smaller - larger));
+}
+
 
 static double
 expectation_step(const vector<pair<double, double> > &counts,
@@ -141,17 +150,15 @@ expectation_step(const vector<pair<double, double> > &counts,
     assert(isfinite(low_part));
 
     const double high_part = high_log_mixing + high_distro(counts[i]);
-    assert(isfinite(low_part));
+    assert(isfinite(high_part));
 
-    const double denom = ((low_part > high_part) ?
-                          low_part + log(1.0 + exp(high_part - low_part)) :
-                          high_part + log(1.0 + exp(low_part - high_part)));
+    const double denom = log_sum_log(low_part, high_part);
     assert(isfinite(denom));
 
     low_probs[i] = exp(low_part - denom);
     high_probs[i] = exp(high_part - denom);
-
     score += denom;
+
   }
   return score;
 }
@@ -289,8 +296,7 @@ write_parameters(const double mixing,
         << "LOW_ALPHA\t" << low_distro.alpha << endl
         << "LOW_BETA\t" << low_distro.beta << endl
         << "HIGH_ALPHA\t" << high_distro.alpha << endl
-        << "HIGH_BETA\t" << high_distro.beta << endl
-      ;
+        << "HIGH_BETA\t" << high_distro.beta << endl;
   }
 }
 
@@ -402,10 +408,10 @@ main(int argc, const char **argv) {
     }
     else {
       // initialize the Beta Binomial parameters (will be trained)
-      low_alpha = 0.33;
-      low_beta = 0.66; // low mean
-      high_alpha = 0.66;
-      high_beta = 0.33; // high mean
+      low_alpha = 0.75;
+      low_beta = 1.5; // low mean
+      high_alpha = 1.5;
+      high_beta = 0.75; // high mean
       mixing = 0.5; // initialize the mixing proportion to fifty-fifty
     }
 
