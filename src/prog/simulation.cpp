@@ -167,6 +167,18 @@ load_cpgs(const string &cpgs_file,
   }
 }
 
+bool bernoulli(const double p) {
+  const gsl_rng_type * T;
+  gsl_rng * r;
+  T = gsl_rng_default;
+  r = gsl_rng_alloc (T);
+  long seed = rand();
+  gsl_rng_set (r, seed);
+  size_t result = gsl_ran_bernoulli(r, p);
+  gsl_rng_free(r);
+  return result==1;
+}
+
 
 //use boolean varaible for methylation state
 // true=foreground=u=hypomethylated
@@ -175,20 +187,7 @@ void sim_root_state(const bool prev,
                     const vector<double> &G,
                     bool &new_state) {
   double p = prev? G[0]: G[1];
-  const gsl_rng_type * T;
-  gsl_rng * r;
-  T = gsl_rng_default;
-  r = gsl_rng_alloc (T);
-  long seed = rand();
-  gsl_rng_set (r, seed);
-
-  size_t sample = gsl_ran_bernoulli(r, p);
-  if(sample == 1)
-    new_state = prev;
-  else
-    new_state = !prev;
-
-  gsl_rng_free(r);
+  new_state = bernoulli(p)? prev : !prev;
 }
 
 //NTP: Normalized Transition Probability
@@ -227,15 +226,7 @@ void sim_newstate(const bool prev, const bool ancestor,
     total = (1-G[1])*p0 + G[1]*p1;
     NTP = (1-G[1])*p0/total;
   }
-
-  const gsl_rng_type * T;
-  gsl_rng * r;
-  T = gsl_rng_default;
-  r = gsl_rng_alloc (T);
-  long seed = rand();
-  gsl_rng_set (r, seed);
-  new_state = gsl_ran_bernoulli(r, NTP);
-  gsl_rng_free(r);
+  new_state = bernoulli(NTP);
 }
 
 //simulate first positon in a segment
@@ -251,15 +242,7 @@ void sim_newstate(const bool ancestor,
   }else{
     p0 = Q[1]*(1-h)/t;
   }
-
-  const gsl_rng_type * T;
-  gsl_rng * r;
-  T = gsl_rng_default;
-  r = gsl_rng_alloc (T);
-  long seed = rand();
-  gsl_rng_set(r, seed);
-  new_state = gsl_ran_bernoulli(r, p0);
-  gsl_rng_free(r);
+  new_state = bernoulli(p0);
 }
 
 
@@ -277,7 +260,9 @@ simulate_position(const bool first,
   bool new_state;
   //Begin simulation from the root
   if (first) {
-    sim_root_state(false, G, new_state);
+    double p0 = G[0]/(G[0]+G[1]);
+    bool initstate = bernoulli(p0);
+    sim_root_state(initstate, G, new_state);
   } else {
     sim_root_state(prev_states[0], G, new_state);
   }
