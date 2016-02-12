@@ -1,0 +1,84 @@
+# simulate data
+../../bin/simulation -c CpGs.bed -s simulation.params -o test
+
+# this will creat the following files, 
+# -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Human
+# -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Chimp
+# -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Rat
+# -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Mouse
+# -rw-r--r--  1 jenny  staff   1.6M Feb 11 11:26 test_treestates
+# -rw-r--r--  1 jenny  staff   2.2M Feb 11 11:26 test_hypoprobs
+# -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Dog
+
+# merge methcounts
+~/git/methpipe/bin/merge-methcounts -t test_Human test_Chimp test_Mouse test_Rat test_Dog | \
+  awk 'NR==1{OFS="\t"; print "Human","Chimp", "Mouse", "Rat", "Dog"} NR>1{print}' > test_meth_table
+
+############ use read counts as input
+# Estimate tree shape and mutation rates assuming site-independency
+../../bin/phylo-epi-tester -c  -v -o test_counts.out  init.nwk  test_meth_table 
+# Check the rate or correct reconstructions: 
+paste test_treestates test_counts.out | grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin | awk '{if($1==$2) i+=1} END{print i/NR}'
+
+for i in `seq 1 8`; do 
+  rate=`paste test_treestates test_counts.out |  \
+    grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
+    tr '1' 'C' < /dev/stdin |  \
+    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1} END{print i/NR}' `
+echo node $i accuracy $rate
+done
+
+
+############ use hypomethylation probability as input
+# estimate hypomethylation probability using mixture model
+for i in `echo Chimp Human Mouse Rat Dog`; do
+echo $i
+../../bin/indep-sites-hypo -o test_${i}.hypoprob test_${i} -params-out test_${i}.hypoprob.params
+done
+
+# this will creat the following files
+# -rw-r--r--  1 jenny  staff   208B Feb 11 11:57 test_Chimp.hypoprob.params
+# -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:57 test_Chimp.hypoprob
+# -rw-r--r--  1 jenny  staff   209B Feb 11 11:57 test_Human.hypoprob.params
+# -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:57 test_Human.hypoprob
+# -rw-r--r--  1 jenny  staff   205B Feb 11 11:57 test_Mouse.hypoprob.params
+# -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:57 test_Mouse.hypoprob
+# -rw-r--r--  1 jenny  staff   209B Feb 11 11:57 test_Rat.hypoprob.params
+# -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:57 test_Rat.hypoprob
+# -rw-r--r--  1 jenny  staff   208B Feb 11 11:57 test_Dog.hypoprob.params
+# -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:58 test_Dog.hypoprob
+
+# merge probabilities into a single file
+paste test_Human.hypoprob test_Chimp.hypoprob test_Mouse.hypoprob test_Rat.hypoprob test_Dog.hypoprob| awk 'BEGIN{OFS="\t"; print "Human","Chimp","Mouse","Rat","Dog"} {print  $1":"$2,$5,$11,$17,$23,$29, $35}' > test.hypoprob_table
+
+# Estimate tree shape and mutation rates assuming site-independency
+../../bin/phylo-epi-tester  -v -o test_hypoprob.out  init.nwk  test.hypoprob_table
+
+# Check the rate or correct reconstructions:
+paste test_treestates test_hypoprob.out | grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin | awk '{if($1==$2) i+=1} END{print i/NR}'
+# Check the rate or correct reconstructions by node
+for i in `seq 1 8`; do 
+  rate=`paste test_treestates test_hypoprob.out |  \
+    grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
+    tr '1' 'C' < /dev/stdin |  \
+    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1} END{print i/NR}' `
+echo node $i accuracy $rate
+done
+
+# Accuracy at Hypomethylated sites
+for i in `seq 1 8`; do 
+  rate=`paste test_treestates test_hypoprob.out |  \
+    grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
+    tr '1' 'C' < /dev/stdin |  \
+    awk -v node=${i} '{ if(substr($1,node,1)=="T") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
+echo node $i accuracy $rate
+done
+
+# Accuracy at Methylated sites
+for i in `seq 1 8`; do
+  rate=`paste test_treestates test_hypoprob.out |  \
+    grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
+    tr '1' 'C' < /dev/stdin |  \
+    awk -v node=${i} '{ if(substr($1,node,1)=="C") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
+echo node $i accuracy $rate
+done
