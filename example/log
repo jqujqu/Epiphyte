@@ -14,20 +14,25 @@
 # -rw-r--r--  1 jenny  staff   1.8M Feb 11 11:26 test_Dog
 
 # merge methcounts
-~/git/methpipe/bin/merge-methcounts -t test_Human test_Chimp test_Mouse test_Rat test_Dog | \
-  awk 'NR==1{OFS="\t"; print "Human","Chimp", "Mouse", "Rat", "Dog"} NR>1{print}' > test_meth_table
+~/git/methpipe/bin/merge-methcounts -t test_Human test_Chimp test_Mouse   \
+  test_Rat test_Dog | awk 'NR==1{OFS="\t"; 
+  print "Human","Chimp", "Mouse", "Rat", "Dog"} 
+  NR>1{print}' > test_meth_table
 
 ############ use read counts as input
 # Estimate tree shape and mutation rates assuming site-independency
 ../bin/phylo-epi-tester -c  -v -o test_counts.out  init.nwk  test_meth_table 
 # Check the rate or correct reconstructions: 
-paste test_treestates test_counts.out | grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin | awk '{if($1==$2) i+=1} END{print i/NR}'
+paste test_treestates test_counts.out | grep -v "#" |cut -f 4,6|  \
+  tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin |   \
+  awk '{if($1==$2) i+=1} END{print i/NR}'
 
 for i in `seq 1 8`; do 
   rate=`paste test_treestates test_counts.out |  \
     grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1} END{print i/NR}' `
+    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1} 
+      END{print i/NR}' `
 echo node $i accuracy $rate
 done
 
@@ -36,7 +41,8 @@ done
 # estimate hypomethylation probability using mixture model
 for i in `echo Chimp Human Mouse Rat Dog`; do
 echo $i
-../bin/indep-sites-hypo -o test_${i}.hypoprob test_${i} -params-out test_${i}.hypoprob.params
+../bin/indep-sites-hypo -o test_${i}.hypoprob test_${i} \
+  -params-out test_${i}.hypoprob.params
 done
 
 # this will creat the following files
@@ -52,19 +58,26 @@ done
 # -rw-r--r--  1 jenny  staff   2.0M Feb 11 11:58 test_Dog.hypoprob
 
 # merge probabilities into a single file
-paste test_Human.hypoprob test_Chimp.hypoprob test_Mouse.hypoprob test_Rat.hypoprob test_Dog.hypoprob| awk 'BEGIN{OFS="\t"; print "Human","Chimp","Mouse","Rat","Dog"} {print  $1":"$2,$5,$11,$17,$23,$29, $35}' > test.hypoprob_table
+paste test_Human.hypoprob test_Chimp.hypoprob test_Mouse.hypoprob \
+  test_Rat.hypoprob test_Dog.hypoprob |  \
+  awk 'BEGIN{OFS="\t"; print "Human","Chimp","Mouse","Rat","Dog"} 
+       {print  $1":"$2,$5,$11,$17,$23,$29, $35}' > test.hypoprob_table
 
 # Estimate tree shape and mutation rates assuming site-independency
 ../bin/phylo-epi-tester  -v -o test_hypoprob.out  init.nwk  test.hypoprob_table
 
 # Check the rate or correct reconstructions:
-paste test_treestates test_hypoprob.out | grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin | awk '{if($1==$2) i+=1} END{print i/NR}'
+paste test_treestates test_hypoprob.out | grep -v "#" |cut -f 4,6 | \
+  tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin |  \
+  awk '{if($1==$2) i+=1} END{print i/NR}'
+
 # Check the rate or correct reconstructions by node
 for i in `seq 1 8`; do 
   rate=`paste test_treestates test_hypoprob.out |  \
     grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1} END{print i/NR}' `
+    awk -v node=${i} '{if(substr($1,node,1)==substr($2,node,1)) i+=1}
+                      END{print i/NR}' `
 echo node $i accuracy $rate
 done
 
@@ -73,7 +86,8 @@ for i in `seq 1 8`; do
   rate=`paste test_treestates test_hypoprob.out |  \
     grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{ if(substr($1,node,1)=="T") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
+    awk -v node=${i} '{ if(substr($1,node,1)=="T") 
+     {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
 echo node $i accuracy $rate
 done
 
@@ -82,7 +96,8 @@ for i in `seq 1 8`; do
   rate=`paste test_treestates test_hypoprob.out |  \
     grep -v "#" |cut -f 4,6| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{ if(substr($1,node,1)=="C") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
+    awk -v node=${i} '{ if(substr($1,node,1)=="C")  
+      {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `
 echo node $i accuracy $rate
 done
 
@@ -90,25 +105,31 @@ done
 #  Simulation for auto-correlated methylome and tree reconstruction            #
 ################################################################################
 
-# simulate data
+## simulate data
 ../bin/simulation -c CpGs.bed  simulation.params -o Test
 
-# Get posterior hypomethylation probability by a hidden Markov model on single methylomes
+## Get posterior hypomethylation probability 
+## by a hidden Markov model on single methylomes
 for i in `echo Chimp Human Mouse Rat Dog`; do
 echo $i
-~/git/methpipe/bin/hmr_posterior -v -o Test_${i}.hypoprob Test_${i} -p Test_${i}.params
+~/git/methpipe/bin/hmr_posterior -v -o Test_${i}.hypoprob Test_${i} \
+  -p Test_${i}.params
 done
 
-paste Test_Human.hypoprob Test_Chimp.hypoprob Test_Mouse.hypoprob Test_Rat.hypoprob Test_Dog.hypoprob| awk 'BEGIN{OFS="\t"; print "Human","Chimp","Mouse","Rat","Dog"} {print  $1":"$2,$5,$11,$17,$23,$29, $35}' > Test_hypoprob_table
+paste Test_Human.hypoprob Test_Chimp.hypoprob Test_Mouse.hypoprob   \
+  Test_Rat.hypoprob Test_Dog.hypoprob| awk 'BEGIN{OFS="\t"; 
+    print "Human","Chimp","Mouse","Rat","Dog"} 
+    {print  $1":"$2, $5, $11, $17, $23, $29, $35}' > Test_hypoprob_table
 
-
-../bin/test_hme  init.nwk Test_hypoprob_table -i 30 -v -s -o Test_hme.out 2>RunInfo.txt &
+../bin/test_hme init.nwk Test_hypoprob_table -i 30 -v -s   \
+  -o Test_hme.out 2>RunInfo.txt &
 
 for i in `seq 1 8`; do   
   rate=`grep -v "#" Test_treestates | paste /dev/stdin Test_hme.out_bysite | \
     cut -f 4,8| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{ if(substr($1,node,1)=="C") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `; 
+    awk -v node=${i} '{ if(substr($1,node,1)=="C") 
+      {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `; 
   echo node $i accuracy $rate; 
 done
 
@@ -116,14 +137,19 @@ for i in `seq 1 8`; do
   rate=`grep -v "#" Test_treestates | paste /dev/stdin Test_hme.out_bysite | \
     cut -f 4,8| tr '0' 'T' < /dev/stdin |  \
     tr '1' 'C' < /dev/stdin |  \
-    awk -v node=${i} '{ if(substr($1,node,1)=="T") {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `;
+    awk -v node=${i} '{ if(substr($1,node,1)=="T") 
+      {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `;
   echo node $i accuracy $rate;
 done
 
 
-# if the leaf observations were perfect
-../bin/test_hme  init.nwk -i 30 -v -s -o Test_hme_perfect.out Test_hypoprobs 2>RunInfo_leaf.txt
+## if the leaf observations were perfect
+../bin/test_hme  init.nwk -i 30 -v -s -o Test_hme_leaf.out Test_hypoprobs 2>RunInfo_leaf.txt
 
-# if all observations were perfect 
-tr 'C' '1' < Test_treestates | tr 'T' '0' < /dev/stdin | awk 'BEGIN{OFS="\t"} NR==1{print "#HCMRD","HC","Human","Chimp","MR","Mouse","Rat","Dog"} NR>1{ print $1":"$2,$4}' > Test_complete_table
-../bin/test_hme  init.nwk -i 30 -c  -v -o Test_complete.param_estimates Test_complete_table 2>RunInfo_all.txt
+## if all observations were perfect 
+tr 'C' '1' < Test_treestates | tr 'T' '0' < /dev/stdin | \
+awk 'BEGIN{OFS="\t"} 
+NR==1{print "#HCMRD","HC","Human","Chimp","MR","Mouse","Rat","Dog"} 
+NR>1{ print $1":"$2,$4}' > Test_all_table
+
+../bin/test_hme init.nwk -i 30 -c  -v -o Test_all.params Test_all_table 2>RunInfo_all.txt
