@@ -276,7 +276,7 @@ load_meth_table(const string &filename, vector<Site> &sites,
 }
 
 static void
-read_params(const bool VERBOSE, const string &paramfile,
+read_params(const string &paramfile,
             double &root_unmeth_prob, double &rate0,
             double &g0, double &g1,
             PhyloTreePreorder &t) {
@@ -288,9 +288,6 @@ read_params(const bool VERBOSE, const string &paramfile,
   getline(in, line);
   istringstream iss(line);
   iss >> t;
-  if (VERBOSE)
-    cerr << "Read in tree branch lengths:" << endl
-         << t.tostring() << endl;
 
   getline(in, line);
   istringstream issp_1(line);
@@ -298,11 +295,6 @@ read_params(const bool VERBOSE, const string &paramfile,
   getline(in, line);
   istringstream issp_2(line);
   issp_2 >> g0 >> g1;
-  if (VERBOSE)
-    cerr << "Root_unmeth_prob=" << root_unmeth_prob
-         << "\trate=" <<  rate0
-         << "\tg0=" << g0
-         << "\tg1" << g1 << endl;
   if (root_unmeth_prob >= 1.0 || root_unmeth_prob <= 0.0 ||
       rate0 >= 1.0 || rate0 <= 0.0 || g0 >=1.0 || g0 <= 0.0 ||
       g1 >= 1.0 || g1 <= 0.0)
@@ -1952,7 +1944,7 @@ complete_optimize_iteration(const bool VERBOSE,
   double norm = 0.0;
 
   /********* update first group of parameters **********/
-  cerr << "[Part 1]\t";
+  if (VERBOSE) cerr << "[Part 1]\t";
   for (size_t i = 0; i < deriv.size(); ++i) {
     if (i < 2 || i > 4) norm += abs(deriv[i]);
   }
@@ -1972,7 +1964,7 @@ complete_optimize_iteration(const bool VERBOSE,
   bool CONVERGED = false;
   // Reduce factor untill improvement or convergence
   while (!SUCCESS && !CONVERGED ) {
-    cerr << ".";
+    if (VERBOSE) cerr << ".";
 
     // Test param point
     newparams = params;
@@ -1988,7 +1980,6 @@ complete_optimize_iteration(const bool VERBOSE,
     if (newllk > llk) {
       SUCCESS = true;
 
-      // print derivatives
       if (VERBOSE) {
         cerr << "\t Improve = " << newllk - llk << endl;
         // print new params
@@ -2015,7 +2006,7 @@ complete_optimize_iteration(const bool VERBOSE,
 
   if (PART2) {
     /******** upddate FF and BB parameters **********/
-    cerr << "[Part 2]\t";
+    if (VERBOSE) cerr << "[Part 2]\t";
     norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
 
     // Choose proper r value
@@ -2032,7 +2023,7 @@ complete_optimize_iteration(const bool VERBOSE,
     bool CONVERGED_p2 = false;
     // Reduce factor untill improvement or convergence
     while (!SUCCESS_p2 && !CONVERGED_p2) {
-      cerr << ".";
+      if (VERBOSE) cerr << ".";
       // Test param point
       newparams = p1_params;
       for (size_t i = 2; i < 4; ++i) {
@@ -2905,12 +2896,12 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
                           bool &CONVERGED, vector<double> &newparams,
                           double &newllk, vector<double> &newderiv,
                           double &diff) {
-
-  cerr << "Loglikelihood = " << llk << endl;
-  for (size_t i = 0; i < deriv.size(); ++i)
-    cerr << "d[" << i << "]=" << deriv[i] << "\t";
-  cerr << endl;
-
+  if (VERBOSE) {
+    cerr << "Loglikelihood = " << llk << endl;
+    for (size_t i = 0; i < deriv.size(); ++i)
+      cerr << "d[" << i << "]=" << deriv[i] << "\t";
+    cerr << endl;
+  }
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_params = n_nodes + 4;
   bool SUCCESS = false;
@@ -3131,6 +3122,8 @@ main(int argc, const char **argv) {
     bool VERBOSE = false;
     bool COMPLETE = false;
     bool SINGLE = false;
+    bool FULLTRAN = false;
+
     OptionParser opt_parse(strip_path(argv[0]), "test funcitonality of "
                            "phylo-methylome segmentation",
                            "<newick> <hypoprob-tab>");
@@ -3140,6 +3133,7 @@ main(int argc, const char **argv) {
                       "(default: 5)", false, MAXITER);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
+    opt_parse.add_opt("full", 'f', "optimize using full transition (when #species is small)", false, FULLTRAN);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
@@ -3202,7 +3196,12 @@ main(int argc, const char **argv) {
 
     bool PARAMFIX = false;
     if (!paramfile.empty()) {
-      read_params(VERBOSE, paramfile, pi0, rate0, g0, g1, t);
+      read_params(paramfile, pi0, rate0, g0, g1, t);
+      if (VERBOSE) {
+        cerr << "Read in tree branch lengths:" << t.tostring() << endl
+             << "Root_unmeth_prob=" << pi0 << "\trate=" <<  rate0
+             << "\tg0=" << g0 << "\tg1" << g1 << endl;
+      }
       PARAMFIX = true;
       branches.clear();
       t.get_branch_lengths(branches);
@@ -3330,8 +3329,7 @@ main(int argc, const char **argv) {
 
       /**************************************************************************/
       /******************** APPROXIMATE OPTIMIZATION ****************************/
-      bool APP = true;
-      if (APP) {
+      if (!FULLTRAN) {
         if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
         const double tol = 1e-3;
         const size_t max_app_iter = 100;
