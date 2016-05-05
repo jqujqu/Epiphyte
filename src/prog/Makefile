@@ -25,7 +25,7 @@ ifndef TREETOOL
 TREETOOL=$(realpath ../adssrc/treetool)
 endif
 
-PROGS = phylo-epi-tester simulation indep-sites-hypo hme
+PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50
@@ -68,10 +68,10 @@ $(PROGS): $(addprefix $(SMITHLAB_CPP)/, GenomicRegion.o smithlab_os.o \
 simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-phylo-epi-tester: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
+indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-hme: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
+epiphyte: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o )
 
 indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o) 
