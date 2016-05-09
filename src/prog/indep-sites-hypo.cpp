@@ -272,7 +272,7 @@ read_parameters(const string &infile, double &mixing,
     throw SMITHLABException("could not open file: " + infile);
 
   string label;
-  if (!(in >> mixing >> low_alpha
+  if (!(in >> label >> mixing
         >> label >> low_alpha
         >> label >> low_beta
         >> label >> high_alpha
