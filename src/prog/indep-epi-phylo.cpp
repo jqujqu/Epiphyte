@@ -1020,7 +1020,9 @@ dec2binary(const size_t len, size_t n) {
 
 
 static void
-subtree_pattern_log_prob(const vector<size_t> &subtree_sizes,
+subtree_pattern_log_prob(const double safecutoff,
+                         const double safetol,
+                         const vector<size_t> &subtree_sizes,
                          const double rate,
                          const vector<double> &branches,
                          const size_t tree_start,
@@ -1029,8 +1031,11 @@ subtree_pattern_log_prob(const vector<size_t> &subtree_sizes,
                          vector<double> &subtree_log_probs) {
   if (subtree_sizes[tree_start] == 1) {
     assert (states[tree_start][pos] >= 0);
-    subtree_log_probs.push_back(log(states[tree_start][pos]));
-    subtree_log_probs.push_back(log(1.0 - states[tree_start][pos]));
+    double p = states[tree_start][pos];
+    if (p < safecutoff) p = safetol;
+    if (p > 1.0 - safecutoff) p = 1.0-safetol;
+    subtree_log_probs.push_back(log(p));
+    subtree_log_probs.push_back(log(1.0 - p));
   } else {
     size_t count = 1;
     vector<vector<double> > pat_log_probs_by_subtree;
@@ -1039,7 +1044,8 @@ subtree_pattern_log_prob(const vector<size_t> &subtree_sizes,
       const size_t child_start = tree_start + count;
       const double branch = branches[child_start];
       vector<double> child_log_probs;
-      subtree_pattern_log_prob(subtree_sizes, rate, branches, child_start,
+      subtree_pattern_log_prob(safecutoff, safetol,
+                               subtree_sizes, rate, branches, child_start,
                                states, pos, child_log_probs);
       vector<vector<double> > child_trans_mat;
       trans_prob_mat(rate, 1.0 - rate, branch, child_trans_mat);
@@ -1110,7 +1116,9 @@ log_sum_log(const double p, const double q) {
 
 
 static void
-tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
+tree_pattern_probs_best(const double safecutoff,
+                        const double safetol,
+                        const vector<size_t> &subtree_sizes,
                         const double root_unmeth_prob,
                         const double rate,
                         const vector<double> &branches,
@@ -1120,7 +1128,8 @@ tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
   const size_t nsites = states[0].size();
   for (size_t pos = 0; pos < nsites; ++pos) {
     vector<double> tree_log_probs;
-    subtree_pattern_log_prob(subtree_sizes, rate, branches, 0, states, pos,
+    subtree_pattern_log_prob(safecutoff, safetol,
+                             subtree_sizes, rate, branches, 0, states, pos,
                              tree_log_probs);
     vector<double>::iterator result;
     result = std::max_element(tree_log_probs.begin(), tree_log_probs.end());
@@ -1132,7 +1141,9 @@ tree_pattern_probs_best(const vector<size_t> &subtree_sizes,
 
 
 static void
-tree_pattern_probs(const vector<size_t> &subtree_sizes,
+tree_pattern_probs(const double safecutoff,
+                   const double safetol,
+                   const vector<size_t> &subtree_sizes,
                    const double root_unmeth_prob,
                    const double rate,
                    const vector<double> &branches,
@@ -1142,7 +1153,8 @@ tree_pattern_probs(const vector<size_t> &subtree_sizes,
   const size_t treesize = subtree_sizes[0];
   for (size_t pos = 0; pos < nsites; ++pos) {
     vector<double> tree_log_probs;
-    subtree_pattern_log_prob(subtree_sizes, rate, branches, 0, states, pos,
+    subtree_pattern_log_prob(safecutoff, safetol,
+                             subtree_sizes, rate, branches, 0, states, pos,
                              tree_log_probs);
     for (size_t i = 0; i < tree_log_probs.size(); ++i) {
       string pattern = dec2binary(subtree_sizes[0], i);
@@ -1210,38 +1222,48 @@ optimize_rootdist(const bool VERBOSE,
                                       branches, states, deriv_root_u);
   double prev_val = root_unmeth_prob;
   bool converged = false;
-  while (!converged) {
-    double fac = 1.0; // modifies step size in case of failure to find
-                      // a valid (i.e. better) next value
-    double new_val;
-    do {
-      new_val = prev_val + STEPSIZE*sign(deriv_root_u)*fac;
-      fac = fac*0.5;
-    } while (new_val < PARTOL || new_val + PARTOL > 1.0);
+  //while (!converged) {
+  double fac = 1.0; // modifies step size in case of failure to find
+                    // a valid (i.e. better) next value
+  double new_val;
+  do {
+    new_val = prev_val + STEPSIZE*sign(deriv_root_u)*fac;
+    fac = fac*0.5;
+  } while (new_val < PARTOL || new_val + PARTOL > 1.0);
 
-    double new_llk =
-      tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate, branches,
-                                        states, deriv_root_u);
+  double new_llk =
+    tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate, branches,
+                                      states, deriv_root_u);
 
-    while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
-      fac = fac*0.5;
-      new_val = max(PARTOL,
-                    min(1.0 - PARTOL,
-                        prev_val + STEPSIZE*sign(deriv_root_u)*fac));
-      new_llk =
-        tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate,
-                                          branches, states, deriv_root_u);
-    }
-    if (VERBOSE)
-      cerr << "param = " << new_val << "\t"<< new_llk
-           << "\tImprove = " << new_llk - prev_llk << endl;
-    if (new_llk - prev_llk < LIKTOL) {
-      converged = true;
-    } else {
-      prev_llk = new_llk;
-      prev_val = new_val;
-    }
+  while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
+    fac = fac*0.5;
+    new_val = max(PARTOL,
+                  min(1.0 - PARTOL,
+                      prev_val + STEPSIZE*sign(deriv_root_u)*fac));
+    new_llk =
+      tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate,
+                                        branches, states, deriv_root_u);
   }
+
+  if (new_llk < prev_llk) { //try other direction
+    new_val = max(PARTOL,
+                  min(1.0 - PARTOL,
+                      prev_val - STEPSIZE*sign(deriv_root_u)*fac));
+    new_llk =
+      tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate,
+                                        branches, states, deriv_root_u);
+  }
+
+  if (VERBOSE)
+    cerr << "param = " << new_val << "\t"<< new_llk
+         << "\tImprove = " << new_llk - prev_llk << endl;
+  if (new_llk - prev_llk < LIKTOL) {
+    converged = true;
+  } else {
+    prev_llk = new_llk;
+    prev_val = new_val;
+  }
+  //}
   root_unmeth_prob = prev_val;
   return prev_llk;
 }
@@ -1264,34 +1286,48 @@ optimize_rate(const bool VERBOSE,
   double prev_rate = rate;
   double new_rate;
   double new_llk;
-  while (!converged) {
-    double fac = 1.0;
-    do {
-      new_rate = prev_rate + STEPSIZE*sign(deriv_rate)*fac;
-      fac = fac*0.5;
-    } while (new_rate < PARTOL || new_rate > 1.0 - PARTOL);
+  //while (!converged) {
+  double fac = 1.0;
+  do {
+    new_rate = prev_rate + STEPSIZE*sign(deriv_rate)*fac;
+    fac = fac*0.5;
+  } while (new_rate < PARTOL || new_rate > 1.0 - PARTOL);
 
+  new_llk =
+    tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob, new_rate,
+                                  branches, states, deriv_rate);
+  while (new_llk < prev_llk && abs(new_rate - prev_rate) > PARTOL) {
+    fac = fac*0.5;
+    new_rate = max(PARTOL, min(prev_rate + STEPSIZE*sign(deriv_rate)*fac,
+                                  1.0 - PARTOL));
     new_llk =
-      tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob, new_rate,
-                                    branches, states, deriv_rate);
-    while (new_llk < prev_llk && abs(new_rate - prev_rate) > PARTOL) {
-      fac = fac*0.5;
-      new_rate = max(PARTOL, min(prev_rate + STEPSIZE*sign(deriv_rate)*fac,
-                                    1.0 - PARTOL));
-      new_llk =
-        tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob,
-                                      new_rate, branches, states, deriv_rate);
-    }
+      tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob,
+                                    new_rate, branches, states, deriv_rate);
+  }
+
+  if (VERBOSE)
+    cerr << "param = " << new_rate << "\t"<< new_llk
+         << "\tImprove = " << new_llk - prev_llk << endl;
+
+  if (new_llk < prev_llk) { //try other direction
+    new_rate = max(PARTOL, min(prev_rate - STEPSIZE*sign(deriv_rate)*fac,
+                               1.0 - PARTOL));
+    new_llk =
+      tree_loglikelihood_deriv_rootdist(subtree_sizes, root_unmeth_prob,
+                                        new_rate, branches, states,
+                                        deriv_rate);
     if (VERBOSE)
       cerr << "param = " << new_rate << "\t"<< new_llk
-           << "\tImprove = " << new_llk - prev_llk << endl;
-    if (new_llk - prev_llk < LIKTOL) {
-      converged = true;
-    } else {
-      prev_llk = new_llk;
-      prev_rate = new_rate;
-    }
+           << "\tImprove = " << new_llk - prev_llk << "\t[R]" << endl;
   }
+
+  if (new_llk - prev_llk < LIKTOL) {
+    converged = true;
+  } else {
+    prev_llk = new_llk;
+    prev_rate = new_rate;
+  }
+  //}
   rate = prev_rate;
   return prev_llk;
 }
@@ -1317,40 +1353,55 @@ optimize_branch(const bool VERBOSE,
   bool converged = false;
   double new_val;
   double new_llk;
-  while (!converged) {
-    double fac = 1.0;
-    do {
-      new_val = prev_val + STEPSIZE*sign(deriv_branch)*fac;
-      fac = fac*0.5;
-    } while (new_val < PARTOL);
+  //while (!converged) {
+  double fac = 1.0;
+  do {
+    new_val = prev_val + STEPSIZE*sign(deriv_branch)*fac;
+    fac = fac*0.5;
+  } while (new_val < PARTOL);
 
+  branches[which_branch] = new_val;
+  new_llk =
+    tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
+                                    branches, states, which_branch,
+                                    deriv_branch);
+  while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
+    fac = fac*0.5;
+    new_val = max(PARTOL,
+                  prev_val + STEPSIZE*sign(deriv_branch)*fac);
     branches[which_branch] = new_val;
     new_llk =
       tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
                                       branches, states, which_branch,
                                       deriv_branch);
-    while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
-      fac = fac*0.5;
-      new_val = max(PARTOL,
-                    prev_val + STEPSIZE*sign(deriv_branch)*fac);
-      branches[which_branch] = new_val;
-      new_llk =
-        tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
-                                        branches, states, which_branch,
-                                        deriv_branch);
-    }
+  }
 
+  if (VERBOSE)
+    cerr << "param = " << new_val << "\t"<< new_llk
+         << "\tImprove = " << new_llk-prev_llk << endl;
+
+  if (new_llk < prev_llk) {//try the other direction
+    new_val = max(PARTOL,
+                  prev_val - STEPSIZE*sign(deriv_branch)*fac);
+    branches[which_branch] = new_val;
+    new_llk =
+      tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
+                                      branches, states, which_branch,
+                                      deriv_branch);
     if (VERBOSE)
       cerr << "param = " << new_val << "\t"<< new_llk
-           << "\tImprove = " << new_llk-prev_llk << endl;
-
-    if (new_llk - prev_llk < LIKTOL) {
-      converged = true;
-    } else {
-      prev_llk = new_llk;
-      prev_val = new_val;
-    }
+           << "\tImprove = " << new_llk-prev_llk << "\t[R]" << endl;
   }
+
+
+
+  if (new_llk - prev_llk < LIKTOL) {
+    converged = true;
+  } else {
+    prev_llk = new_llk;
+    prev_val = new_val;
+  }
+  //}
 
   branches[which_branch] = prev_val;
   return prev_llk;
@@ -1691,17 +1742,21 @@ main(int argc, const char **argv) {
     if (!outfile.empty()) of.open(outfile.c_str());
     std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
 
+    const double safecutoff = 0.3;
+    const double safetol = 1e-4;
     if (!NODEMAP) {
       if (VERBOSE)
         cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
       vector<string> bestpatterns;
-      tree_pattern_probs_best(subtree_sizes, root_unmeth_prob, lam,
+      tree_pattern_probs_best(safecutoff, safetol,
+                              subtree_sizes, root_unmeth_prob, lam,
                               branches, states, bestpatterns);
       write_patterns(out, t, lam, root_unmeth_prob, llk, sites, bestpatterns);
     } else {
       if (VERBOSE)
         cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
-      tree_pattern_probs(subtree_sizes, root_unmeth_prob,
+      tree_pattern_probs(safecutoff, safetol,
+                         subtree_sizes, root_unmeth_prob,
                          lam, branches, states);
       write_states(out, t, lam, root_unmeth_prob, llk, sites, states);
     }
