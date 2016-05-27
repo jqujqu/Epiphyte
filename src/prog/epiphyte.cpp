@@ -3094,6 +3094,7 @@ build_domain(const size_t minCpG,
           skip = 0;
         } else {
           merging_domains.push_back(domains[j]);
+          skip = 0;
         }
       }
     }
@@ -3321,6 +3322,9 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "Initialized internal probability" << endl;
 
+      // make a copy of the initialized tree_prob_table
+      vector<vector<double> > tree_prob_table_copy = tree_prob_table;
+
       const size_t n_hme = pow(2,n_nodes);
       vector<string> all_states;
       for (size_t i = 0; i < n_hme; ++i) {
@@ -3337,12 +3341,16 @@ main(int argc, const char **argv) {
         if (!PARAMFIX) {
           double diff = std::numeric_limits<double>::max();
           size_t iter = 0;
-          bool OPTIMIZE_FFBB = true;
+          bool OPTIMIZE_FFBB = false;
           while (iter < MAXITER && diff > tol) {
             cerr << "Iteration " << iter << endl;
             vector<double> appderiv;
             vector<double> newparams;
             vector<double> newderiv;
+            
+            // start from the initial table in each iteration.
+            tree_prob_table = tree_prob_table_copy;
+            
             approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                              max_app_iter, tree_prob_table);
 
@@ -3351,7 +3359,7 @@ main(int argc, const char **argv) {
             tree_prob_to_states(tree_prob_table, cutoff, states);
 
             double llk;
-            const size_t cmp_maxiter = 5;
+            const size_t cmp_maxiter = 2;
             complete_optimize(VERBOSE, tol, cmp_maxiter, states, reset_points,
                               subtree_sizes, start_param,
                               OPTIMIZE_FFBB, newparams, llk);
@@ -3383,8 +3391,8 @@ main(int argc, const char **argv) {
           cerr << "Final pass of posterior approximation" << endl;
         }
 
-        leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
-
+        //leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+        tree_prob_table = tree_prob_table_copy;
         approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                          max_app_iter, tree_prob_table);
 
