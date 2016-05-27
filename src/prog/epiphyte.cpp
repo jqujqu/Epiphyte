@@ -3131,7 +3131,7 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block"
                       "(default: 50)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
-                      "(default: 5)", false, MAXITER);
+                      "(default: 10)", false, MAXITER);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("full", 'f', "optimize using full transition (when #species is small)", false, FULLTRAN);
