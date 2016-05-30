@@ -1541,6 +1541,7 @@ update_branch(const double TOL,
   double rate0 = params[1];
   double g0 = params[2];
   double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
   vector<double> Ts(params.begin()+4, params.end());
   vector<vector<vector<double> > > time_trans_mats;
   vector<vector<vector<vector<double> > > > combined_trans_mats;
@@ -1562,18 +1563,18 @@ update_branch(const double TOL,
   cerr << prev_params[4 + node_id] << "\t" << prev_deriv<< "\t" << prev_F << "\t" << 1.0 << endl;
 
   double frac = 1.0;
-  while (frac > TOL && (frac*sign(prev_deriv) + prev_params[4+node_id] <  TOL ||
-                        frac*sign(prev_deriv) + prev_params[4+node_id] > 1.0-TOL ) ) {
-    frac = frac/2;
-  }
-
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE || !SUCCESS) {
+    while (frac > TOL && (frac*sign(prev_deriv) + prev_params[4+node_id] <  TOL ||
+                          frac*sign(prev_deriv) + prev_params[4+node_id] > 1.0-TOL ) ) {
+      frac = frac/2;
+    }
     new_params[4+node_id] = prev_params[4+node_id] + frac*sign(prev_deriv);
     // update trans mats and derivs with new-params
     vector<double> trial_Ts(new_params.begin()+4, new_params.end());
+    assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
     collect_transition_matrices_deriv(rate0, g0, g1, trial_Ts, time_trans_mats, combined_trans_mats,
                                       combined_trans_mats_drate, combined_trans_mats_dg0,
                                       combined_trans_mats_dg1, combined_trans_mats_dT);
@@ -1585,7 +1586,8 @@ update_branch(const double TOL,
     if (new_F > prev_F) {
       SUCCESS= true;
       improve += new_F - prev_F;
-      cerr << "SUCCEEDED\tImprov=" << improve << endl;
+      cerr << "SUCCESS\tImprov=" << improve
+           << "\tbranch[" << node_id << "]=" << new_params[4+node_id]<< endl;
       prev_F = new_F;
       prev_deriv = new_deriv;
       prev_params = new_params;
@@ -1650,6 +1652,7 @@ update_rate(const double TOL,
   const double rate0 = params[1];
   const double g0 = params[2];
   const double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
   const vector<double> Ts(params.begin()+4, params.end());
   vector<vector<vector<double> > > time_trans_mats;
   vector<vector<vector<vector<double> > > > combined_trans_mats;
@@ -1674,15 +1677,14 @@ update_rate(const double TOL,
 
   double denom = abs(prev_deriv);
   double frac = 1.0;
-  while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
-                        frac*sign(prev_deriv) + prev_params[1] < TOL)) {
-    frac = frac/2;
-  }
-
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE || !SUCCESS) {
+    while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
+                          frac*sign(prev_deriv) + prev_params[1] < TOL)) {
+      frac = frac/2;
+    }
     new_params[1] = prev_params[1] + frac*(prev_deriv/denom); //rate0
     collect_transition_matrices_deriv(new_params[1], g0, g1, Ts,
                                       time_trans_mats, combined_trans_mats,
@@ -1789,17 +1791,16 @@ update_G(const double TOL,
 
   double denom = abs(prev_deriv[0]) + abs(prev_deriv[1]);
   double frac = 1.0;
-  while (frac > TOL && (frac*(prev_deriv[0]/denom) + prev_params[2] > 1- TOL ||
-                        frac*(prev_deriv[0]/denom) + prev_params[2] < TOL ||
-                        frac*(prev_deriv[1]/denom) + prev_params[3] > 1- TOL ||
-                        frac*(prev_deriv[1]/denom) + prev_params[3] < TOL ) ) {
-    frac = frac/2;
-  }
-
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE || !SUCCESS) {
+    while (frac > TOL && (frac*(prev_deriv[0]/denom) + prev_params[2] > 1- TOL ||
+                          frac*(prev_deriv[0]/denom) + prev_params[2] < TOL ||
+                          frac*(prev_deriv[1]/denom) + prev_params[3] > 1- TOL ||
+                          frac*(prev_deriv[1]/denom) + prev_params[3] < TOL ) ) {
+      frac = frac/2;
+    }
     new_params[2] = prev_params[2] + frac*(prev_deriv[0]/denom); //g0
     new_params[3] = prev_params[3] + frac*(prev_deriv[1]/denom); //g1
     collect_transition_matrices_deriv(rate0, new_params[2], new_params[3], Ts,
