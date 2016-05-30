@@ -110,28 +110,7 @@ struct Logscale {
   }
 };
 
-// val= log[abs(exp(p)*sign_p + exp(q)*sign_q)]
-// sign_val = sign(exp(p)*sign_p + exp(q)*sign_q)
-static void
-log_sum_log_sign(const Logscale p, const Logscale q,
-                 Logscale &result) {
-  if (p.symbol == 0) {
-    result.logval = q.logval;
-    result.symbol = q.symbol;
-  } else if (q.symbol == 0) {
-    result.logval = p.logval;
-    result.symbol = p.symbol;
-  } else {
-    const double larger = (p.logval > q.logval) ? p.logval : q.logval;
-    const double smaller = (p.logval > q.logval) ? q.logval : p.logval;
-    result.symbol = (p.logval > q.logval)? p.symbol : q.symbol;
-    if (p.symbol*q.symbol > 0) {
-      result.logval = larger + log(1.0 + exp(smaller - larger));
-    } else {
-      result.logval = larger + log(1.0 - exp(smaller - larger));
-    }
-  }
-}
+
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -859,7 +838,6 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   vector<vector<double> > &tree_prob_table) {
   const double tol = 1e-5;
   const size_t n_sites = meth_prob_table.size();
-  const size_t n_nodes = subtree_sizes.size();
   const size_t n_leaves = meth_prob_table[0].size();
   vector<size_t> leaves_preorder;
   subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
@@ -1347,7 +1325,6 @@ approx_posterior(const vector<size_t> &subtree_sizes,
                  const size_t MAXITER,
                  vector<vector<double> > &meth_prob_table) {
 
-  const size_t n_nodes = subtree_sizes.size();
   vector<vector<vector<double> > > time_trans_mats;
   // collect probabilities and derivatives by branch
   vector<vector<vector<vector<double> > > > combined_trans_mats;

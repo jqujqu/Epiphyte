@@ -110,29 +110,6 @@ struct Logscale {
   }
 };
 
-// val= log[abs(exp(p)*sign_p + exp(q)*sign_q)]
-// sign_val = sign(exp(p)*sign_p + exp(q)*sign_q)
-static void
-log_sum_log_sign(const Logscale p, const Logscale q,
-                 Logscale &result) {
-  if (p.symbol == 0) {
-    result.logval = q.logval;
-    result.symbol = q.symbol;
-  } else if (q.symbol == 0) {
-    result.logval = p.logval;
-    result.symbol = p.symbol;
-  } else {
-    const double larger = (p.logval > q.logval) ? p.logval : q.logval;
-    const double smaller = (p.logval > q.logval) ? q.logval : p.logval;
-    result.symbol = (p.logval > q.logval)? p.symbol : q.symbol;
-    if (p.symbol*q.symbol > 0) {
-      result.logval = larger + log(1.0 + exp(smaller - larger));
-    } else {
-      result.logval = larger + log(1.0 - exp(smaller - larger));
-    }
-  }
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -624,98 +601,6 @@ combined_trans_prob_mat(const double g0, const double g1,
 }
 
 
-
-//T=1-exp(-branch)
-static void
-trans_deriv(const vector<vector<double> > &Q,
-            const vector<vector<double> > &G,
-            const double T,
-            const size_t prev,
-            const size_t anc,
-            const size_t cur,
-            const vector<vector<double> > &prev_anc_denom,
-            const vector<vector<double> > &time_trans_mat,
-            double &d_rate0, double &d_g0, double &d_g1, double &d_T) {
-
-  const double denom = prev_anc_denom[prev][anc];
-
-  double term = kronecker_delta(cur, 1)*2 - 1.0 - time_trans_mat[anc][cur]*(G[prev][1]-G[prev][0])/denom;
-  d_rate0 = T*G[prev][cur]/denom*term;
-
-  if (prev == 0) {
-    d_g1 = 0;
-    term = kronecker_delta(cur, 0)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][0] - time_trans_mat[anc][1])/denom ;
-    d_g0= time_trans_mat[anc][cur]/denom*term;
-  } else {
-    d_g0 = 0;
-    term = kronecker_delta(cur, 1)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][1] - time_trans_mat[anc][0])/denom;
-    d_g1 = time_trans_mat[anc][cur]/denom*term;
-  }
-  term = Q[anc][cur] - time_trans_mat[anc][cur]*(G[prev][0]*Q[anc][0]+G[prev][1]*Q[anc][1])/denom;
-  d_T = G[prev][cur]/denom*term;
-}
-
-// On a single branch
-// T=1-exp(-branch)
-static void
-combined_trans_prob_mat_deriv(const double rate0,
-                              const double g0, const double g1,
-                              const double T,
-                              const vector<vector<double> > &time_trans_mat,
-                              vector<vector<vector<double> > > &combined_trans_mat, //prev x anc x cur
-                              vector<vector<vector<double> > > &combined_trans_mat_drate,
-                              vector<vector<vector<double> > > &combined_trans_mat_dg0,
-                              vector<vector<vector<double> > > &combined_trans_mat_dg1,
-                              vector<vector<vector<double> > > &combined_trans_mat_dT) {
-  // deriv: (rate0, g0, g1, T)
-  vector<vector<double> > G(2,vector<double>(2,0.0));
-  G[0][0] = g0;
-  G[0][1] = 1.0 - g0;
-  G[1][1] = g1;
-  G[1][0] = 1.0 - g1;
-  vector<vector<double> > Q(2,vector<double>(2,0.0));
-  Q[0][0] = -1.0*rate0;
-  Q[0][1] = rate0;
-  Q[1][0] = 1.0 - rate0;
-  Q[1][1] = rate0 - 1.0;
-
-  vector<vector<double> > prev_anc_denom(2, vector<double>(2, 0.0));
-  for (size_t prev = 0; prev < 2; ++ prev) {
-    for (size_t anc = 0; anc < 2; ++ anc) {
-      prev_anc_denom[prev][anc] =
-        G[prev][0]*time_trans_mat[anc][0] + G[prev][1]*time_trans_mat[anc][1] ;
-    }
-  }
-
-  combined_trans_mat =
-    vector<vector<vector<double> > >(2, vector<vector<double> >(2,vector<double>(2, 0.0)));
-  combined_trans_mat_drate = combined_trans_mat;
-  combined_trans_mat_dg0 = combined_trans_mat;
-  combined_trans_mat_dg1 = combined_trans_mat;
-  combined_trans_mat_dT = combined_trans_mat;
-
-  for (size_t prev = 0; prev < 2; ++prev) {
-    for (size_t anc = 0; anc < 2; ++anc) {
-      for (size_t cur = 0; cur < 2; ++cur) {
-        combined_trans_mat[prev][anc][cur] =
-          G[prev][cur]*time_trans_mat[anc][cur]/prev_anc_denom[prev][anc];
-      }
-    }
-  }
-
-  for (size_t prev = 0; prev < 2; ++prev) {
-    for (size_t anc = 0; anc < 2; ++anc) {
-      for (size_t cur = 0; cur < 2; ++ cur) {
-        trans_deriv(Q, G, T, prev, anc, cur,
-                    prev_anc_denom, time_trans_mat,
-                    combined_trans_mat_drate[prev][anc][cur],
-                    combined_trans_mat_dg0[prev][anc][cur],
-                    combined_trans_mat_dg1[prev][anc][cur],
-                    combined_trans_mat_dT[prev][anc][cur]);
-      }
-    }
-  }
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////       Units grouped       ///////////////////////////////
