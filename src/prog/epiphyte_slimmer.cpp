@@ -740,38 +740,6 @@ collect_transition_matrices(const double rate0, const double g0, const double g1
 }
 
 
-static void
-collect_transition_matrices_deriv(const double rate0, const double g0, const double g1,
-                                  const vector<double> &Ts,
-                                  vector<vector<vector<double> > > &time_trans_mats,
-                                  vector<vector<vector<vector<double> > > > &combined_trans_mats,
-                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
-                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg0,
-                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg1,
-                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dT) {
-
-  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
-  const size_t n_nodes = Ts.size();
-  vector<vector<double> > mat2x2(2, vector<double>(2, 0.0));
-  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
-  time_trans_mats = vector<vector<vector<double> > > (n_nodes, mat2x2);
-  vector<vector<vector<vector<double> > > > multi_mat2x2x2(n_nodes, mat2x2x2);
-  combined_trans_mats =  multi_mat2x2x2; // node x prev x anc x cur
-  combined_trans_mats_drate = multi_mat2x2x2;
-  combined_trans_mats_dg0 = multi_mat2x2x2;
-  combined_trans_mats_dg1 = multi_mat2x2x2;
-  combined_trans_mats_dT = multi_mat2x2x2;
-
-  for (size_t i = 1; i < n_nodes; ++i) {
-    temporal_trans_prob_mat(Ts[i], rate0, time_trans_mats[i]);
-    combined_trans_prob_mat_deriv(rate0, g0, g1, Ts[i], time_trans_mats[i],
-                                  combined_trans_mats[i],
-                                  combined_trans_mats_drate[i],
-                                  combined_trans_mats_dg0[i],
-                                  combined_trans_mats_dg1[i],
-                                  combined_trans_mats_dT[i]);
-  }
-}
 
 
 ////////////////////////////////////////////////////////////////////////////////

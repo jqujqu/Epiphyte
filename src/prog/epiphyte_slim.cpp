@@ -1492,6 +1492,20 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
       }
     }
   }
+
+  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
+    cerr << "tirad_weights" << endl;
+    for (size_t i = 0; i < 2; ++i) {
+      for (size_t j = 0; j < 2; ++j) {
+        for (size_t k = 0; k < 2; ++k) {
+          cerr << i <<j << k << "\t"
+               << triad_weights[node_id][i][j][k]/(reset_points.back()-reset_points.size()) << endl;
+        }
+      }
+    }
+  }
+
+
 }
 
 static void
@@ -1560,8 +1574,6 @@ update_branch(const double TOL,
   objective_branch(prev_params, triad_weights, start_weights, time_trans_mats,
                    combined_trans_mats, combined_trans_mats_dT,
                    node_id, prev_F, prev_deriv);
-  cerr << prev_params[4 + node_id] << "\t" << prev_deriv<< "\t" << prev_F << "\t" << 1.0 << endl;
-
   double frac = 1.0;
   bool CONVERGE = false;
   bool SUCCESS = false;
