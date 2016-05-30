@@ -1465,7 +1465,7 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
                      vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
                      vector<vector<vector<double> > > &start_weights,// treesizex2x2
                      vector<vector<double> > &root_weights){ //2x2
-  //  cerr << "-----------posterior_to_weights--------------" << endl;
+
   const size_t n_nodes = subtree_sizes.size();
   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
   vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
@@ -1492,7 +1492,6 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
       }
     }
   }
-  //  cerr << "==============posterior_to_weight--------------" << endl;
 }
 
 static void
@@ -1504,8 +1503,6 @@ objective_branch(const vector<double> &params,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats_dT,
                  const size_t node_id,
                  double &F, double &deriv) {
-
-  //  cerr << "--------objective_branch-------" << endl;
 
   F = 0.0;
   deriv = 0.0;
@@ -1531,7 +1528,6 @@ objective_branch(const vector<double> &params,
       deriv += start_weights[node_id][j][k]*(time_trans_mats_dT[j][k]/time_trans_mats[node_id][j][k]);
     }
   }
-  //  cerr << "======objective_branch\t" << node_id << "\tF=" << F << "\tderiv=" << deriv << endl;
 }
 
 static void
@@ -1541,8 +1537,6 @@ update_branch(const double TOL,
               const vector<vector<vector<vector<double> > > > &triad_weights,
               const vector<vector<vector<double> > > &start_weights,
               double &T){
-
-  //  cerr << "--------update_branch-------" << params[4+node_id] << endl;
 
   double rate0 = params[1];
   double g0 = params[2];
@@ -1587,7 +1581,7 @@ update_branch(const double TOL,
     objective_branch(new_params, triad_weights, start_weights, time_trans_mats,
                      combined_trans_mats, combined_trans_mats_dT,
                      node_id, new_F, new_deriv);
-    //    cerr << new_params[4 + node_id] << "\t" << new_deriv<< "\t" << new_F << "\t" << frac << endl;
+
     if (new_F > prev_F) {
       SUCCESS= true;
       improve += new_F - prev_F;
@@ -1601,8 +1595,6 @@ update_branch(const double TOL,
     if (frac < TOL) CONVERGE = true;
   }
   T = prev_params[4+node_id];
-  //cerr << T << endl;
-  //  cerr << "======update_branch\t" << node_id << "\t" << T << endl;
 }
 
 
@@ -1615,8 +1607,6 @@ objective_rate(const vector<size_t> &subtree_sizes,
                const vector<vector<vector<vector<double> > > > &combined_trans_mats, // treesizex2x2
                const vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
                double &F, double &deriv_rate) {
-
-  //  cerr << "--------objective_rate-------" << endl;
 
   F = 0.0;
   deriv_rate = 0.0;
@@ -1647,8 +1637,6 @@ objective_rate(const vector<size_t> &subtree_sizes,
       }
     }
   }
-  //  cerr << "======objective_rate\t " << F << "\tderiv=" << deriv_rate << endl;
-
 }
 
 static void
@@ -1658,8 +1646,6 @@ update_rate(const double TOL,
             const vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
             const vector<vector<vector<double> > > &start_weights,
             double &new_rate){
-
-  //  cerr << "--------update_rate-------" << endl;
 
   const double rate0 = params[1];
   const double g0 = params[2];
@@ -1686,10 +1672,7 @@ update_rate(const double TOL,
                  combined_trans_mats, combined_trans_mats_drate,
                  prev_F, prev_deriv);
 
-  //  cerr << prev_params[1] <<  "\t" <<  prev_deriv<< "\t" << prev_F << endl;
-
   double denom = abs(prev_deriv);
-  //  cerr << "denom=" << denom << endl;
   double frac = 1.0;
   while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
                         frac*sign(prev_deriv) + prev_params[1] < TOL)) {
@@ -1723,7 +1706,6 @@ update_rate(const double TOL,
     if (frac < TOL ) CONVERGE = true;
   }
   new_rate = prev_params[1];
-  //  cerr << "====== Update_rate\t " << new_rate << endl;
 }
 
 static void
@@ -1736,7 +1718,6 @@ objective_G(const vector<size_t> &subtree_sizes,
             const vector<vector<vector<vector<double> > > > &combined_trans_mats_dg1,
             double &F, vector<double> &deriv_G){
 
-  //  cerr << "--------objective_G-------" << endl;
   double g0 = params[2];
   double g1 = params[3];
 
@@ -1760,7 +1741,6 @@ objective_G(const vector<size_t> &subtree_sizes,
       for (size_t k = 0; k < 2; ++k) {
         deriv_G[0] += triad_weights[node_id][0][j][k]*(combined_trans_mats_dg0[node_id][0][j][k]/combined_trans_mats[node_id][0][j][k]);
         deriv_G[1] += triad_weights[node_id][1][j][k]*(combined_trans_mats_dg1[node_id][1][j][k]/combined_trans_mats[node_id][1][j][k]);
-        //        cerr << deriv_G[0] << "\t" << deriv_G[1] << endl;
       }
     }
   }
@@ -1773,8 +1753,6 @@ objective_G(const vector<size_t> &subtree_sizes,
 
   deriv_G[0] +=  root_weights[0][0]/G[0][0] - root_weights[0][1]/G[0][1];
   deriv_G[1] +=  -1.0*root_weights[1][0]/G[1][0] + root_weights[1][1]/G[1][1];
-
-  //  cerr << "====== Objective_G\t " << deriv_G[0] << "\t" << deriv_G[1] << endl;
 }
 
 static void
@@ -1784,8 +1762,6 @@ update_G(const double TOL,
          const vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
          const vector<vector<double> > &root_weights,
          double &new_g0, double &new_g1) {
-
-  //  cerr << "--------update_G-------" << endl;
 
   const double rate0 = params[1];
   const double g0 = params[2];
@@ -1810,11 +1786,8 @@ update_G(const double TOL,
   objective_G(subtree_sizes, prev_params, triad_weights,
               root_weights, combined_trans_mats,combined_trans_mats_dg0,
               combined_trans_mats_dg1, prev_F, prev_deriv);
-  //  cerr << prev_params[2] <<  "\t" << prev_params[3]  << "\t"
-  //       <<  prev_deriv[0] << "\t" << prev_deriv[1] << "\t" << prev_F << endl;
 
   double denom = abs(prev_deriv[0]) + abs(prev_deriv[1]);
-  //  cerr << "denom=" << denom << endl;
   double frac = 1.0;
   while (frac > TOL && (frac*(prev_deriv[0]/denom) + prev_params[2] > 1- TOL ||
                         frac*(prev_deriv[0]/denom) + prev_params[2] < TOL ||
@@ -1853,7 +1826,6 @@ update_G(const double TOL,
   }
   new_g0 = prev_params[2];
   new_g1 = prev_params[3];
-  //  cerr << "====== Update_G\t " << new_g0 << "\t" << new_g1 << endl;
 }
 
 
@@ -1861,13 +1833,11 @@ static void
 update_pi0(const vector<vector<double> > &tree_prob_table,
            const vector<size_t> &reset_points,
            double &pi0){
-  //  cerr << "--------update_pi0-------" << endl;
   pi0 = 0.0;
   for (size_t i = 0; i < reset_points.size()-1; ++i) {
     pi0 += tree_prob_table[reset_points[i]][0];
   }
   pi0 = pi0/(reset_points.size()-1);
-  //  cerr << "====== Update_pi0\t " << pi0 << endl;
 }
 
 
@@ -1877,7 +1847,6 @@ optimize_params(const vector<size_t> &subtree_sizes,
                 const vector<size_t> &reset_points,
                 const vector<double> &params,
                 vector<double> &newparams){
-  //  cerr << "--------optimize_params-------" << endl;
 
   const size_t n_nodes = subtree_sizes.size();
   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
@@ -1904,7 +1873,6 @@ optimize_params(const vector<size_t> &subtree_sizes,
     update_branch(TOL, subtree_sizes, newparams, node_id,
                   triad_weights, start_weights, T);
     newparams[4+node_id] = T;
-    //    cerr << "update T" << T << endl;
   }
   // update rate0
   double new_rate;
