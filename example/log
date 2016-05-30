@@ -21,7 +21,7 @@
 
 ############ use read counts as input
 # Estimate tree shape and mutation rates assuming site-independency
-../bin/phylo-epi-tester -c  -v -o test_counts.out  init.nwk  test_meth_table 
+../bin/indep-epi-phylo -c  -v -o test_counts.out  init.nwk  test_meth_table 
 # Check the rate or correct reconstructions: 
 paste test_treestates test_counts.out | grep -v "#" |cut -f 4,6|  \
   tr '0' 'T' < /dev/stdin | tr '1' 'C' < /dev/stdin |   \
