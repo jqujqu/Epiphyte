@@ -600,7 +600,98 @@ combined_trans_prob_mat(const double g0, const double g1,
   }
 }
 
+//T=1-exp(-branch)
+static void
+trans_deriv(const vector<vector<double> > &Q,
+            const vector<vector<double> > &G,
+            const double T,
+            const size_t prev,
+            const size_t anc,
+            const size_t cur,
+            const vector<vector<double> > &prev_anc_denom,
+            const vector<vector<double> > &time_trans_mat,
+            double &d_rate0, double &d_g0, double &d_g1, double &d_T) {
 
+  const double denom = prev_anc_denom[prev][anc];
+
+  double term = kronecker_delta(cur, 1)*2 - 1.0 - time_trans_mat[anc][cur]*(G[prev][1]-G[prev][0])/denom;
+  d_rate0 = T*G[prev][cur]/denom*term;
+
+  if (prev == 0) {
+    d_g1 = 0;
+    term = kronecker_delta(cur, 0)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][0] - time_trans_mat[anc][1])/denom ;
+    d_g0= time_trans_mat[anc][cur]/denom*term;
+  } else {
+    d_g0 = 0;
+    term = kronecker_delta(cur, 1)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][1] - time_trans_mat[anc][0])/denom;
+    d_g1 = time_trans_mat[anc][cur]/denom*term;
+  }
+  term = Q[anc][cur] - time_trans_mat[anc][cur]*(G[prev][0]*Q[anc][0]+G[prev][1]*Q[anc][1])/denom;
+  d_T = G[prev][cur]/denom*term;
+}
+
+
+// On a single branch
+// T=1-exp(-branch)
+static void
+combined_trans_prob_mat_deriv(const double rate0,
+                              const double g0, const double g1,
+                              const double T,
+                              const vector<vector<double> > &time_trans_mat,
+                              vector<vector<vector<double> > > &combined_trans_mat, //prev x anc x cur
+                              vector<vector<vector<double> > > &combined_trans_mat_drate,
+                              vector<vector<vector<double> > > &combined_trans_mat_dg0,
+                              vector<vector<vector<double> > > &combined_trans_mat_dg1,
+                              vector<vector<vector<double> > > &combined_trans_mat_dT) {
+  // deriv: (rate0, g0, g1, T)
+  vector<vector<double> > G(2,vector<double>(2,0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][1] = g1;
+  G[1][0] = 1.0 - g1;
+  vector<vector<double> > Q(2,vector<double>(2,0.0));
+  Q[0][0] = -1.0*rate0;
+  Q[0][1] = rate0;
+  Q[1][0] = 1.0 - rate0;
+  Q[1][1] = rate0 - 1.0;
+
+  vector<vector<double> > prev_anc_denom(2, vector<double>(2, 0.0));
+  for (size_t prev = 0; prev < 2; ++ prev) {
+    for (size_t anc = 0; anc < 2; ++ anc) {
+      prev_anc_denom[prev][anc] =
+        G[prev][0]*time_trans_mat[anc][0] + G[prev][1]*time_trans_mat[anc][1] ;
+    }
+  }
+
+  combined_trans_mat =
+    vector<vector<vector<double> > >(2, vector<vector<double> >(2,vector<double>(2, 0.0)));
+  combined_trans_mat_drate = combined_trans_mat;
+  combined_trans_mat_dg0 = combined_trans_mat;
+  combined_trans_mat_dg1 = combined_trans_mat;
+  combined_trans_mat_dT = combined_trans_mat;
+
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      for (size_t cur = 0; cur < 2; ++cur) {
+        combined_trans_mat[prev][anc][cur] =
+          G[prev][cur]*time_trans_mat[anc][cur]/prev_anc_denom[prev][anc];
+      }
+    }
+  }
+
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      for (size_t cur = 0; cur < 2; ++ cur) {
+        trans_deriv(Q, G, T, prev, anc, cur,
+                    prev_anc_denom, time_trans_mat,
+                    combined_trans_mat_drate[prev][anc][cur],
+                    combined_trans_mat_dg0[prev][anc][cur],
+                    combined_trans_mat_dg1[prev][anc][cur],
+                    combined_trans_mat_dT[prev][anc][cur]);
+      }
+    }
+  }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////       Units grouped       ///////////////////////////////
@@ -624,7 +715,38 @@ collect_transition_matrices(const double rate0, const double g0, const double g1
   }
 }
 
+static void
+collect_transition_matrices_deriv(const double rate0, const double g0, const double g1,
+                                  const vector<double> &Ts,
+                                  vector<vector<vector<double> > > &time_trans_mats,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg0,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg1,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dT) {
 
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  const size_t n_nodes = Ts.size();
+  vector<vector<double> > mat2x2(2, vector<double>(2, 0.0));
+  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
+  time_trans_mats = vector<vector<vector<double> > > (n_nodes, mat2x2);
+  vector<vector<vector<vector<double> > > > multi_mat2x2x2(n_nodes, mat2x2x2);
+  combined_trans_mats =  multi_mat2x2x2; // node x prev x anc x cur
+  combined_trans_mats_drate = multi_mat2x2x2;
+  combined_trans_mats_dg0 = multi_mat2x2x2;
+  combined_trans_mats_dg1 = multi_mat2x2x2;
+  combined_trans_mats_dT = multi_mat2x2x2;
+
+  for (size_t i = 1; i < n_nodes; ++i) {
+    temporal_trans_prob_mat(Ts[i], rate0, time_trans_mats[i]);
+    combined_trans_prob_mat_deriv(rate0, g0, g1, Ts[i], time_trans_mats[i],
+                                  combined_trans_mats[i],
+                                  combined_trans_mats_drate[i],
+                                  combined_trans_mats_dg0[i],
+                                  combined_trans_mats_dg1[i],
+                                  combined_trans_mats_dT[i]);
+  }
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1241,6 +1363,59 @@ get_posterior(const vector<vector<double> > &tree_prob_table,
 
 
 static void
+acc_triad_weight(const vector<size_t> &subtree_sizes,
+                 const vector<vector<double> > &tree_prob_table,
+                 const size_t pos, const size_t node_id,
+                 vector<vector<vector<vector<double> > > > &triad_weights) {
+
+  if (subtree_sizes[node_id] >1)  {
+    size_t count =1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      // triad_weights
+      for (size_t i = 0; i < 2; ++i) {
+        for (size_t j = 0; j < 2; ++j) {
+          for (size_t k = 0; k < 2; ++k) {
+            double p_prev, p_cur, p_anc;
+            get_posterior(tree_prob_table, pos-1, child_id, i, p_prev);
+            get_posterior(tree_prob_table, pos, node_id, j, p_anc);
+            get_posterior(tree_prob_table, pos, child_id, k, p_cur);
+            triad_weights[child_id][i][j][k] += p_prev*p_cur*p_anc;
+          }
+        }
+      }
+      count += subtree_sizes[child_id];
+    }
+  }
+}
+
+static void
+acc_start_weight(const vector<size_t> &subtree_sizes,
+                 const vector<vector<double> > &tree_prob_table,
+                 const size_t pos,
+                 const size_t node_id,
+                 vector<vector<vector<double> > > &start_weights) {// treesizex2x2
+  assert(subtree_sizes[node_id] >1 );
+  size_t count = 1;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count;
+    // triad_weights
+    double p_cur, p_anc;
+    for (size_t j = 0; j < 2; ++j) {
+      for (size_t k = 0; k < 2; ++k) {
+        get_posterior(tree_prob_table, pos, node_id, j, p_anc);
+        get_posterior(tree_prob_table, pos, child_id, k, p_cur);
+        start_weights[child_id][j][k] += p_cur*p_anc;
+      }
+    }
+    count += subtree_sizes[child_id];
+  }
+}
+
+
+
+
+static void
 get_inherit_weights(const vector<size_t> &subtree_sizes,
                     const vector<vector<double> > &tree_prob_table,
                     vector<vector<vector<double> > > &inherit_weights) {
@@ -1295,16 +1470,41 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
                      const vector<double> &params,
                      const vector<size_t> &reset_points,
                      const vector<vector<double> > &tree_prob_table,
-                     vector<vector<vector<double> > > &inherit_weights, // treesizex2x2
-                     vector<vector<double> > &autocor_weights){ //2x2
+                     vector<vector<vector<double> > > &inherit_weights,
+                     vector<vector<double> > &autocor_weights,
+                     vector<vector<vector<vector<double> > > > &triad_weights,
+                     vector<vector<vector<double> > > &start_weights){
 
   const size_t n_nodes = subtree_sizes.size();
   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
   autocor_weights = mat2x2;
   inherit_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+  start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+  triad_weights = vector<vector<vector<vector<double> > > >(n_nodes, mat2x2x2);
 
   get_inherit_weights(subtree_sizes, tree_prob_table, inherit_weights);
   get_autocor_weights(subtree_sizes, reset_points, tree_prob_table, autocor_weights);
+
+
+  for  (size_t block = 0; block < reset_points.size() -1; ++block) {
+    // accumulate start_weights
+    for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+      if (subtree_sizes[node_id]>1) {
+        acc_start_weight(subtree_sizes, tree_prob_table,
+                         reset_points[block], node_id, start_weights);
+      }
+    }
+    for (size_t pos = reset_points[block]+1; pos < reset_points[block+1]; ++pos ) {
+      // accumulate triad_weight
+      for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+        if (subtree_sizes[node_id]>1)
+          acc_triad_weight(subtree_sizes, tree_prob_table, pos,
+                           node_id, triad_weights);
+      }
+    }
+  }
+
 }
 
 
@@ -1381,12 +1581,14 @@ update_branch(const double TOL,
   T = prev_params[4+node_id];
 }
 
-
 static void
 objective_rate(const vector<size_t> &subtree_sizes,
                const vector<double> &params,
-               const vector<vector<vector<double> > > &inherit_weights, // treesizex2x2
+               const vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
+               const vector<vector<vector<double> > > &start_weights,
                const vector<vector<vector<double> > > &time_trans_mats,
+               const vector<vector<vector<vector<double> > > > &combined_trans_mats, // treesizex2x2
+               const vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
                double &F, double &deriv_rate) {
 
   F = 0.0;
@@ -1401,26 +1603,49 @@ objective_rate(const vector<size_t> &subtree_sizes,
     time_trans_mats_drate[0][1] = T[node_id];
     time_trans_mats_drate[1][0] = -T[node_id];
     time_trans_mats_drate[1][1] = T[node_id];
+
+    for (size_t i = 0; i < 2; ++i) {
+      for (size_t j = 0; j < 2; ++j) {
+        for (size_t k = 0; k < 2; ++k) {
+          F += triad_weights[node_id][i][j][k]*log(combined_trans_mats[node_id][i][j][k]);
+          deriv_rate += triad_weights[node_id][i][j][k]*(combined_trans_mats_drate[node_id][i][j][k]/combined_trans_mats[node_id][i][j][k]);
+        }
+      }
+    }
+
     for (size_t j = 0; j < 2; ++j) {
       for (size_t k = 0; k < 2; ++k) {
-        F += inherit_weights[node_id][j][k]*log(time_trans_mats[node_id][j][k]);
-        deriv_rate += inherit_weights[node_id][j][k]*time_trans_mats_drate[j][k]/time_trans_mats[node_id][j][k];
+        F += start_weights[node_id][j][k]*log(time_trans_mats[node_id][j][k]);
+        deriv_rate += start_weights[node_id][j][k]*time_trans_mats_drate[j][k]/time_trans_mats[node_id][j][k];
       }
     }
   }
 }
 
+
 static void
 update_rate(const double TOL,
             const vector<size_t> &subtree_sizes,
             const vector<double> &params,
-            const vector<vector<vector<double> > > &inherit_weights, // treesizex2x2
+            const vector<vector<vector<vector<double> > > > &triad_weights,
+            const vector<vector<vector<double> > > &start_weights,
             double &new_rate){
+
   const double rate0 = params[1];
-  vector<vector<vector<double> > > time_trans_mats(subtree_sizes.size(), vector<vector<double> >(2, vector<double>(2, 0.0)));
-  for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
-    temporal_trans_prob_mat(params[4+node_id], rate0, time_trans_mats[node_id]);
-  }
+  const double g0 = params[2];
+  const double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  const vector<double> Ts(params.begin()+4, params.end());
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_drate;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
+  collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats, combined_trans_mats_drate,
+                                    combined_trans_mats_dg0, combined_trans_mats_dg1,
+                                    combined_trans_mats_dT);
   vector<double> prev_params = params;
   vector<double> new_params = params;
 
@@ -1428,8 +1653,10 @@ update_rate(const double TOL,
   double new_F = 0.0;
   double prev_deriv, new_deriv;
 
-  objective_rate(subtree_sizes, prev_params, inherit_weights,
-                 time_trans_mats, prev_F, prev_deriv);
+  objective_rate(subtree_sizes, prev_params, triad_weights,
+                 start_weights, time_trans_mats,
+                 combined_trans_mats, combined_trans_mats_drate,
+                 prev_F, prev_deriv);
 
   double denom = abs(prev_deriv);
   double frac = 1.0;
@@ -1442,13 +1669,13 @@ update_rate(const double TOL,
       frac = frac/2;
     }
     new_params[1] = prev_params[1] + frac*(prev_deriv/denom); //rate0
-
-    //update transition matrices
-    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
-      temporal_trans_prob_mat(new_params[4+node_id], new_params[1], time_trans_mats[node_id]);
-    }
-    objective_rate(subtree_sizes, new_params, inherit_weights,
-                   time_trans_mats, new_F, new_deriv);
+    collect_transition_matrices_deriv(new_params[1], g0, g1, Ts,
+                                      time_trans_mats, combined_trans_mats,
+                                      combined_trans_mats_drate, combined_trans_mats_dg0,
+                                      combined_trans_mats_dg1, combined_trans_mats_dT);
+    objective_rate(subtree_sizes, new_params, triad_weights,
+                   start_weights, time_trans_mats, combined_trans_mats,
+                   combined_trans_mats_drate, new_F, new_deriv);
 
     if (new_F > prev_F) {
       SUCCESS= true;
@@ -1465,6 +1692,93 @@ update_rate(const double TOL,
   }
   new_rate = prev_params[1];
 }
+
+
+// static void
+// objective_rate(const vector<size_t> &subtree_sizes,
+//                const vector<double> &params,
+//                const vector<vector<vector<double> > > &inherit_weights, // treesizex2x2
+//                const vector<vector<vector<double> > > &time_trans_mats,
+//                double &F, double &deriv_rate) {
+
+//   F = 0.0;
+//   deriv_rate = 0.0;
+
+//   const size_t n_nodes = subtree_sizes.size();
+//   const vector<double> T(params.begin()+4, params.end());
+
+//   for (size_t node_id = 1; node_id < n_nodes; ++ node_id) {
+//     vector<vector<double> > time_trans_mats_drate(2, vector<double>(2,0.0));
+//     time_trans_mats_drate[0][0] = -T[node_id];
+//     time_trans_mats_drate[0][1] = T[node_id];
+//     time_trans_mats_drate[1][0] = -T[node_id];
+//     time_trans_mats_drate[1][1] = T[node_id];
+//     for (size_t j = 0; j < 2; ++j) {
+//       for (size_t k = 0; k < 2; ++k) {
+//         F += inherit_weights[node_id][j][k]*log(time_trans_mats[node_id][j][k]);
+//         deriv_rate += inherit_weights[node_id][j][k]*time_trans_mats_drate[j][k]/time_trans_mats[node_id][j][k];
+//       }
+//     }
+//   }
+// }
+
+
+
+// static void
+// update_rate(const double TOL,
+//             const vector<size_t> &subtree_sizes,
+//             const vector<double> &params,
+//             const vector<vector<vector<double> > > &inherit_weights, // treesizex2x2
+//             double &new_rate){
+//   const double rate0 = params[1];
+//   vector<vector<vector<double> > > time_trans_mats(subtree_sizes.size(), vector<vector<double> >(2, vector<double>(2, 0.0)));
+//   for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
+//     temporal_trans_prob_mat(params[4+node_id], rate0, time_trans_mats[node_id]);
+//   }
+//   vector<double> prev_params = params;
+//   vector<double> new_params = params;
+
+//   double prev_F = 0.0;
+//   double new_F = 0.0;
+//   double prev_deriv, new_deriv;
+
+//   objective_rate(subtree_sizes, prev_params, inherit_weights,
+//                  time_trans_mats, prev_F, prev_deriv);
+
+//   double denom = abs(prev_deriv);
+//   double frac = 1.0;
+//   bool CONVERGE = false;
+//   bool SUCCESS = false;
+//   double improve = 0.0;
+//   while (!CONVERGE || !SUCCESS) {
+//     while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
+//                           frac*sign(prev_deriv) + prev_params[1] < TOL)) {
+//       frac = frac/2;
+//     }
+//     new_params[1] = prev_params[1] + frac*(prev_deriv/denom); //rate0
+
+//     //update transition matrices
+//     for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
+//       temporal_trans_prob_mat(new_params[4+node_id], new_params[1], time_trans_mats[node_id]);
+//     }
+//     objective_rate(subtree_sizes, new_params, inherit_weights,
+//                    time_trans_mats, new_F, new_deriv);
+
+//     if (new_F > prev_F) {
+//       SUCCESS= true;
+//       improve += new_F - prev_F;
+//       prev_F = new_F;
+//       prev_deriv = new_deriv;
+//       prev_params = new_params;
+//       denom = abs(new_deriv);
+//       cerr << "SUCCESS\tImprov=" << improve << "\trate=" << new_params[1] <<endl;
+//     } else {
+//       frac = frac/2;
+//     }
+//     if (frac < TOL ) CONVERGE = true;
+//   }
+//   new_rate = prev_params[1];
+// }
 
 static void
 update_G(const double TOL,
@@ -1500,9 +1814,13 @@ optimize_params(const vector<size_t> &subtree_sizes,
   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
   vector<vector<double> > autocor_weights = mat2x2;
   vector<vector<vector<double> > > inherit_weights(n_nodes, mat2x2);
+  vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
+  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
+  vector<vector<vector<vector<double> > > > triad_weights(n_nodes, mat2x2x2);
   cerr << "Getting weights" << endl;
   posterior_to_weights(subtree_sizes, params, reset_points, tree_prob_table,
-                       inherit_weights, autocor_weights);
+                       inherit_weights, autocor_weights, triad_weights,
+                       start_weights);
   cerr << autocor_weights[0][0] << "\t"
        << autocor_weights[0][1] << "\t"
        << autocor_weights[1][0] << "\t"
@@ -1524,7 +1842,8 @@ optimize_params(const vector<size_t> &subtree_sizes,
   }
   // update rate0
   double new_rate;
-  update_rate(TOL, subtree_sizes, newparams, inherit_weights, new_rate);
+  update_rate(TOL, subtree_sizes, newparams, triad_weights,
+              start_weights, new_rate);
   newparams[1] = new_rate;
 
   //update pi0
@@ -1809,7 +2128,7 @@ main(int argc, const char **argv) {
     /**************************************************************************/
     /******************** APPROXIMATE OPTIMIZATION ****************************/
     if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
-    const double tol = 1e-3;
+    const double tol = 1e-4;
     const size_t max_app_iter = 100;
 
     double diff = std::numeric_limits<double>::max();
@@ -1819,7 +2138,7 @@ main(int argc, const char **argv) {
       for (size_t i = 0; i < start_param.size(); ++i)
         cerr << start_param[i] << "\t";
       cerr << endl;
-      vector<double> newparams(n_nodes+4, 0.0);
+      vector<double> new_param(n_nodes+4, 0.0);
 
       // start from the initial table in each iteration.
       //tree_prob_table = tree_prob_table_copy;
@@ -1827,13 +2146,13 @@ main(int argc, const char **argv) {
                        max_app_iter, tree_prob_table);
 
       optimize_params(subtree_sizes, tree_prob_table,
-                      reset_points, start_param, newparams);
+                      reset_points, start_param, new_param);
 
       diff = 0.0;
-      for (size_t i = 0; i < newparams.size(); ++i) {
-        diff += abs(newparams[i]-start_param[i]);
+      for (size_t i = 0; i < new_param.size(); ++i) {
+        diff += abs(new_param[i]-start_param[i]);
       }
-      start_param = newparams;
+      start_param = new_param;
       ++iter;
     }
 
