@@ -1362,16 +1362,15 @@ get_posterior(const vector<vector<double> > &tree_prob_table,
               const size_t pos, const size_t node_id,
               const size_t state,
               double &prob) {
-  prob = (state == 0)? tree_prob_table[pos][node_id] : 1.0 - tree_prob_table[pos][node_id];
+  prob = (state == 0)?
+    tree_prob_table[pos][node_id] : 1.0 - tree_prob_table[pos][node_id];
 }
 
 static void
 acc_triad_weight(const vector<size_t> &subtree_sizes,
                  const vector<vector<double> > &tree_prob_table,
-                 const size_t pos,
-                 const size_t node_id,
-                 vector<vector<vector<vector<double> > > > &triad_weights) { // treesizex2x2x2
-  assert(pos > 0);
+                 const size_t pos, const size_t node_id,
+                 vector<vector<vector<vector<double> > > > &triad_weights) {
 
   if (subtree_sizes[node_id] >1)  {
     size_t count =1;
@@ -1469,28 +1468,14 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
       }
     }
   }
-
-  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
-    cerr << "tirad_weights" << endl;
-    for (size_t i = 0; i < 2; ++i) {
-      for (size_t j = 0; j < 2; ++j) {
-        for (size_t k = 0; k < 2; ++k) {
-          cerr << i <<j << k << "\t"
-               << triad_weights[node_id][i][j][k]/(reset_points.back()-reset_points.size()) << endl;
-        }
-      }
-    }
-  }
-
-
 }
 
 static void
 objective_branch(const vector<double> &params,
-                 const vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
+                 const vector<vector<vector<vector<double> > > > &triad_weights,
                  const vector<vector<vector<double> > > &start_weights,
                  const vector<vector<vector<double> > > &time_trans_mats,
-                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,// treesizex2x2
+                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats_dT,
                  const size_t node_id,
                  double &F, double &deriv) {
@@ -1634,7 +1619,7 @@ static void
 update_rate(const double TOL,
             const vector<size_t> &subtree_sizes,
             const vector<double> &params,
-            const vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
+            const vector<vector<vector<vector<double> > > > &triad_weights,
             const vector<vector<vector<double> > > &start_weights,
             double &new_rate){
 
