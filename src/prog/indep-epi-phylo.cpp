@@ -1243,24 +1243,14 @@ optimize_rootdist(const bool VERBOSE,
                                         branches, states, deriv_root_u);
   }
 
-  if (new_llk < prev_llk) { //try other direction
-    new_val = max(PARTOL,
-                  min(1.0 - PARTOL,
-                      prev_val - STEPSIZE*sign(deriv_root_u)*fac));
-    new_llk =
-      tree_loglikelihood_deriv_rootdist(subtree_sizes, new_val, rate,
-                                        branches, states, deriv_root_u);
-  }
-
   if (VERBOSE)
     cerr << "param = " << new_val << "\t"<< new_llk
          << "\tImprove = " << new_llk - prev_llk << endl;
-  // if (new_llk - prev_llk < LIKTOL) {
-  //   converged = true;
-  // } else {
-  //   prev_llk = new_llk;
-  //   prev_val = new_val;
-  // }
+
+  if (new_llk > prev_llk) {
+    prev_val = new_val;
+    prev_llk = new_llk;
+  }
 
   root_unmeth_prob = prev_val;
   return prev_llk;
@@ -1305,16 +1295,9 @@ optimize_rate(const bool VERBOSE,
     cerr << "param = " << new_rate << "\t"<< new_llk
          << "\tImprove = " << new_llk - prev_llk << endl;
 
-  if (new_llk < prev_llk) { //try other direction
-    new_rate = max(PARTOL, min(prev_rate - STEPSIZE*sign(deriv_rate)*fac,
-                               1.0 - PARTOL));
-    new_llk =
-      tree_loglikelihood_deriv_rootdist(subtree_sizes, root_unmeth_prob,
-                                        new_rate, branches, states,
-                                        deriv_rate);
-    if (VERBOSE)
-      cerr << "param = " << new_rate << "\t"<< new_llk
-           << "\tImprove = " << new_llk - prev_llk << "\t[R]" << endl;
+  if (new_llk > prev_llk) {
+    prev_llk = new_llk;
+    prev_rate = new_rate;
   }
 
   rate = prev_rate;
