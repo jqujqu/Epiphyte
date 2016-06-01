@@ -408,10 +408,10 @@ main(int argc, const char **argv) {
     }
     else {
       // initialize the Beta Binomial parameters (will be trained)
-      low_alpha = 0.75;
-      low_beta = 1.5; // low mean
-      high_alpha = 1.5;
-      high_beta = 0.75; // high mean
+      low_alpha = 0.5;
+      low_beta = 4; // low mean
+      high_alpha = 4;
+      high_beta = 0.5; // high mean
       mixing = 0.5; // initialize the mixing proportion to fifty-fifty
     }
 
