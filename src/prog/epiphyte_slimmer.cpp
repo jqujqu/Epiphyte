@@ -1441,6 +1441,40 @@ get_inherit_weights(const vector<size_t> &subtree_sizes,
   }
 }
 
+
+static void
+get_inherit_indirect_weights(const vector<size_t> &subtree_sizes,
+                             const vector<vector<double> > &tree_prob_table,
+                             vector<vector<vector<double> > > &inherit_left_weights,
+                             vector<vector<vector<double> > > &inherit_right_weights) {
+  for (size_t pos = 0; pos < tree_prob_table.size(); ++pos) {
+    for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id){
+      if (subtree_sizes[node_id] >1)  {
+        size_t count = 1;
+        while (count < subtree_sizes[node_id]) {
+          size_t child_id = node_id + count;
+          if (subtree_sizes[child_id] > 1) {
+            size_t gnd_l_id = child_id + 1;
+            size_t gnd_r_id = gnd_l_id + subtree_sizes[gnd_l_id];
+            for (size_t j = 0; j < 2; ++j) {
+              for (size_t x = 0; x < 2; ++x) {
+                double p_l_gnd, p_r_gnd, p_anc;
+                get_posterior(tree_prob_table, pos, node_id, j, p_anc);
+                get_posterior(tree_prob_table, pos, gnd_l_id, x, p_l_gnd);
+                get_posterior(tree_prob_table, pos, gnd_r_id, x, p_r_gnd);
+                inherit_left_weights[child_id][j][x] += p_anc*p_l_gnd;
+                inherit_right_weights[child_id][j][x] += p_anc*p_r_gnd;
+              }
+            }
+          }
+          count += subtree_sizes[child_id];
+        }
+      }
+    }
+  }
+}
+
+
 static void
 get_autocor_weights(const vector<size_t> &subtree_sizes,
                     const vector<size_t> &reset_points,
@@ -1471,6 +1505,8 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
                      const vector<size_t> &reset_points,
                      const vector<vector<double> > &tree_prob_table,
                      vector<vector<vector<double> > > &inherit_weights,
+                     vector<vector<vector<double> > > &inherit_left_weights,
+                     vector<vector<vector<double> > > &inherit_right_weights,
                      vector<vector<double> > &autocor_weights,
                      vector<vector<vector<vector<double> > > > &triad_weights,
                      vector<vector<vector<double> > > &start_weights){
@@ -1480,10 +1516,15 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
   vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
   autocor_weights = mat2x2;
   inherit_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+  inherit_left_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+  inherit_right_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+
   start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
   triad_weights = vector<vector<vector<vector<double> > > >(n_nodes, mat2x2x2);
 
   get_inherit_weights(subtree_sizes, tree_prob_table, inherit_weights);
+  get_inherit_indirect_weights(subtree_sizes, tree_prob_table, inherit_left_weights, inherit_right_weights);
+
   get_autocor_weights(subtree_sizes, reset_points, tree_prob_table, autocor_weights);
 
 
@@ -1508,21 +1549,22 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
 }
 
 
-
-
 static void
-objective_branch(const vector<double> &params,
+objective_branch(const vector<size_t> &subtree_sizes,
+                 const vector<double> &params,
                  const vector<vector<vector<double> > > &inherit_weights,
+                 const vector<vector<vector<double> > > &inherit_left_weights,
+                 const vector<vector<vector<double> > > &inherit_right_weights,
                  const size_t node_id,
                  double &F, double &deriv) {
   assert (node_id > 0);
-  double T = params[4+node_id];
+  double T = params[4+node_id]; //node_id is the child node of the branch
   double rate0 = params[1];
 
   vector<vector<double> > PT;
-  temporal_trans_prob_mat( T, rate0, PT);
+  temporal_trans_prob_mat(T, rate0, PT);
 
-  vector<vector<double> > PTdT=PT;
+  vector<vector<double> > PTdT = PT; //PTdT is independent of T
   PTdT[0][0] = -rate0;
   PTdT[0][1] = rate0;
   PTdT[1][0] = 1.0-rate0;
@@ -1536,6 +1578,26 @@ objective_branch(const vector<double> &params,
       deriv += inherit_weights[node_id][j][k]*(PTdT[j][k]/PT[j][k]);
     }
   }
+
+  if (subtree_sizes[node_id] > 1) { //T is an internal branch, use two grandchildren
+    size_t gnd_l_id = node_id +1;
+    size_t gnd_r_id = gnd_l_id + subtree_sizes[gnd_l_id];
+    double TL = params[4 + gnd_l_id];
+    double TL_combined = T*(1.0-TL) + TL;
+    double TR = params[4 + gnd_r_id];
+    double TR_combined = T*(1.0-TR) + TR;
+    vector<vector<double> > PTL, PTR;
+    temporal_trans_prob_mat(TL_combined, rate0, PTL);
+    temporal_trans_prob_mat(TR_combined, rate0, PTR);
+    for (size_t j = 0; j < 2; ++j) {
+      for (size_t x = 0; x < 2; ++x) {
+        F += inherit_left_weights[node_id][j][x]*log(PTL[j][x]);
+        F += inherit_right_weights[node_id][j][x]*log(PTR[j][x]);
+        deriv += inherit_left_weights[node_id][j][x]*(PTdT[j][x]/PTL[j][x])*(1.0-TL);
+        deriv += inherit_right_weights[node_id][j][x]*(PTdT[j][x]/PTR[j][x])*(1.0-TR);
+      }
+    }
+  }
 }
 
 static void
@@ -1543,13 +1605,17 @@ update_branch(const double TOL,
               const vector<size_t> &subtree_sizes,
               const vector<double> &params, const size_t node_id,
               const vector<vector<vector<double> > > &inherit_weights,
+              const vector<vector<vector<double> > > &inherit_left_weights,
+              const vector<vector<vector<double> > > &inherit_right_weights,
               double &T){
 
   vector<double> prev_params = params;
   vector<double> new_params = params;
   double prev_F, new_F;
   double prev_deriv, new_deriv;
-  objective_branch(prev_params, inherit_weights, node_id, prev_F, prev_deriv);
+  objective_branch(subtree_sizes, prev_params, inherit_weights,
+                   inherit_left_weights, inherit_right_weights,
+                   node_id, prev_F, prev_deriv);
 
   double frac = 1.0;
   bool CONVERGE = false;
@@ -1563,7 +1629,9 @@ update_branch(const double TOL,
     new_params[4+node_id] = prev_params[4+node_id] + frac*sign(prev_deriv);
     // update trans mats and derivs with new-params
     vector<double> trial_Ts(new_params.begin()+4, new_params.end());
-    objective_branch(new_params, inherit_weights, node_id, new_F, new_deriv);
+    objective_branch(subtree_sizes, new_params, inherit_weights,
+                     inherit_left_weights, inherit_right_weights,
+                     node_id, new_F, new_deriv);
 
     if (new_F > prev_F) {
       SUCCESS= true;
@@ -1814,12 +1882,15 @@ optimize_params(const vector<size_t> &subtree_sizes,
   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
   vector<vector<double> > autocor_weights = mat2x2;
   vector<vector<vector<double> > > inherit_weights(n_nodes, mat2x2);
+  vector<vector<vector<double> > > inherit_left_weights(n_nodes, mat2x2);
+  vector<vector<vector<double> > > inherit_right_weights(n_nodes, mat2x2);
   vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
   vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
   vector<vector<vector<vector<double> > > > triad_weights(n_nodes, mat2x2x2);
   cerr << "Getting weights" << endl;
   posterior_to_weights(subtree_sizes, params, reset_points, tree_prob_table,
-                       inherit_weights, autocor_weights, triad_weights,
+                       inherit_weights, inherit_left_weights, inherit_right_weights,
+                       autocor_weights, triad_weights,
                        start_weights);
   cerr << autocor_weights[0][0] << "\t"
        << autocor_weights[0][1] << "\t"
@@ -1837,7 +1908,8 @@ optimize_params(const vector<size_t> &subtree_sizes,
   // update branches
   double T = 0.0;
   for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
-    update_branch(TOL, subtree_sizes, newparams, node_id, inherit_weights, T);
+    update_branch(TOL, subtree_sizes, newparams, node_id, inherit_weights,
+                  inherit_left_weights, inherit_right_weights, T);
     newparams[4+node_id] = T;
   }
   // update rate0
