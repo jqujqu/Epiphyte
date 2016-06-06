@@ -1350,19 +1350,6 @@ optimize_branch(const bool VERBOSE,
     cerr << "param = " << new_val << "\t"<< new_llk
          << "\tImprove = " << new_llk-prev_llk << endl;
 
-  if (new_llk < prev_llk) {//try the other direction
-    new_val = max(PARTOL,
-                  prev_val - STEPSIZE*sign(deriv_branch)*fac);
-    branches[which_branch] = new_val;
-    new_llk =
-      tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
-                                      branches, states, which_branch,
-                                      deriv_branch);
-    if (VERBOSE)
-      cerr << "param = " << new_val << "\t"<< new_llk
-           << "\tImprove = " << new_llk-prev_llk << "\t[R]" << endl;
-  }
-
   branches[which_branch] = prev_val;
   return prev_llk;
 }
