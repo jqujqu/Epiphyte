@@ -32,7 +32,7 @@
 #include <numeric>
 #include <sstream>
 #include <tr1/unordered_set>
-#include <algorithm>
+#include <algorithm> //std::max
 
 #include <gsl/gsl_randist.h>
 #include <unistd.h>
@@ -53,6 +53,7 @@ using std::cout;
 using std::pair;
 using std::make_pair;
 using std::tr1::unordered_set;
+using std::max;
 
 static bool
 is_G_line(const char *line){
@@ -302,7 +303,8 @@ simulate_counts(const size_t NB_r, const double NB_p,
   r = gsl_rng_alloc (T);
   long seed = rand();
   gsl_rng_set(r, seed);
-  N =  gsl_ran_negative_binomial (r, NB_p, NB_r);
+  N = gsl_ran_negative_binomial (r, NB_p, NB_r);
+  if (N == 0) N = 1;
   double pm = gsl_ran_beta (r, beta_params[0], beta_params[1]);
   meth = static_cast<double>(gsl_ran_binomial (r, pm, N))/N;
   gsl_rng_free(r);
