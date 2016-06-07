@@ -1972,7 +1972,7 @@ main(int argc, const char **argv) {
     double tolerance = 1e-4;
     size_t MAXITER = 10;
     string outfile;
-    string paramfile;
+    string paramfile,outparamfile;
 
     // run mode flags
     bool VERBOSE = false;
@@ -1988,6 +1988,7 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
+    opt_parse.add_opt("outparams", 'P', "output parameters", false, outparamfile);
     opt_parse.add_opt("output", 'o', "output file name", false, outfile);
     opt_parse.add_opt("minfragCpG", 'f', "ignore fragments with fewer CpG sites"
                       "(default: 5)", false, minfragcpg);
@@ -2187,6 +2188,15 @@ main(int argc, const char **argv) {
     tree_prob_table = tree_prob_table_copy;
     approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                      max_app_iter, tree_prob_table);
+
+    if (!outparamfile.empty()) {
+      std::ofstream out(outparamfile.c_str());
+      if (!out)
+        throw SMITHLABException("bad output file: " + outparamfile);
+      out << t.Newick_format() << endl;
+      out << start_param[0] << "\t" << start_param[1] << endl;
+      out << start_param[2] << "\t" << start_param[3] << endl;
+    }
 
     if (!outfile.empty()) {
       std::ofstream out(outfile.c_str());
