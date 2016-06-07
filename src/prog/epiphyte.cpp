@@ -133,6 +133,15 @@ log_sum_log_sign(const Logscale p, const Logscale q,
   }
 }
 
+static void
+show_params(const vector<double> &params) {
+  // print new params
+  for (size_t i = 0; i < params.size(); ++i) {
+    if (i!=4)
+      cerr << ( (i<4)? params[i] : -log(1.0-params[i]) ) << "\t";
+  }
+  cerr << endl;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -1942,122 +1951,135 @@ complete_optimize_iteration(const bool VERBOSE,
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_params = n_nodes + 4;
   double norm = 0.0;
+  vector<double> cur_params = params;
+  vector<double> cur_deriv = deriv;
+  double cur_llk = llk;
 
-  /********* update first group of parameters **********/
-  if (VERBOSE) cerr << "[Part 1]\t";
-  for (size_t i = 0; i < deriv.size(); ++i) {
-    if (i < 2 || i > 4) norm += abs(deriv[i]);
-  }
-
-  double r = 1.0/norm; //maximization (-1.0 if minimization)
-  for (size_t i = 0; i < n_params; ++i) {
-    if (i < 2 || i > 4){
-      double candidate_param = params[i] + deriv[i]*r;
-      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-        r = r/2;
-        candidate_param = params[i] + deriv[i]*r;
-      }
-    }
-  }
+  newparams = params;
 
   bool SUCCESS = false;
   bool CONVERGED = false;
-  // Reduce factor untill improvement or convergence
+
+  //update rate
+  if (VERBOSE) cerr << "[Part 0]\t";
+  double scale = 1.0;
+  double candidate_rate = cur_params[1] + cur_deriv[1]*scale;
+  while (candidate_rate < TOL || candidate_rate > 1.0-TOL) {
+    scale = scale/2;
+    candidate_rate = cur_params[1] + cur_deriv[1]*scale;
+  }
   while (!SUCCESS && !CONVERGED ) {
     if (VERBOSE) cerr << ".";
-
-    // Test param point
-    newparams = params;
-    for (size_t i = 0; i < n_params; ++i) {
-      double factor = 0.0;
-      if (i < 2 || i > 4) factor = r;
-      newparams[i] = params[i] + factor*deriv[i];
-    }
-
+    scale = scale/2;
+    newparams[1] = cur_params[1] + scale*cur_deriv[1];
     loglik_complete_tree(states, reset_points, subtree_sizes,
                          newparams, newllk, newderiv);
-
-    if (newllk > llk) {
+    if (newllk > cur_llk) {
       SUCCESS = true;
-
       if (VERBOSE) {
-        cerr << "\t Improve = " << newllk - llk << endl;
-        // print new params
-        for (size_t i = 0; i < newparams.size(); ++i) {
-          if (i!=4)
-            cerr << ( (i<4)? newparams[i] : -log(1.0-newparams[i]) ) << "\t";
-        }
-        cerr << endl;
+        cerr << "\t Improve = " << newllk - cur_llk << endl;
+        show_params(newparams); // print new params
       }
     } else {
-      if (r*norm <= TOL) CONVERGED = true;
-      r = r/2;
+      if (scale*cur_deriv[1] < TOL) CONVERGED = true;
     }
   }
   if (!SUCCESS) {
-    newparams = params;
-    newderiv = deriv;
-    newllk = llk;
+    newparams = cur_params;
+    newderiv = cur_deriv;
+    newllk = cur_llk;
+    show_params(newparams);
+  }
+  cur_params = newparams;
+  cur_llk = newllk;
+  cur_deriv = newderiv;
+  newparams = cur_params;
+
+  //update  branches
+
+  if (VERBOSE) cerr << "[Part 1]\t";
+  for (size_t i = 5; i < cur_deriv.size(); ++i) {
+    norm += abs(cur_deriv[i]);
+  }
+  double r = 1.0/norm; //maximization (-1.0 if minimization)
+  for (size_t i = 5; i < n_params; ++i) {
+    double candidate_param = cur_params[i] + cur_deriv[i]*r;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      r = r/2;
+      candidate_param = cur_params[i] + cur_deriv[i]*r;
+    }
+  }
+  SUCCESS = false;
+  CONVERGED = false;
+  while (!SUCCESS && !CONVERGED ) {
+    if (VERBOSE) cerr << ".";
+    for (size_t i = 5; i < n_params; ++i) {
+      newparams[i] = cur_params[i] + r*cur_deriv[i];
+    }
+    loglik_complete_tree(states, reset_points, subtree_sizes,
+                         newparams, newllk, newderiv);
+    if (newllk > cur_llk) {
+      SUCCESS = true;
+      if (VERBOSE) {
+        cerr << "\t Improve = " << newllk - cur_llk << endl;
+        show_params(newparams);
+      } 
+    } else {
+      if (r*norm <= TOL) CONVERGED = true;
+      r = r/2;
+    }   
+  }
+  if (!SUCCESS) {
+    newparams = cur_params;
+    newderiv = cur_deriv;
+    newllk = cur_llk;
+  }
+  cur_params = newparams;
+  cur_llk = newllk;
+  cur_deriv = newderiv;
+  newparams = cur_params;
+
+  // upddate FF and BB parameters 
+  if (VERBOSE) cerr << "[Part 2]\t";
+  norm = abs(cur_deriv[2]) + abs(cur_deriv[3]);
+  r = 1.0/norm; //maximization (-1.0 if minimization)
+  for (size_t i = 2; i < 4; ++i) {
+    double candidate_param = cur_params[i] + cur_deriv[i]*r;
+    while (candidate_param < TOL || candidate_param > 1.0-TOL) {
+      r = r/2;
+      candidate_param = cur_params[i] + cur_deriv[i]*r;
+    }
+  }
+  SUCCESS = false;
+  CONVERGED = false;
+  while (!SUCCESS && !CONVERGED) {
+    if (VERBOSE) cerr << ".";
+    // Test param point
+    newparams = cur_params;
+    for (size_t i = 2; i < 4; ++i) {
+      newparams[i] = cur_params[i] + r*cur_deriv[i];
+    }
+    loglik_complete_tree(states, reset_points, subtree_sizes,
+                         newparams, newllk, newderiv);
+    if (newllk > cur_llk) {
+      SUCCESS = true;
+      if (VERBOSE) {
+        cerr << "========= Improve = " << newllk - cur_llk << endl;
+        show_params(newparams);
+      }
+    } else {
+      if (r*norm < TOL) CONVERGED = true;
+      r = r/2;
+    }
   }
 
-  vector<double> p1_params = newparams;
-  double p1_llk = newllk;
-  vector<double> p1_deriv = newderiv;
-
-  if (PART2) {
-    /******** upddate FF and BB parameters **********/
-    if (VERBOSE) cerr << "[Part 2]\t";
-    norm = abs(p1_deriv[2]) + abs(p1_deriv[3]);
-
-    // Choose proper r value
-    r = 1.0/norm; //maximization (-1.0 if minimization)
-    for (size_t i = 2; i < 4; ++i) {
-      double candidate_param = p1_params[i] + p1_deriv[i]*r;
-      while (candidate_param < TOL || candidate_param > 1.0-TOL) {
-        r = r/2;
-        candidate_param = p1_params[i] + p1_deriv[i]*r;
-      }
-    }
-
-    bool SUCCESS_p2 = false;
-    bool CONVERGED_p2 = false;
-    // Reduce factor untill improvement or convergence
-    while (!SUCCESS_p2 && !CONVERGED_p2) {
-      if (VERBOSE) cerr << ".";
-      // Test param point
-      newparams = p1_params;
-      for (size_t i = 2; i < 4; ++i) {
-        newparams[i] = p1_params[i] + r*p1_deriv[i];
-      }
-
-      loglik_complete_tree(states, reset_points, subtree_sizes,
-                           newparams, newllk, newderiv);
-
-      if (newllk > p1_llk) {
-        SUCCESS_p2 = true;
-
-        if (VERBOSE) {
-          cerr << "========= Improve = " << newllk - p1_llk << endl;
-          for (size_t i = 0; i < newparams.size(); ++i) {
-            if (i!= 4)
-              cerr << ( (i<4)? newparams[i] : -log(1.0-newparams[i]) )  << "\t";
-          }
-          cerr << endl;
-        }
-
-      } else {
-        if (r*norm <= TOL) CONVERGED_p2 = true;
-        r = r/2;
-      }
-    }
-    if (!SUCCESS_p2) {
-      // didn't find better solution, keep the old one
-      newllk = p1_llk;
-      newparams = p1_params;
-      newderiv = p1_deriv;
-    }
+  if (!SUCCESS) {
+    newllk = cur_llk;
+    newparams = cur_params;
+    newderiv = cur_deriv;
   }
 }
+
 
 
 static void
@@ -2072,32 +2094,42 @@ complete_optimize(const bool VERBOSE,
                   vector <double> &params,
                   double &llk) {
 
-  vector<double> old_params = start_params;
-  vector<double> old_deriv;
-  double old_llk;
+  vector<double> cur_params = start_params;
+  vector<double> cur_deriv;
+  double cur_llk;
+
+  //update pi0 directly
+  double p0 = 0.0;
+  for (size_t block = 0; block < reset_points.size()-1; ++ block) {
+    if (states[reset_points[block]][0] == '0') p0 += 1.0;
+  }
+  p0 = p0/(reset_points.size()-1); 
+  cur_params[0] = max(min(p0, 1.0-TOL), TOL);
+
   loglik_complete_tree(states, reset_points, subtree_sizes,
-                       old_params, old_llk, old_deriv);
+                       cur_params, cur_llk, cur_deriv);
   if (VERBOSE) {
-    cerr << "------" << old_llk << "-------" << endl;
+    cerr << "------Start log-likelihood=" << cur_llk << "-------" << endl;
   }
 
   size_t iter = 0;
   double diff = std::numeric_limits<double>::max();
   double FFBBdiff = 0;
   vector<double> deriv;
+
   while (iter < MAXITER  && diff > TOL) {
     complete_optimize_iteration(VERBOSE, OPTIMIZE_FFBB, TOL, states, reset_points, subtree_sizes,
-                                old_params,  old_deriv, old_llk, params, deriv, llk);
+                                cur_params,  cur_deriv, cur_llk, params, deriv, llk);
 
-    FFBBdiff = abs(old_params[2] - params[2]) +  abs(old_params[3] - params[3]);
-    if (OPTIMIZE_FFBB && FFBBdiff < TOL)
-      OPTIMIZE_FFBB = false;
+    FFBBdiff = abs(cur_params[2] - params[2]) +  abs(cur_params[3] - params[3]);
+    //    if (OPTIMIZE_FFBB && FFBBdiff < TOL)
+    //      OPTIMIZE_FFBB = false;
 
     diff = 0;
     for (size_t i = 0; i < params.size(); ++ i) {
-      diff += abs(old_params[i] - params[i]);
+      diff += abs(cur_params[i] - params[i]);
     }
-    old_params = params;
+    cur_params = params;
     ++iter;
 
     if (VERBOSE) {
@@ -2105,9 +2137,9 @@ complete_optimize(const bool VERBOSE,
            << "Param total diff = " << diff << endl;
     }
 
-    old_params = params;
-    old_deriv = deriv;
-    old_llk = llk;
+    cur_params = params;
+    cur_deriv = deriv;
+    cur_llk = llk;
   }
 
   if (iter < MAXITER && VERBOSE)
@@ -3117,7 +3149,7 @@ main(int argc, const char **argv) {
     double tolerance = 1e-4;
     size_t MAXITER = 10;
     string outfile;
-    string paramfile;
+    string paramfile,outparamfile;
 
     // run mode flags
     bool VERBOSE = false;
@@ -3138,6 +3170,7 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
+    opt_parse.add_opt("outparams", 'P', "output parameters", false, outparamfile);
     opt_parse.add_opt("output", 'o', "output file name", false, outfile);
     opt_parse.add_opt("minfragCpG", 'f', "ignore fragments with fewer CpG sites"
                       "(default: 5)", false, minfragcpg);
@@ -3190,10 +3223,10 @@ main(int argc, const char **argv) {
 
     /**************************************************************************/
     /******************** INITIALIZE PARAMETERS *******************************/
-    double pi0 = 0.16181;
-    double rate0 = 0.767393;
-    double g0 = 0.99013;
-    double g1 = 0.983651;
+    double pi0 = 0.5;
+    double rate0 = 0.5;
+    double g0 = 0.8;
+    double g1 = 0.9;
 
     bool PARAMFIX = false;
     if (!paramfile.empty()) {
@@ -3207,6 +3240,7 @@ main(int argc, const char **argv) {
       branches.clear();
       t.get_branch_lengths(branches);
     }
+
     vector<double> Ts;
     for (size_t i = 0; i < branches.size(); ++i) {
       Ts.push_back(1.0 - 1.0/exp(branches[i]));
@@ -3243,7 +3277,6 @@ main(int argc, const char **argv) {
       for (size_t i = 5; i < newparams.size(); ++i) {
         branches[i-4] = -log(1.0 - newparams[i]);
       }
-
       t.set_branch_lengths(branches);
 
       if (VERBOSE) {
@@ -3254,6 +3287,15 @@ main(int argc, const char **argv) {
         cerr << endl;
       }
 
+      if (!outparamfile.empty()) { //output parameter
+        std::ofstream out(outparamfile.c_str());
+        if (!out)
+          throw SMITHLABException("bad output file: " + outparamfile);
+        out << t.Newick_format() << endl;
+        out << newparams[0] << "\t" << newparams[1] << endl;
+        out << newparams[2] << "\t" << newparams[3] << endl;
+      }
+      
       if (!outfile.empty()) {
         std::ofstream out(outfile.c_str());
         if (!out)
@@ -3355,7 +3397,7 @@ main(int argc, const char **argv) {
                              max_app_iter, tree_prob_table);
 
             vector<string> states;
-            double cutoff = 0.8;
+            double cutoff = 0.6;
             tree_prob_to_states(tree_prob_table, cutoff, states);
 
             double llk;
@@ -3391,19 +3433,39 @@ main(int argc, const char **argv) {
           cerr << "Final pass of posterior approximation" << endl;
         }
 
-        //leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+        if (!outparamfile.empty()) { //output parameter
+          std::ofstream out(outparamfile.c_str());
+          if (!out)
+            throw SMITHLABException("bad output file: " + outparamfile);
+          out << t.Newick_format() << endl;
+          out << start_param[0] << "\t" << start_param[1] << endl;
+          out << start_param[2] << "\t" << start_param[3] << endl;
+        }
+
         tree_prob_table = tree_prob_table_copy;
         approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                          max_app_iter, tree_prob_table);
-
+        
+        vector<string> states;
+        vector<GenomicRegion> domains;
+        double cutoff = 0.5;
+        tree_prob_to_states(tree_prob_table, cutoff, states);
+        
+        // only compute likelihood, do not optimize
+        // set iteration to 0
+        const size_t final_iter = 0;
+        vector<double> final_params;
+        double final_llk;
+        bool final_ffbb = false;
+        complete_optimize(VERBOSE, tol, final_iter, states, reset_points,
+                          subtree_sizes, start_param,
+                          final_ffbb, final_params, final_llk);   
+        
         if (!outfile.empty()) {
           std::ofstream out(outfile.c_str());
           if (!out)
             throw SMITHLABException("bad output file: " + outfile);
-          vector<string> states;
-          vector<GenomicRegion> domains;
-          double cutoff = 0.5;
-          tree_prob_to_states(tree_prob_table, cutoff, states);
+
           build_domain(minfragcpg, desert_size, sites, states, domains);
           cerr << domains.size() << endl;
 
