@@ -200,9 +200,6 @@ parse_meth_table_line(const string &line, vector<Site> &sites,
 }
 
 
-
-
-
 template <class T> void
 load_meth_table(const string &filename, vector<Site> &sites,
                 vector<vector<T> > &meth,
@@ -227,6 +224,43 @@ load_meth_table(const string &filename, vector<Site> &sites,
       throw SMITHLABException("inconsistent line length: " + line);
   }
 }
+
+
+static void
+load_full_states_as_prob(const string filename,
+                         const size_t n_nodes,
+                         vector<Site> &sites,
+                         vector<vector<double> > &tree_prob_table) {
+  std::ifstream in(filename.c_str());
+  if (!in)
+    throw SMITHLABException("cannot read:" + filename);
+
+  string line;
+  while (getline(in, line)) {
+    if (line[0] == '#') { //skip header lines
+      continue;
+    } else {
+      istringstream iss(line);
+      string first_column;
+      iss >> first_column;
+      Site site;
+      site.assign_from_methtab_first_column(first_column);
+      sites.push_back(site);
+
+      string state;
+      iss >> state;
+      vector<double> probs;
+      if (state.length() != n_nodes)
+        throw SMITHLABException("inconsistent state length: " + line);
+      for (size_t i = 0; i < n_nodes; ++i) {
+        probs.push_back( (state[i] == '0')? 1.0 - 1e-10 : 1e-10);
+      }
+      tree_prob_table.push_back(probs);
+    }
+  }
+}
+
+
 
 static void
 read_params(const string &paramfile,
@@ -446,6 +480,26 @@ separate_regions(const bool VERBOSE,
   }
   g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
   g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
+}
+
+//for complete data, each block should have enough sites, only set reset_points
+static void
+separate_regions(const size_t desert_size,
+                 const vector<vector<double> > &tree_prob_table,
+                 const vector<Site> &sites,
+                 vector<size_t> &reset_points) {
+
+  const size_t totalsites = sites.size();
+
+  reset_points.push_back(0);
+  Site last_site = sites[0];
+  for (size_t i = 1; i < totalsites; ++i) {
+    if (distance_between_sites(last_site, sites[i]) > desert_size) {
+      reset_points.push_back(i);
+    }
+    last_site = sites[i];
+  }
+  reset_points.push_back(totalsites);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2040,6 +2094,7 @@ main(int argc, const char **argv) {
     // run mode flags
     bool VERBOSE = false;
     bool SINGLE = false;
+    bool COMPLETE = false;
 
     OptionParser opt_parse(strip_path(argv[0]), "test funcitonality of "
                            "phylo-methylome segmentation",
@@ -2048,6 +2103,8 @@ main(int argc, const char **argv) {
                       "(default: 50)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
                       "(default: 10)", false, MAXITER);
+    opt_parse.add_opt("complete", 'c', "complete observations",
+                      false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
                       false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
@@ -2138,120 +2195,178 @@ main(int argc, const char **argv) {
     /**************************************************************************/
     /******************** LOAD METHYLATION DATA *******************************/
     vector<Site> sites;
-
-    vector<string> meth_table_species;
-    vector<vector<double> > meth_prob_table;
-    load_meth_table(meth_table_file, sites, meth_prob_table,
-                    meth_table_species);
-    if (VERBOSE)
-      cerr << "loaded meth table (species="
-           << meth_table_species.size() << ")" << endl;
-
-    /**************************************************************************/
-    /**********  ENSURE METH DATA AND TREE INFO IS IN SYNC ********************/
-    if (meth_table_species.size() != n_leaves)
-      throw SMITHLABException("inconsistent species counts");
-    if (!has_same_species_order(t, meth_table_species))
-      throw SMITHLABException("inconsistent species names or order");
-
-    if (VERBOSE) {
-      vector<size_t> species_in_order;
-      subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
-      for (size_t i = 0; i < species_in_order.size(); ++i) {
-        cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
-      }
-    }
-
-    /**************************************************************************/
-    /*************************  SEPARATE BY DESERTS ***************************/
-    if (VERBOSE)
-      cerr << "Read in total " << sites.size() << " sites" << endl
-           << "Separating sites" << endl;
     vector<size_t> reset_points;
-    double g0_est, g1_est, pi0_est;
-    separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
-                     sites, reset_points, g0_est, g1_est, pi0_est);
+    vector<vector<double> > tree_prob_table;
 
-    if (!PARAMFIX) {
-      start_param[0] = pi0_est;
-      start_param[2] = g0_est;
-      start_param[3] = g1_est;
-    }
+    if (COMPLETE) {
 
-    if (VERBOSE) {
-      cerr << "After filtering: " << sites.size()
-           << "in " << reset_points.size() -1 << "blocks" << endl;
+      if (VERBOSE)
+        cerr << "============COMPLETE MODE =============" << endl
+             << "[Loading full table]" << endl;
+
+      load_full_states_as_prob(meth_table_file, n_nodes, sites, tree_prob_table);
+      if (VERBOSE) cerr << "[Separating deserts]" << endl;
+      separate_regions(desert_size, tree_prob_table, sites, reset_points);
 
       if (PARAMFIX) cerr << "Given parameter:\t";
       else cerr << "Start parameter:\t";
       for (size_t i = 0; i < start_param.size(); ++i) {
         if (i < 4) cerr << start_param[i] << "\t";
-        if (i > 4) cerr << "[branch "<< i-4 <<"]=" << -log(1.0 - start_param[i]) << "\t";
+        if (i > 4) cerr << "[branch "<< i-4 <<"]="
+                        << -log(1.0 - start_param[i]) << "\t";
       }
-      cerr << endl;
-    }
 
-    vector<vector<double> > tree_prob_table(sites.size(), vector<double>(n_nodes, -1.0));
-    leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
-    if (VERBOSE)
-      cerr << "Initialized internal probability" << endl;
+      double diff = std::numeric_limits<double>::max();
+      size_t iter = 0;
+      while (iter < MAXITER && diff > tolerance) {
+        cerr << "Iteration " << iter << "\t";
+        for (size_t i = 0; i < start_param.size(); ++i)
+          cerr << start_param[i] << "\t";
+        cerr << endl;
+        vector<double> newparams(n_nodes+4, 0.0);
+        optimize_params(subtree_sizes, tree_prob_table,
+                        reset_points, start_param, newparams);
+        diff = 0.0;
+        for (size_t i = 0; i < newparams.size(); ++i) {
+          diff += abs(newparams[i]-start_param[i]);
+        }
+        start_param = newparams;
+        ++iter;
+      }
 
-    // make a copy of the initialized tree_prob_table
-    vector<vector<double> > tree_prob_table_copy = tree_prob_table;
+      if (diff <= tolerance && VERBOSE)
+        cerr << "Converged at iteration " << iter << endl;
 
-    /**************************************************************************/
-    /******************** APPROXIMATE OPTIMIZATION ****************************/
-    if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
-    const double tol = 1e-4;
-    const size_t max_app_iter = 100;
+      for (size_t i = 5; i < start_param.size(); ++i) {
+        branches[i-4] = -log(1.0 - start_param[i]);
+      }
+      t.set_branch_lengths(branches);
 
-    double diff = std::numeric_limits<double>::max();
-    size_t iter = 0;
-    while (iter < MAXITER && diff > tol) {
-      cerr << "Iteration " << iter << "\t";
-      for (size_t i = 0; i < start_param.size(); ++i)
-        cerr << start_param[i] << "\t";
-      cerr << endl;
-      vector<double> new_param(n_nodes+4, 0.0);
+      if (VERBOSE) {
+        cerr << endl << "[Results]\t";
+        for (size_t i = 0; i < 4; ++i)
+          cerr << start_param[i] << "\t";
+        for (size_t i = 5; i < start_param.size(); ++i) {
+          cerr << branches[i-4] << "\t";
+        }
+      }
 
-      // start from the initial table in each iteration.
-      //tree_prob_table = tree_prob_table_copy;
+
+    } else {
+      vector<string> meth_table_species;
+      vector<vector<double> > meth_prob_table;
+      load_meth_table(meth_table_file, sites, meth_prob_table,
+                      meth_table_species);
+      if (VERBOSE)
+        cerr << "loaded meth table (species="
+             << meth_table_species.size() << ")" << endl;
+
+      /**************************************************************************/
+      /**********  ENSURE METH DATA AND TREE INFO IS IN SYNC ********************/
+      if (meth_table_species.size() != n_leaves)
+        throw SMITHLABException("inconsistent species counts");
+      if (!has_same_species_order(t, meth_table_species))
+        throw SMITHLABException("inconsistent species names or order");
+
+      if (VERBOSE) {
+        vector<size_t> species_in_order;
+        subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
+        for (size_t i = 0; i < species_in_order.size(); ++i) {
+          cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
+        }
+      }
+
+      /**************************************************************************/
+      /*************************  SEPARATE BY DESERTS ***************************/
+      if (VERBOSE)
+        cerr << "Read in total " << sites.size() << " sites" << endl
+             << "Separating sites" << endl;
+      vector<size_t> reset_points;
+      double g0_est, g1_est, pi0_est;
+      separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
+                       sites, reset_points, g0_est, g1_est, pi0_est);
+
+      if (!PARAMFIX) {
+        start_param[0] = pi0_est;
+        start_param[2] = g0_est;
+        start_param[3] = g1_est;
+      }
+
+      if (VERBOSE) {
+        cerr << "After filtering: " << sites.size()
+             << "in " << reset_points.size() -1 << "blocks" << endl;
+
+        if (PARAMFIX) cerr << "Given parameter:\t";
+        else cerr << "Start parameter:\t";
+        for (size_t i = 0; i < start_param.size(); ++i) {
+          if (i < 4) cerr << start_param[i] << "\t";
+          if (i > 4) cerr << "[branch "<< i-4 <<"]=" << -log(1.0 - start_param[i]) << "\t";
+        }
+        cerr << endl;
+      }
+
+      tree_prob_table = vector<vector<double> >(sites.size(), vector<double>(n_nodes, -1.0));
+      leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+      if (VERBOSE)
+        cerr << "Initialized internal probability" << endl;
+
+      // make a copy of the initialized tree_prob_table
+      vector<vector<double> > tree_prob_table_copy = tree_prob_table;
+
+      /**************************************************************************/
+      /******************** APPROXIMATE OPTIMIZATION ****************************/
+      if (VERBOSE) cerr << "Mode: Approx posterior" << endl;
+      const double tol = 1e-4;
+      const size_t max_app_iter = 100;
+
+      double diff = std::numeric_limits<double>::max();
+      size_t iter = 0;
+      while (iter < MAXITER && diff > tol) {
+        cerr << "Iteration " << iter << "\t";
+        for (size_t i = 0; i < start_param.size(); ++i)
+          cerr << start_param[i] << "\t";
+        cerr << endl;
+        vector<double> new_param(n_nodes+4, 0.0);
+
+        // start from the initial table in each iteration.
+        //tree_prob_table = tree_prob_table_copy;
+        approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
+                         max_app_iter, tree_prob_table);
+
+        optimize_params(subtree_sizes, tree_prob_table,
+                        reset_points, start_param, new_param);
+
+        diff = 0.0;
+        for (size_t i = 0; i < new_param.size(); ++i) {
+          diff += abs(new_param[i]-start_param[i]);
+        }
+        start_param = new_param;
+        ++iter;
+      }
+
+      if (diff <= tol && VERBOSE)
+        cerr << "Converged at iteration " << iter << endl;
+
+      for (size_t i = 5; i < start_param.size(); ++i) {
+        branches[i-4] = -log(1.0 - start_param[i]);
+      }
+      t.set_branch_lengths(branches);
+
+      if (VERBOSE) {
+        cerr << endl << "[Results]\t";
+        for (size_t i = 0; i < 4; ++i)
+          cerr << start_param[i] << "\t";
+        for (size_t i = 5; i < start_param.size(); ++i) {
+          cerr << branches[i-4] << "\t";
+        }
+        cerr << endl;
+        cerr << "Final pass of posterior approximation" << endl;
+      }
+
+      tree_prob_table = tree_prob_table_copy;
       approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                        max_app_iter, tree_prob_table);
-
-      optimize_params(subtree_sizes, tree_prob_table,
-                      reset_points, start_param, new_param);
-
-      diff = 0.0;
-      for (size_t i = 0; i < new_param.size(); ++i) {
-        diff += abs(new_param[i]-start_param[i]);
-      }
-      start_param = new_param;
-      ++iter;
     }
-
-    if (diff <= tol && VERBOSE)
-      cerr << "Converged at iteration " << iter << endl;
-
-    for (size_t i = 5; i < start_param.size(); ++i) {
-      branches[i-4] = -log(1.0 - start_param[i]);
-    }
-    t.set_branch_lengths(branches);
-
-    if (VERBOSE) {
-      cerr << endl << "[Results]\t";
-      for (size_t i = 0; i < 4; ++i)
-        cerr << start_param[i] << "\t";
-      for (size_t i = 5; i < start_param.size(); ++i) {
-        cerr << branches[i-4] << "\t";
-      }
-      cerr << endl;
-      cerr << "Final pass of posterior approximation" << endl;
-    }
-
-    tree_prob_table = tree_prob_table_copy;
-    approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
-                     max_app_iter, tree_prob_table);
 
     if (!outparamfile.empty()) {
       std::ofstream out(outparamfile.c_str());
