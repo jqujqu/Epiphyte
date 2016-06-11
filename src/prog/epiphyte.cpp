@@ -1996,7 +1996,6 @@ complete_optimize_iteration(const bool VERBOSE,
   newparams = cur_params;
 
   //update  branches
-
   if (VERBOSE) cerr << "[Part 1]\t";
   for (size_t i = 5; i < cur_deriv.size(); ++i) {
     norm += abs(cur_deriv[i]);
@@ -2023,11 +2022,10 @@ complete_optimize_iteration(const bool VERBOSE,
       if (VERBOSE) {
         cerr << "\t Improve = " << newllk - cur_llk << endl;
         show_params(newparams);
-      } 
-    } else {
-      if (r*norm <= TOL) CONVERGED = true;
-      r = r/2;
-    }   
+      }
+    }
+    if (r*norm <= TOL) CONVERGED = true;
+    r = r/2;
   }
   if (!SUCCESS) {
     newparams = cur_params;
@@ -2039,7 +2037,7 @@ complete_optimize_iteration(const bool VERBOSE,
   cur_deriv = newderiv;
   newparams = cur_params;
 
-  // upddate FF and BB parameters 
+  // upddate FF and BB parameters
   if (VERBOSE) cerr << "[Part 2]\t";
   norm = abs(cur_deriv[2]) + abs(cur_deriv[3]);
   r = 1.0/norm; //maximization (-1.0 if minimization)
@@ -2067,10 +2065,9 @@ complete_optimize_iteration(const bool VERBOSE,
         cerr << "========= Improve = " << newllk - cur_llk << endl;
         show_params(newparams);
       }
-    } else {
-      if (r*norm < TOL) CONVERGED = true;
-      r = r/2;
     }
+    if (r*norm < TOL) CONVERGED = true;
+    r = r/2;
   }
 
   if (!SUCCESS) {
@@ -2103,7 +2100,7 @@ complete_optimize(const bool VERBOSE,
   for (size_t block = 0; block < reset_points.size()-1; ++ block) {
     if (states[reset_points[block]][0] == '0') p0 += 1.0;
   }
-  p0 = p0/(reset_points.size()-1); 
+  p0 = p0/(reset_points.size()-1);
   cur_params[0] = max(min(p0, 1.0-TOL), TOL);
 
   loglik_complete_tree(states, reset_points, subtree_sizes,
@@ -2950,7 +2947,7 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
 
   double r = 1.0/norm;
   double br = 1.0/branchnorm;
-  while (!SUCCESS || !CONVERGED ) {
+  while (!SUCCESS && !CONVERGED ) {
     // Find proper starting factor
     for (size_t i = 0; i < 4; ++i) {
       double candidate_param = cur_params[i] + cur_deriv[i]*r;
@@ -3016,12 +3013,12 @@ approx_optimize_iteration(const bool VERBOSE, const double TOL,
       }
 
     } else {
-      r = r/2;
-      br = br/2;
       if (VERBOSE) {
         cerr << "half\t" << r*norm << "\t" << br*branchnorm << endl;
       }
     }
+    r = r/2;
+    br = br/2;
     if (r*norm <= TOL && br*branchnorm <= TOL)  CONVERGED = true;
 
   }
@@ -3295,7 +3292,7 @@ main(int argc, const char **argv) {
         out << newparams[0] << "\t" << newparams[1] << endl;
         out << newparams[2] << "\t" << newparams[3] << endl;
       }
-      
+
       if (!outfile.empty()) {
         std::ofstream out(outfile.c_str());
         if (!out)
@@ -3389,10 +3386,10 @@ main(int argc, const char **argv) {
             vector<double> appderiv;
             vector<double> newparams;
             vector<double> newderiv;
-            
+
             // start from the initial table in each iteration.
             tree_prob_table = tree_prob_table_copy;
-            
+
             approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                              max_app_iter, tree_prob_table);
 
@@ -3445,12 +3442,12 @@ main(int argc, const char **argv) {
         tree_prob_table = tree_prob_table_copy;
         approx_posterior(subtree_sizes, start_param, reset_points, tolerance,
                          max_app_iter, tree_prob_table);
-        
+
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5;
         tree_prob_to_states(tree_prob_table, cutoff, states);
-        
+
         // only compute likelihood, do not optimize
         // set iteration to 0
         const size_t final_iter = 0;
@@ -3459,8 +3456,8 @@ main(int argc, const char **argv) {
         bool final_ffbb = false;
         complete_optimize(VERBOSE, tol, final_iter, states, reset_points,
                           subtree_sizes, start_param,
-                          final_ffbb, final_params, final_llk);   
-        
+                          final_ffbb, final_params, final_llk);
+
         if (!outfile.empty()) {
           std::ofstream out(outfile.c_str());
           if (!out)
