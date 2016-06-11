@@ -25,7 +25,7 @@ ifndef TREETOOL
 TREETOOL=$(realpath ../adssrc/treetool)
 endif
 
-PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte epiphyte_slim epiphyte_slimmer epiphyte_slim_v2 epiphyte_slimmer_v2
+PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte epiphyte_slim epiphyte_slimmer epiphyte_slim_v2 epiphyte_slimmer_v2 epiphyte_slim_enhance
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50
@@ -71,7 +71,7 @@ simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-epiphyte epiphyte_slim epiphyte_slimmer epiphyte_slim_v2 epiphyte_slimmer_v2: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
+epiphyte epiphyte_slim epiphyte_slim_enhance epiphyte_slimmer epiphyte_slim_v2 epiphyte_slimmer_v2: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o )
 
 indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o) 
