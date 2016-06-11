@@ -2139,12 +2139,14 @@ main(int argc, const char **argv) {
       if (VERBOSE) cerr << "[Separating deserts]" << endl;
       separate_regions(desert_size, tree_prob_table, sites, reset_points);
 
-      if (PARAMFIX) cerr << "Given parameter:\t";
-      else cerr << "Start parameter:\t";
-      for (size_t i = 0; i < start_param.size(); ++i) {
-        if (i < 4) cerr << start_param[i] << "\t";
-        if (i > 4) cerr << "[branch "<< i-4 <<"]="
-                        << -log(1.0 - start_param[i]) << "\t";
+      if (VERBOSE) {
+        if (PARAMFIX) cerr << "Given parameter:\t";
+        else cerr << "Start parameter:\t";
+        for (size_t i = 0; i < start_param.size(); ++i) {
+          if (i < 4) cerr << start_param[i] << "\t";
+          if (i > 4) cerr << "[branch "<< i-4 <<"]="
+                          << -log(1.0 - start_param[i]) << "\t";
+        }
       }
 
       double diff = std::numeric_limits<double>::max();
@@ -2212,7 +2214,6 @@ main(int argc, const char **argv) {
              << "Separating sites" << endl;
       vector<size_t> reset_points;
 
-
       double g0_est, g1_est, pi0_est;
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
@@ -2253,10 +2254,12 @@ main(int argc, const char **argv) {
       double diff = std::numeric_limits<double>::max();
       size_t iter = 0;
       while (iter < MAXITER && diff > tolerance) {
-        cerr << "Iteration " << iter << "\t";
-        for (size_t i = 0; i < start_param.size(); ++i)
-          cerr << start_param[i] << "\t";
-        cerr << endl;
+        if (VERBOSE) {
+          cerr << "Iteration " << iter << "\t";
+          for (size_t i = 0; i < start_param.size(); ++i)
+            cerr << start_param[i] << "\t";
+          cerr << endl;
+        }
         vector<double> newparams(n_nodes+4, 0.0);
 
         // start from the initial table in each iteration.
