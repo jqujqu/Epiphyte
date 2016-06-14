@@ -1481,6 +1481,7 @@ approx_triad_weight(const vector<size_t> &subtree_sizes,
                     const vector<double> &params,
                     const vector<vector<double> >&tree_prob_table,
                     const vector<size_t> &reset_points,
+                    vector<vector<vector<vector<double> > > > &triad_log_weights,
                     vector<vector<vector<vector<double> > > > &triad_weights) {
 
   vector<vector<vector<double> > > time_trans_mats;
@@ -1501,219 +1502,184 @@ approx_triad_weight(const vector<size_t> &subtree_sizes,
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
 
-  for (size_t i = 0; i < reset_points.size()-1; ++i) {
-    const size_t start = reset_points[i];
-    const size_t end = reset_points[i+1];
-    // simulate
-    // initialize: all have state 1
-    vector<vector<size_t> > block_sim_states(end-start, vector<size_t>(subtree_sizes.size(), 1));
-    for (size_t pos = start ; pos < end; ++ pos) {
-      for (size_t node_id = 0; node_id < subtree_sizes.size(); ++ node_id) {
-        double u = gsl_rng_uniform(r);
-        if (u < tree_prob_table[pos][node_id]) {
-          // set to be state 0 according to prob.
-          block_sim_states[pos-start][node_id] = 0;
+  size_t SIMITER = 5; //rounds of simulation
+  for (size_t iter = 0; iter < SIMITER; ++iter){
+
+    for (size_t i = 0; i < reset_points.size()-1; ++i) {
+      const size_t start = reset_points[i];
+      const size_t end = reset_points[i+1];
+      // simulate
+      // initialize: all have state 1
+      vector<vector<size_t> > block_sim_states(end-start, vector<size_t>(subtree_sizes.size(), 1));
+      for (size_t pos = start; pos < end; ++ pos) {
+        for (size_t node_id = 0; node_id < subtree_sizes.size(); ++ node_id) {
+          if (subtree_sizes[node_id] == 1) {
+            block_sim_states[pos-start][node_id] = (tree_prob_table[pos][node_id] > 0.5) ? 0 : 1;
+          } else {
+            double u = gsl_rng_uniform(r);
+            if (u < tree_prob_table[pos][node_id]) {
+              // set state 0 according to prob.
+              block_sim_states[pos-start][node_id] = 0;
+            }
+          }
         }
       }
-    }
 
-    // accumulate by blancket
-    for (size_t pos = start + 1; pos < end; ++pos) {
-      for (size_t node_id = 0; node_id < subtree_sizes.size(); ++ node_id) {
-        if (subtree_sizes[node_id] == 1) continue;
-        size_t par_id = node_id;
-        size_t cur_l_id = node_id + 1;
-        size_t cur_r_id = cur_l_id + subtree_sizes[cur_l_id];
-        for (size_t par_state = 0; par_state < 2; ++ par_state) {
-          for (size_t cur_l_state = 0; cur_l_state < 2; ++ cur_l_state) {
-            for (size_t cur_r_state = 0; cur_r_state < 2; ++ cur_r_state) {
-              for (size_t prev_l_state = 0; prev_l_state < 2; ++ prev_l_state) {
-                for (size_t prev_r_state = 0; prev_r_state < 2; ++ prev_r_state) {
+      for (size_t pos = start + 1; pos < end; ++pos) {
+        for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
 
-                  vector<size_t> ancstates;
-                  vector<size_t> curstates;
-                  vector<size_t> prevstates;
-                  vector<size_t> branchids;
+          vector<vector<vector<double> > > weights_holder (2, vector<vector<double> >(2, vector<double>(2, 0.0)));
+          vector<vector<vector<double> > > log_weights_holder (2, vector<vector<double> >(2, vector<double>(2, 0.0)));
 
-                  // level 1
-                  // if par is root, use G only, deal with it later.
-                  if (parents[par_id] < par_id) { //node par is not root
-                    ancstates.push_back(block_sim_states[pos-start][parents[par_id]]);
-                    prevstates.push_back(prev_l_state);
-                    curstates.push_back(par_state);
+          size_t par_id = parents[node_id];
+          size_t cur_id = node_id ;
+          vector<size_t>sibs_id;
+          size_t count = 1;
+          while (count < subtree_sizes[par_id]) {
+            size_t child_id = par_id + count;
+            if (child_id != cur_id) sibs_id.push_back(child_id);
+            count += subtree_sizes[child_id];
+          }
+
+          // accumulate by blancket
+          for (size_t par_state = 0; par_state < 2; ++ par_state) {
+            for (size_t cur_state = 0; cur_state < 2; ++ cur_state) {
+              for (size_t prev_state = 0; prev_state < 2; ++ prev_state) {
+
+                vector<size_t> ancstates;
+                vector<size_t> curstates;
+                vector<size_t> prevstates;
+                vector<size_t> branchids;
+
+                vector<size_t> v_ancstates;
+                vector<size_t> v_curstates;
+                vector<size_t> v_branchids;
+
+                vector<size_t> h_prevstates;
+                vector<size_t> h_curstates;
+
+                // level 1
+                // if par is root, use G only, deal with it later.
+                if (parents[par_id] < par_id) { //node par is not root
+                  ancstates.push_back(block_sim_states[pos-start][parents[par_id]]);
+                  prevstates.push_back(block_sim_states[pos-start-1][par_id]);
+                  curstates.push_back(par_state);
+                  branchids.push_back(par_id);
+
+                  if (pos + 1 < end) {
+                    ancstates.push_back(block_sim_states[pos-start+1][parents[par_id]]);
+                    prevstates.push_back(par_state);
+                    curstates.push_back(block_sim_states[pos-start+1][par_id]);
                     branchids.push_back(par_id);
-
-                    if (pos + 1 < end) {
-                      ancstates.push_back(block_sim_states[pos-start+1][parents[par_id]]);
-                      prevstates.push_back(par_state);
-                      curstates.push_back(block_sim_states[pos-start+1][par_id]);
-                      branchids.push_back(par_id);
-                    }
                   }
-
-                  // level 2
-                  ancstates.push_back(block_sim_states[pos-start-1][par_id]);
-                  prevstates.push_back(block_sim_states[pos-start-1][cur_l_id]);
-                  curstates.push_back(prev_l_state);
-                  branchids.push_back(cur_l_id);
-
-                  ancstates.push_back(par_state);
-                  prevstates.push_back(prev_l_state);
-                  curstates.push_back(cur_l_state);
-                  branchids.push_back(cur_l_id);
-
-                  ancstates.push_back(block_sim_states[pos-start-1][par_id]);
-                  prevstates.push_back(block_sim_states[pos-start-1][cur_r_id]);
-                  curstates.push_back(prev_r_state);
-                  branchids.push_back(cur_r_id);
-
-                  ancstates.push_back(par_state);
-                  prevstates.push_back(prev_r_state);
-                  curstates.push_back(cur_r_state);
-                  branchids.push_back(cur_r_id);
-
-                  if (pos < end -1) {
-                    ancstates.push_back(block_sim_states[pos-start+1][par_id]);
-                    prevstates.push_back(cur_l_state);
-                    curstates.push_back(block_sim_states[pos-start+1][cur_l_id]);
-                    branchids.push_back(cur_l_id);
-
-                    ancstates.push_back(block_sim_states[pos-start+1][par_id]);
-                    prevstates.push_back(cur_r_state);
-                    curstates.push_back(block_sim_states[pos-start+1][cur_r_id]);
-                    branchids.push_back(cur_r_id);
-                  }
-
-
-                  // level 3
-                  if (subtree_sizes[cur_l_id] > 1) {
-                    size_t lid = cur_l_id + 1;
-                    size_t rid = lid + subtree_sizes[lid];
-                    if (pos - start > 1) {
-                      ancstates.push_back(prev_l_state);
-                      prevstates.push_back(block_sim_states[pos-start-2][lid]);
-                      curstates.push_back(block_sim_states[pos-start-1][lid]);
-                      branchids.push_back(lid);
-
-                      ancstates.push_back(prev_l_state);
-                      prevstates.push_back(block_sim_states[pos-start-2][rid]);
-                      curstates.push_back(block_sim_states[pos-start-1][rid]);
-                      branchids.push_back(rid);
-                    }
-                    ancstates.push_back(cur_l_state);
-                    prevstates.push_back(block_sim_states[pos-start-1][lid]);
-                    curstates.push_back(block_sim_states[pos-start][lid]);
-                    branchids.push_back(lid);
-
-                    ancstates.push_back(cur_l_state);
-                    prevstates.push_back(block_sim_states[pos-start-1][rid]);
-                    curstates.push_back(block_sim_states[pos-start][rid]);
-                    branchids.push_back(rid);
-
-                  }
-                  if (subtree_sizes[cur_r_id] > 1) {
-                    size_t lid = cur_r_id + 1;
-                    size_t rid = lid + subtree_sizes[lid];
-                    if (pos - start > 1) {
-                      ancstates.push_back(prev_r_state);
-                      prevstates.push_back(block_sim_states[pos-start-2][lid]);
-                      curstates.push_back(block_sim_states[pos-start-1][lid]);
-                      branchids.push_back(lid);
-
-                      ancstates.push_back(prev_r_state);
-                      prevstates.push_back(block_sim_states[pos-start-2][rid]);
-                      curstates.push_back(block_sim_states[pos-start-1][rid]);
-                      branchids.push_back(rid);
-                    }
-                    ancstates.push_back(cur_r_state);
-                    prevstates.push_back(block_sim_states[pos-start-1][lid]);
-                    curstates.push_back(block_sim_states[pos-start][lid]);
-                    branchids.push_back(lid);
-
-                    ancstates.push_back(cur_r_state);
-                    prevstates.push_back(block_sim_states[pos-start-1][rid]);
-                    curstates.push_back(block_sim_states[pos-start][rid]);
-                    branchids.push_back(rid);
-                  }
-
-                  // root has a third child
-                  if (parents[par_id] == par_id) {
-                    size_t cur_3_id = cur_r_id + subtree_sizes[cur_r_id];
-                    for (size_t cur_3_state = 0; cur_3_state < 2; ++ cur_3_state) {
-                      for (size_t prev_3_state = 0; prev_3_state < 2; ++ prev_3_state) {
-                        // level 2
-                        ancstates.push_back(block_sim_states[pos-start-1][par_id]);
-                        prevstates.push_back(block_sim_states[pos-start-1][cur_3_id]);
-                        curstates.push_back(prev_3_state);
-                        branchids.push_back(cur_3_id);
-
-                        ancstates.push_back(par_state);
-                        prevstates.push_back(prev_3_state);
-                        curstates.push_back(cur_3_state);
-                        branchids.push_back(cur_3_id);
-
-                        if (pos + 1 < end) {
-                          ancstates.push_back(block_sim_states[pos-start+1][par_id]);
-                          prevstates.push_back(cur_3_state);
-                          curstates.push_back(block_sim_states[pos-start+1][cur_3_id]);
-                          branchids.push_back(cur_3_id);
-                        }
-
-                        //level 3
-                        if (subtree_sizes[cur_3_id] > 1) {
-                          size_t lid = cur_3_id + 1;
-                          size_t rid = lid + subtree_sizes[lid];
-                          if (pos - start > 1) {
-                            ancstates.push_back(prev_3_state);
-                            prevstates.push_back(block_sim_states[pos-start-2][lid]);
-                            curstates.push_back(block_sim_states[pos-start-1][lid]);
-                            branchids.push_back(lid);
-                            ancstates.push_back(prev_3_state);
-                            prevstates.push_back(block_sim_states[pos-start-2][rid]);
-                            curstates.push_back(block_sim_states[pos-start-1][rid]);
-                            branchids.push_back(rid);
-                          }
-
-                          ancstates.push_back(cur_3_state);
-                          prevstates.push_back(block_sim_states[pos-start-1][lid]);
-                          curstates.push_back(block_sim_states[pos-start][lid]);
-                          branchids.push_back(lid);
-
-                          ancstates.push_back(cur_3_state);
-                          prevstates.push_back(block_sim_states[pos-start-1][rid]);
-                          curstates.push_back(block_sim_states[pos-start][rid]);
-                          branchids.push_back(rid);
-                        }
-                        // compute likelihood and update
-                        size_t root_prev_state = block_sim_states[pos-start-1][par_id];
-                        double w = log(G[root_prev_state][par_state]);
-                        if (pos +1 < end) {
-                          size_t root_next_state = block_sim_states[pos-start+1][par_id];
-                          w += + log(G[par_state][root_next_state]);
-                        }
-                        for (size_t j = 0; j < ancstates.size(); ++j) {
-                          w += log(combined_trans_mats[branchids[j]][prevstates[j]][ancstates[j]][curstates[j]]);
-                        }
-                        triad_weights[cur_l_id][prev_l_state][par_state][cur_l_state] =
-                          log_sum_log(triad_weights[cur_l_id][prev_l_state][par_state][cur_l_state], w);
-                        triad_weights[cur_r_id][prev_r_state][par_state][cur_r_state] =
-                          log_sum_log(triad_weights[cur_r_id][prev_r_state][par_state][cur_r_state], w);
-                        triad_weights[cur_3_id][prev_3_state][par_state][cur_3_state] =
-                          log_sum_log(triad_weights[cur_3_id][prev_3_state][par_state][cur_3_state], w);
-                      }
-                    }
-                  } else {
-                    // compute likelihood and update
-                    double w = 0.0;
-                    for (size_t j = 0; j < ancstates.size(); ++j) {
-                      w += log(combined_trans_mats[branchids[j]][prevstates[j]][ancstates[j]][curstates[j]]);
-                    }
-                    triad_weights[cur_l_id][prev_l_state][par_state][cur_l_state] =
-                      log_sum_log(triad_weights[cur_l_id][prev_l_state][par_state][cur_l_state], w);
-                    triad_weights[cur_r_id][prev_r_state][par_state][cur_r_state] =
-                      log_sum_log(triad_weights[cur_r_id][prev_r_state][par_state][cur_r_state], w);
+                } else { //horizontal only
+                  h_prevstates.push_back(block_sim_states[pos-start-1][par_id]);
+                  h_curstates.push_back(par_state);
+                  if (pos + 1 < end) {
+                    h_prevstates.push_back(par_state);
+                    h_curstates.push_back(block_sim_states[pos-start+1][par_id]);
                   }
                 }
+
+                // level 2
+                ancstates.push_back(block_sim_states[pos-start-1][par_id]);
+                prevstates.push_back(block_sim_states[pos-start-1][cur_id]);
+                curstates.push_back(prev_state);
+                branchids.push_back(cur_id);
+
+                ancstates.push_back(par_state);
+                prevstates.push_back(prev_state);
+                curstates.push_back(cur_state);
+                branchids.push_back(cur_id);
+
+                if (pos < end -1) {
+                  ancstates.push_back(block_sim_states[pos-start+1][par_id]);
+                  prevstates.push_back(cur_state);
+                  curstates.push_back(block_sim_states[pos-start+1][cur_id]);
+                  branchids.push_back(cur_id);
+                }
+
+                // level 3
+                if (subtree_sizes[cur_id] > 1) {
+                  size_t lid = cur_id + 1;
+                  size_t rid = lid + subtree_sizes[lid];
+                  if (pos - start > 1) {
+                    ancstates.push_back(prev_state);
+                    prevstates.push_back(block_sim_states[pos-start-2][lid]);
+                    curstates.push_back(block_sim_states[pos-start-1][lid]);
+                    branchids.push_back(lid);
+
+                    ancstates.push_back(prev_state);
+                    prevstates.push_back(block_sim_states[pos-start-2][rid]);
+                    curstates.push_back(block_sim_states[pos-start-1][rid]);
+                    branchids.push_back(rid);
+                  } else {
+                    // vertical only
+                    v_ancstates.push_back(prev_state);
+                    v_curstates.push_back(block_sim_states[pos-start-1][lid]);
+                    v_branchids.push_back(lid);
+                    v_ancstates.push_back(prev_state);
+                    v_curstates.push_back(block_sim_states[pos-start-1][rid]);
+                    v_branchids.push_back(rid);
+                  }
+
+                  ancstates.push_back(cur_state);
+                  prevstates.push_back(block_sim_states[pos-start-1][lid]);
+                  curstates.push_back(block_sim_states[pos-start][lid]);
+                  branchids.push_back(lid);
+
+                  ancstates.push_back(cur_state);
+                  prevstates.push_back(block_sim_states[pos-start-1][rid]);
+                  curstates.push_back(block_sim_states[pos-start][rid]);
+                  branchids.push_back(rid);
+                }
+
+                for (size_t sib = 0; sib < sibs_id.size(); ++sib) {
+                  size_t sibid =  sibs_id[sib];
+                  ancstates.push_back(par_state);
+                  prevstates.push_back(block_sim_states[pos-start-1][sibid]);
+                  curstates.push_back(block_sim_states[pos-start][sibid]);
+                  branchids.push_back(sibid);
+                }
+
+                // compute likelihood and update
+                double w = 0.0;
+                double W = 1.0;
+                for (size_t j = 0; j < curstates.size(); ++j) {
+                  w += log(combined_trans_mats[branchids[j]][prevstates[j]][ancstates[j]][curstates[j]]);
+                  W = W*combined_trans_mats[branchids[j]][prevstates[j]][ancstates[j]][curstates[j]];
+                }
+                for (size_t j = 0; j < v_curstates.size(); ++j) {
+                  w += log(time_trans_mats[v_branchids[j]][v_ancstates[j]][v_curstates[j]]);
+                  W = W*time_trans_mats[v_branchids[j]][v_ancstates[j]][v_curstates[j]];
+                }
+                for (size_t j = 0; j < h_curstates.size(); ++j) {
+                  w += log(G[h_prevstates[j]][h_curstates[j]]);
+                  W = W*G[h_prevstates[j]][h_curstates[j]];
+                }
+
+                log_weights_holder[prev_state][par_state][cur_state] = w;
+                weights_holder[prev_state][par_state][cur_state] = W;
+
+              }
+            }
+          }
+          double log_weights_sum= 0.0;
+          double weights_sum = 0.0;
+          for (size_t prev = 0; prev < 2; ++prev) {
+            for (size_t cur = 0; cur < 2; ++cur) {
+              for (size_t anc = 0; anc < 2; ++ anc) {
+                log_weights_sum = log_sum_log(log_weights_sum, log_weights_holder[prev][anc][cur]);
+                weights_sum += weights_holder[prev][anc][cur];
+              }
+            }
+          }
+          for (size_t prev = 0; prev < 2; ++prev) {
+            for (size_t cur = 0; cur < 2; ++cur) {
+              for (size_t anc = 0; anc < 2; ++ anc) {
+                triad_log_weights[cur_id][prev][anc][cur] = log_sum_log(triad_log_weights[cur_id][prev][anc][cur],
+                                                                        log_weights_holder[prev][anc][cur] - log_weights_sum - log(SIMITER));
+                triad_weights[cur_id][prev][anc][cur] += (weights_holder[prev][anc][cur]/weights_sum)/SIMITER;
               }
             }
           }
@@ -1816,17 +1782,11 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
                      const vector<vector<double> > &tree_prob_table,
                      vector<vector<vector<vector<double> > > > &triad_weights, // treesizex2x2x2
                      vector<vector<vector<vector<double> > > > &new_triad_log_weights, // treesizex2x2x2
+                     vector<vector<vector<vector<double> > > > &new_triad_weights, // treesizex2x2x2
                      vector<vector<vector<double> > > &start_weights,// treesizex2x2
                      vector<vector<double> > &root_weights){ //2x2
 
   const size_t n_nodes = subtree_sizes.size();
-  //vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
-  //vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
-  //root_weights = mat2x2;
-  //start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
-  //triad_weights = vector<vector<vector<vector<double> > > >(n_nodes, mat2x2x2);
-  //new_triad_log_weights = vector<vector<vector<vector<double> > > >(n_nodes, mat2x2x2);
-
   vector<size_t> parents(subtree_sizes.size(), 0);
   for (size_t i = 0; i < subtree_sizes.size(); ++i) {
     if (subtree_sizes[i] > 1) {
@@ -1860,7 +1820,7 @@ posterior_to_weights(const vector<size_t> &subtree_sizes,
   }
 
   approx_triad_weight(subtree_sizes, parents, params, tree_prob_table,
-                      reset_points, new_triad_log_weights);
+                      reset_points, new_triad_log_weights, new_triad_weights);
 }
 
 static void
@@ -2223,35 +2183,52 @@ optimize_params(const vector<size_t> &subtree_sizes,
   vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
   vector<vector<vector<vector<double> > > > triad_weights(n_nodes, mat2x2x2);
   vector<vector<vector<vector<double> > > > new_triad_log_weights(n_nodes, mat2x2x2);
+  vector<vector<vector<vector<double> > > > new_triad_weights(n_nodes, mat2x2x2);
 
   vector<vector<vector<vector<double> > > > triad_weights_scaled(n_nodes, mat2x2x2);
   vector<vector<vector<vector<double> > > > new_triad_weights_scaled(n_nodes, mat2x2x2);
 
   posterior_to_weights(subtree_sizes, params, reset_points,
-                       tree_prob_table, triad_weights, new_triad_log_weights,
+                       tree_prob_table, triad_weights, new_triad_log_weights, new_triad_weights,
                        start_weights, root_weights);
 
   for (size_t i = 1; i < subtree_sizes.size(); ++i) {
     double old_sum = 0.0;
     double new_sum = 0.0;
 
-    for (size_t j = 1; j < 2; ++j){
-      for (size_t k = 1; k < 2; ++k){
-        for (size_t l = 1; l < 2; ++l){
+    for (size_t j = 0; j < 2; ++j){
+      for (size_t k = 0; k < 2; ++k){
+        for (size_t l = 0; l < 2; ++l){
           old_sum += triad_weights[i][j][k][l];
-          new_sum += exp(new_triad_log_weights[i][j][k][l]);
+          new_sum += new_triad_weights[i][j][k][l];
         }
       }
     }
 
-    for (size_t j = 1; j < 2; ++j){
-      for (size_t k = 1; k < 2; ++k){
-        for (size_t l = 1; l < 2; ++l){
-          triad_weights_scaled[i][j][k][l] += triad_weights[i][j][k][l]/old_sum;
-          new_triad_weights_scaled[i][j][k][l] = exp(new_triad_log_weights[i][j][k][l])/new_sum;
+    for (size_t j = 0; j < 2; ++j){
+      for (size_t k = 0; k < 2; ++k){
+        for (size_t l = 0; l < 2; ++l){
+          triad_weights_scaled[i][j][k][l] = triad_weights[i][j][k][l]/old_sum;
+          new_triad_weights_scaled[i][j][k][l] = new_triad_weights[i][j][k][l]/new_sum;
         }
       }
     }
+  }
+
+  cerr << "----scaled triad weights by independence-------" << endl;
+  for (size_t i = 0; i < new_triad_weights_scaled.size(); ++i) {
+    cerr << triad_weights_scaled[i][0][0][0] << "\t"<< triad_weights_scaled[i][0][0][1] << "\t"
+         << triad_weights_scaled[i][0][1][0] << "\t"<< triad_weights_scaled[i][0][1][1] << "\t"
+         << triad_weights_scaled[i][1][0][0] << "\t"<< triad_weights_scaled[i][1][0][1] << "\t"
+         << triad_weights_scaled[i][1][1][0] << "\t"<< triad_weights_scaled[i][1][1][1] << endl;
+  }
+
+  cerr << "----scaled triad weights by MB-------" << endl;
+  for (size_t i = 0; i < new_triad_weights_scaled.size(); ++i) {
+    cerr << new_triad_weights_scaled[i][0][0][0] << "\t"<< new_triad_weights_scaled[i][0][0][1] << "\t"
+         << new_triad_weights_scaled[i][0][1][0] << "\t"<< new_triad_weights_scaled[i][0][1][1] << "\t"
+         << new_triad_weights_scaled[i][1][0][0] << "\t"<< new_triad_weights_scaled[i][1][0][1] << "\t"
+         << new_triad_weights_scaled[i][1][1][0] << "\t"<< new_triad_weights_scaled[i][1][1][1] << endl;
   }
 
   newparams = params;
@@ -2259,7 +2236,7 @@ optimize_params(const vector<size_t> &subtree_sizes,
   double TOL = 1e-4;
   double new_g0;
   double new_g1;
-  update_G(TOL, subtree_sizes, params, new_triad_weights_scaled,
+  update_G(TOL, subtree_sizes, params, new_triad_weights,
            root_weights, new_g0, new_g1);
   newparams[2] = new_g0;
   newparams[3] = new_g1;
@@ -2268,7 +2245,7 @@ optimize_params(const vector<size_t> &subtree_sizes,
   double T = 0.0;
   for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
     update_branch(TOL, subtree_sizes, newparams, node_id,
-                  new_triad_weights_scaled, start_weights, T);
+                  new_triad_weights, start_weights, T);
     newparams[4+node_id] = T;
   }
   // update rate0
@@ -2591,7 +2568,9 @@ main(int argc, const char **argv) {
       separate_regions(VERBOSE, desert_size, minCpG, meth_prob_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
 
-      if (!PARAMFIX) {
+      if (PARAMFIX) {
+        MAXITER = 1;
+      } else {
         start_param[0] = pi0_est;
         start_param[2] = g0_est;
         start_param[3] = g1_est;
