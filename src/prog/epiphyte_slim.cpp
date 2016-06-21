@@ -1577,6 +1577,7 @@ update_branch(const double TOL,
   collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats, combined_trans_mats,
                                     combined_trans_mats_drate, combined_trans_mats_dg0,
                                     combined_trans_mats_dg1, combined_trans_mats_dT);
+
   vector<double> prev_params = params;
   vector<double> new_params = params;
 
@@ -1589,7 +1590,7 @@ update_branch(const double TOL,
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
-  while (!CONVERGE || !SUCCESS) {
+  while (!SUCCESS) {
     while (frac > TOL && (frac*sign(prev_deriv) + prev_params[4+node_id] <  TOL ||
                           frac*sign(prev_deriv) + prev_params[4+node_id] > 1.0-TOL ) ) {
       frac = frac/2;
@@ -1614,10 +1615,12 @@ update_branch(const double TOL,
       prev_F = new_F;
       prev_deriv = new_deriv;
       prev_params = new_params;
-    } else {
-      frac = frac/2;
     }
-    if (frac < TOL) CONVERGE = true;
+    frac = frac/2;	
+    if (frac < TOL) { 
+      CONVERGE = true; 
+      break;
+    }
   }
   T = prev_params[4+node_id];
 }
@@ -1703,7 +1706,7 @@ update_rate(const double TOL,
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
-  while (!CONVERGE || !SUCCESS) {
+  while (!SUCCESS) {
     while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
                           frac*sign(prev_deriv) + prev_params[1] < TOL)) {
       frac = frac/2;
@@ -1725,10 +1728,12 @@ update_rate(const double TOL,
       prev_params = new_params;
       denom = abs(new_deriv);
       cerr << "SUCCESS\tImprov=" << improve << "\trate=" << new_params[1] <<endl;
-    } else {
-      frac = frac/2;
     }
-    if (frac < TOL ) CONVERGE = true;
+    frac = frac/2;
+    if (frac < TOL ) {
+      CONVERGE = true; 
+      break;
+    }
   }
   new_rate = prev_params[1];
 }
@@ -1817,7 +1822,7 @@ update_G(const double TOL,
   bool CONVERGE = false;
   bool SUCCESS = false;
   double improve = 0.0;
-  while (!CONVERGE || !SUCCESS) {
+  while (!SUCCESS) {
     while (frac > TOL && (frac*(prev_deriv[0]/denom) + prev_params[2] > 1- TOL ||
                           frac*(prev_deriv[0]/denom) + prev_params[2] < TOL ||
                           frac*(prev_deriv[1]/denom) + prev_params[3] > 1- TOL ||
@@ -1843,10 +1848,12 @@ update_G(const double TOL,
 
       cerr << "SUCCESS\tImprov=" << improve << "\tG=("
            << new_params[2] << ", " << new_params[3] << ")" << endl;
-    } else {
-      frac = frac/2;
+    } 
+    frac = frac/2;
+    if (frac < TOL) {
+      CONVERGE = true;
+      break;
     }
-    if (frac < TOL) CONVERGE = true;
   }
   new_g0 = prev_params[2];
   new_g1 = prev_params[3];
