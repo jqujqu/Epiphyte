@@ -1933,7 +1933,6 @@ update_branch(const double TOL,
                    node_id, prev_F, prev_deriv);
   double frac = 1.0;
   bool CONVERGE = false;
-  bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE) {
     while (frac > TOL && (frac*sign(prev_deriv) + prev_params[4+node_id] <  TOL ||
@@ -1953,7 +1952,6 @@ update_branch(const double TOL,
                      node_id, new_F, new_deriv);
 
     if (new_F > prev_F) {
-      SUCCESS= true;
       improve += new_F - prev_F;
       cerr << "SUCCESS\tImprov=" << improve
            << "\tbranch[" << node_id << "]=" << new_params[4+node_id]<< endl;
@@ -2046,7 +2044,6 @@ update_rate(const double TOL,
   double denom = abs(prev_deriv);
   double frac = 1.0;
   bool CONVERGE = false;
-  bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE) {
     while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
@@ -2063,7 +2060,6 @@ update_rate(const double TOL,
                    combined_trans_mats_drate, new_F, new_deriv);
 
     if (new_F > prev_F) {
-      SUCCESS= true;
       improve += new_F - prev_F;
       prev_F = new_F;
       prev_deriv = new_deriv;
@@ -2071,8 +2067,10 @@ update_rate(const double TOL,
       denom = abs(new_deriv);
       cerr << "SUCCESS\tImprov=" << improve << "\trate=" << new_params[1] <<endl;
     }
+
     frac = frac/2;
-    if (frac < TOL ) CONVERGE = true;
+    if (frac < TOL ) 
+      CONVERGE = true;
   }
   new_rate = prev_params[1];
 }
@@ -2159,7 +2157,6 @@ update_G(const double TOL,
   double denom = abs(prev_deriv[0]) + abs(prev_deriv[1]);
   double frac = 1.0;
   bool CONVERGE = false;
-  bool SUCCESS = false;
   double improve = 0.0;
   while (!CONVERGE) {
     while (frac > TOL && (frac*(prev_deriv[0]/denom) + prev_params[2] > 1- TOL ||
@@ -2177,8 +2174,8 @@ update_G(const double TOL,
     objective_G(subtree_sizes, new_params, triad_weights, root_weights,
                 combined_trans_mats, combined_trans_mats_dg0,
                 combined_trans_mats_dg1, new_F, new_deriv);
+
     if (new_F > prev_F) {
-      SUCCESS= true;
       improve += new_F - prev_F;
       prev_F = new_F;
       prev_deriv = new_deriv;
@@ -2189,7 +2186,8 @@ update_G(const double TOL,
            << new_params[2] << ", " << new_params[3] << ")" << endl;
     }
     frac = frac/2;
-    if (frac < TOL) CONVERGE = true;
+    if (frac < TOL) 
+      CONVERGE = true;
   }
   new_g0 = prev_params[2];
   new_g1 = prev_params[3];
@@ -2571,6 +2569,12 @@ main(int argc, const char **argv) {
           diff += abs(newparams[i]-start_param[i]);
         }
         start_param = newparams;
+
+        for (size_t i = 5; i < start_param.size(); ++i) {
+          branches[i-4] = -log(1.0 - start_param[i]);
+        }
+        t.set_branch_lengths(branches);
+        
         ++iter;
       }
 
@@ -2766,6 +2770,12 @@ main(int argc, const char **argv) {
             diff += abs(newparams[i]-start_param[i]);
           }
           start_param = newparams;
+
+          for (size_t i = 5; i < start_param.size(); ++i) {
+            branches[i-4] = -log(1.0 - start_param[i]);
+          }
+          t.set_branch_lengths(branches);
+
           ++iter;
         }
 
