@@ -34,7 +34,7 @@
 #include <iterator>     // std::distance
 #include <unistd.h>
 #include <math.h>  //sqrt,exp
- #include <gsl/gsl_rng.h>
+#include <gsl/gsl_rng.h>
 
 
 /* from smithlab_cpp */
@@ -1502,7 +1502,7 @@ approx_triad_weight(const vector<size_t> &subtree_sizes,
   T = gsl_rng_default;
   r = gsl_rng_alloc (T);
 
-  size_t SIMITER = 5; //rounds of simulation
+  size_t SIMITER = 1; //rounds of simulation
   for (size_t iter = 0; iter < SIMITER; ++iter){
 
     for (size_t i = 0; i < reset_points.size()-1; ++i) {
@@ -2241,6 +2241,10 @@ optimize_params(const vector<size_t> &subtree_sizes,
   newparams[2] = new_g0;
   newparams[3] = new_g1;
 
+  //fix g
+  newparams[2] = 0.9;
+  newparams[3] = 0.95;
+
   // update branches
   double T = 0.0;
   for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
@@ -2253,6 +2257,9 @@ optimize_params(const vector<size_t> &subtree_sizes,
   update_rate(TOL, subtree_sizes, newparams, new_triad_weights_scaled,
               start_weights, new_rate);
   newparams[1] = new_rate;
+
+  //fixe rate
+  newparams[1] = 0.4;
 
   //update pi0
   double new_pi0;
