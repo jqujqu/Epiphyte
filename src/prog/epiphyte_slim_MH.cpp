@@ -231,12 +231,15 @@ parse_table_line(istringstream &iss,
   }
 }
 
-bool
+void
 parse_table_line(istringstream &iss,
-                 vector<vector<double> > &meth) {
+                 vector<vector<double> > &meth,
+                 bool &allmissing) {
   double val;
   vector<double> meth_fields;
   size_t observed = 0;
+
+
   while (iss >> val) {
     if ( (val < 0 && val != -1.0) || val > 1.0)
       throw SMITHLABException("bad probability value: [" + iss.str() + "]");
@@ -245,14 +248,14 @@ parse_table_line(istringstream &iss,
     meth_fields.push_back(val);
   }
 
-  if (meth.back().empty())
-    throw SMITHLABException("bad line format: " + iss.str());
+  // if (meth.back().empty())
+  //   throw SMITHLABException("bad line format: " + iss.str());
 
   if (observed > 0) {
     meth.push_back(meth_fields);
-    return true;
+    allmissing = false;
   } else {
-    return false;
+    allmissing = true;
   }
 }
 
@@ -270,8 +273,11 @@ parse_meth_table_line(const string &line, vector<Site> &sites,
 
   // now get the methylation information, either as pairs of read
   // counts or posteriors, depending on the file type (run mode)
-  if (parse_table_line(iss, meth))
+  bool allmissing;
+  parse_table_line(iss, meth, allmissing);
+  if (!allmissing)
     sites.push_back(site);
+
 }
 
 template <class T> void
