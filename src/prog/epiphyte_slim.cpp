@@ -1616,9 +1616,9 @@ update_branch(const double TOL,
       prev_deriv = new_deriv;
       prev_params = new_params;
     }
-    frac = frac/2;	
-    if (frac < TOL) { 
-      CONVERGE = true; 
+    frac = frac/2;
+    if (frac < TOL) {
+      CONVERGE = true;
       break;
     }
   }
@@ -1731,7 +1731,7 @@ update_rate(const double TOL,
     }
     frac = frac/2;
     if (frac < TOL ) {
-      CONVERGE = true; 
+      CONVERGE = true;
       break;
     }
   }
@@ -1848,7 +1848,7 @@ update_G(const double TOL,
 
       cerr << "SUCCESS\tImprov=" << improve << "\tG=("
            << new_params[2] << ", " << new_params[3] << ")" << endl;
-    } 
+    }
     frac = frac/2;
     if (frac < TOL) {
       CONVERGE = true;
@@ -1861,14 +1861,11 @@ update_G(const double TOL,
 
 
 static void
-update_pi0(const vector<vector<double> > &tree_prob_table,
-           const vector<size_t> &reset_points,
+update_pi0(const vector<vector<vector<double> > > &start_weights,
            double &pi0){
-  pi0 = 0.0;
-  for (size_t i = 0; i < reset_points.size()-1; ++i) {
-    pi0 += tree_prob_table[reset_points[i]][0];
-  }
-  pi0 = pi0/(reset_points.size()-1);
+  double num = start_weights[1][0][0]+start_weights[1][0][1];
+  double denom = num +  start_weights[1][1][0]+start_weights[1][1][1];
+  pi0 = num/denom;
 }
 
 
@@ -1913,7 +1910,7 @@ optimize_params(const vector<size_t> &subtree_sizes,
 
   //update pi0
   double new_pi0;
-  update_pi0(tree_prob_table, reset_points, new_pi0);
+  update_pi0(start_weights, new_pi0);
   newparams[0] = new_pi0;
 }
 
@@ -2154,6 +2151,7 @@ main(int argc, const char **argv) {
           if (i > 4) cerr << "[branch "<< i-4 <<"]="
                           << -log(1.0 - start_param[i]) << "\t";
         }
+        cerr << endl;
       }
 
       double diff = std::numeric_limits<double>::max();
