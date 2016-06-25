@@ -2803,6 +2803,16 @@ main(int argc, const char **argv) {
         }
       }
     }
+
+    if (!outparamfile.empty()) {
+      std::ofstream out(outparamfile.c_str());
+      if (!out)
+        throw SMITHLABException("bad output file: " + outparamfile);
+      out << t.Newick_format() << endl;
+      out << start_param[0] << "\t" << start_param[1] << endl;
+      out << start_param[2] << "\t" << start_param[3] << endl;
+    }
+
   } catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
     return EXIT_FAILURE;
