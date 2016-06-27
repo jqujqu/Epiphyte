@@ -239,7 +239,6 @@ parse_table_line(istringstream &iss,
   vector<double> meth_fields;
   size_t observed = 0;
 
-
   while (iss >> val) {
     if ( (val < 0 && val != -1.0) || val > 1.0)
       throw SMITHLABException("bad probability value: [" + iss.str() + "]");
@@ -248,8 +247,8 @@ parse_table_line(istringstream &iss,
     meth_fields.push_back(val);
   }
 
-  // if (meth.back().empty())
-  //   throw SMITHLABException("bad line format: " + iss.str());
+  if (meth_fields.empty())
+    throw SMITHLABException("bad line format: " + iss.str());
 
   if (observed > 0) {
     meth.push_back(meth_fields);
@@ -431,16 +430,26 @@ fill_leaf_prob(const bool VERBOSE,
         }
         size_t d1 = distance_between_sites(sites[j], sites[prev]);
         size_t d2 = distance_between_sites(sites[j], sites[next]);
-        if (j > prev && j < next && d1 < desert_size && d2 < desert_size) {
-          hypo_prob_table[j][i] = (hypo_prob_table[prev][i]*d2 +
-                                   hypo_prob_table[next][i]*d1)/(d1+d2);
+
+        if (j > prev && j < next &&
+            d1 < desert_size && d2 < desert_size) {
+          double w1 = d2/(d1+d2);
+          hypo_prob_table[j][i] =
+            hypo_prob_table[prev][i]*w1 +
+            hypo_prob_table[next][i]*(1.0-w1);
           ++count;
         } else if (prev < j && d1 < desert_size) {
-          hypo_prob_table[j][i] = (mean_hypo_prob*d1 + hypo_prob_table[prev][i]*(desert_size - d1))/desert_size;
+          double w1 = d1/(desert_size);
+          hypo_prob_table[j][i] =
+            mean_hypo_prob*w1 +
+            hypo_prob_table[prev][i]*(1-w1);
           assert(hypo_prob_table[j][i] >= 0);
           ++count;
         } else if (j < next && d2 < desert_size){
-          hypo_prob_table[j][i] = (mean_hypo_prob*d2 + hypo_prob_table[next][i]*(desert_size - d2))/desert_size;
+          double w1 = d2/desert_size;
+          hypo_prob_table[j][i] =
+            mean_hypo_prob*w1 +
+            hypo_prob_table[next][i]*(1.0-w1);
           assert(hypo_prob_table[j][i] >= 0);
           ++count;
         } else {
@@ -569,9 +578,9 @@ separate_regions(const bool VERBOSE,
     for (size_t j = 0; j < meth.size()-1; ++j) {
       if (meth[j][i] >= 0 && meth[j+1][i] >= 0) {
         g00 += meth[j][i]*meth[j+1][i];
-        g01 += meth[j][i]*(1.0-meth[j+1][i]);
-        g10 += (1.0- meth[j][i])*meth[j+1][i];
-        g11 += (1.0-meth[j][i])*(1.0-meth[j+1][i]);
+        g01 += meth[j][i]*(1.0 - meth[j+1][i]);
+        g10 += (1.0 - meth[j][i])*meth[j+1][i];
+        g11 += (1.0 - meth[j][i])*(1.0 - meth[j+1][i]);
       }
     }
   }
@@ -1004,22 +1013,42 @@ static void
 leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   const vector<vector<double> > &meth_prob_table,
                   vector<vector<double> > &tree_prob_table) {
-  const double tol = 1e-10;
-  const size_t n_sites = meth_prob_table.size();
-  const size_t n_leaves = meth_prob_table[0].size();
-  vector<size_t> leaves_preorder;
-  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
-
+  size_t n_sites = tree_prob_table.size();
   // copy leaves first
-  for (size_t i = 0; i < n_sites; ++i) {
-    for (size_t j = 0; j < n_leaves; ++j) {
-      assert (meth_prob_table[i][j]>=0 && meth_prob_table[i][j] <=1);
-      tree_prob_table[i][leaves_preorder[j]] = min(max(tol, meth_prob_table[i][j]), 1.0-tol);
-    }
-  }
+  copy_leaf_to_tree_prob(subtree_sizes, meth_prob_table,
+                         tree_prob_table);
   // initialize internal probs
   for (size_t i = 0; i < n_sites; ++i) {
     init_internal_prob(subtree_sizes, 0, tree_prob_table[i]);
+  }
+}
+
+void
+guard(const vector<size_t> &subtree_sizes,
+      const double margin,
+      vector<vector<double> > &tree_prob_full_table,
+      vector<vector<double> > &tree_prob_table) {
+  assert (margin < 0.5 && margin >= 0);
+  vector<size_t> counts(subtree_sizes.size(), 0);
+
+  const double tol = 1e-10;
+  const size_t n_sites = tree_prob_table.size();
+  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
+    if (subtree_sizes[node_id] == 1) {
+      for (size_t pos = 0; pos < n_sites; ++pos) {
+        if (tree_prob_full_table[pos][node_id] < margin) {
+          tree_prob_full_table[pos][node_id] = tol;
+          tree_prob_table[pos][node_id] = tol;
+        }
+        if (tree_prob_full_table[pos][node_id] > 1 - margin) {
+          tree_prob_full_table[pos][node_id] = 1.0 - tol;
+          tree_prob_table[pos][node_id] = 1.0 - tol;
+        }
+        if (tree_prob_table[pos][node_id] == tol || tree_prob_table[pos][node_id] == 1.0 - tol) {
+          counts[node_id] +=1;
+        }
+      }
+    }
   }
 }
 
@@ -1590,7 +1619,8 @@ MH_single_update(const vector<size_t> &subtree_sizes,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats,
                  const vector<vector<double> > &tree_prob_table,
                  vector<vector<size_t> > &tree_state_table,
-                 const size_t node_id, const size_t pos, const bool START, const bool END,
+                 const size_t node_id, const size_t pos,
+                 const bool START, const bool END,
                  gsl_rng * r) {
   // if leaf, sample from the observed probability
   if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
@@ -1721,117 +1751,117 @@ state_to_counts(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-static void
-get_posterior(const vector<vector<double> > &tree_prob_table,
-              const size_t pos, const size_t node_id,
-              const size_t state,
-              double &prob) {
-  prob = (state == 0)?
-    tree_prob_table[pos][node_id] : 1.0 - tree_prob_table[pos][node_id];
-}
+// static void
+// get_posterior(const vector<vector<double> > &tree_prob_table,
+//               const size_t pos, const size_t node_id,
+//               const size_t state,
+//               double &prob) {
+//   prob = (state == 0)?
+//     tree_prob_table[pos][node_id] : 1.0 - tree_prob_table[pos][node_id];
+// }
 
-static void
-acc_triad_weight(const vector<size_t> &subtree_sizes,
-                 const vector<vector<double> > &tree_prob_table,
-                 const size_t pos, const size_t node_id,
-                 vector<vector<double> > &triad_weights) {
+// static void
+// acc_triad_weight(const vector<size_t> &subtree_sizes,
+//                  const vector<vector<double> > &tree_prob_table,
+//                  const size_t pos, const size_t node_id,
+//                  vector<vector<double> > &triad_weights) {
 
-  if (subtree_sizes[node_id] >1)  {
-    size_t count =1;
-    while (count < subtree_sizes[node_id]) {
-      size_t child_id = node_id + count;
-      // triad_weights
-      for (size_t i = 0; i < 2; ++i) {
-        for (size_t j = 0; j < 2; ++j) {
-          for (size_t k = 0; k < 2; ++k) {
-            double p_prev, p_cur, p_anc;
-            get_posterior(tree_prob_table, pos-1, child_id, i, p_prev);
-            get_posterior(tree_prob_table, pos, node_id, j, p_anc);
-            get_posterior(tree_prob_table, pos, child_id, k, p_cur);
-            triad_weights[child_id][i*4 + j*2 + k] += p_prev*p_cur*p_anc;
-          }
-        }
-      }
-      count += subtree_sizes[child_id];
-    }
-  }
-}
+//   if (subtree_sizes[node_id] >1)  {
+//     size_t count =1;
+//     while (count < subtree_sizes[node_id]) {
+//       size_t child_id = node_id + count;
+//       // triad_weights
+//       for (size_t i = 0; i < 2; ++i) {
+//         for (size_t j = 0; j < 2; ++j) {
+//           for (size_t k = 0; k < 2; ++k) {
+//             double p_prev, p_cur, p_anc;
+//             get_posterior(tree_prob_table, pos-1, child_id, i, p_prev);
+//             get_posterior(tree_prob_table, pos, node_id, j, p_anc);
+//             get_posterior(tree_prob_table, pos, child_id, k, p_cur);
+//             triad_weights[child_id][i*4 + j*2 + k] += p_prev*p_cur*p_anc;
+//           }
+//         }
+//       }
+//       count += subtree_sizes[child_id];
+//     }
+//   }
+// }
 
-static void
-acc_start_weight(const vector<size_t> &subtree_sizes,
-                 const vector<vector<double> > &tree_prob_table,
-                 const size_t pos,
-                 const size_t node_id,
-                 vector<vector<vector<double> > > &start_weights) {// treesizex2x2
-  assert(subtree_sizes[node_id] >1 );
-  size_t count = 1;
-  while (count < subtree_sizes[node_id]) {
-    size_t child_id = node_id + count;
-    double p_cur, p_anc;
-    for (size_t j = 0; j < 2; ++j) {
-      for (size_t k = 0; k < 2; ++k) {
-        get_posterior(tree_prob_table, pos, node_id, j, p_anc);
-        get_posterior(tree_prob_table, pos, child_id, k, p_cur);
-        start_weights[child_id][j][k] += p_cur*p_anc;
-      }
-    }
-    count += subtree_sizes[child_id];
-  }
-}
+// static void
+// acc_start_weight(const vector<size_t> &subtree_sizes,
+//                  const vector<vector<double> > &tree_prob_table,
+//                  const size_t pos,
+//                  const size_t node_id,
+//                  vector<vector<vector<double> > > &start_weights) {// treesizex2x2
+//   assert(subtree_sizes[node_id] >1 );
+//   size_t count = 1;
+//   while (count < subtree_sizes[node_id]) {
+//     size_t child_id = node_id + count;
+//     double p_cur, p_anc;
+//     for (size_t j = 0; j < 2; ++j) {
+//       for (size_t k = 0; k < 2; ++k) {
+//         get_posterior(tree_prob_table, pos, node_id, j, p_anc);
+//         get_posterior(tree_prob_table, pos, child_id, k, p_cur);
+//         start_weights[child_id][j][k] += p_cur*p_anc;
+//       }
+//     }
+//     count += subtree_sizes[child_id];
+//   }
+// }
 
-static void
-acc_root_weights(const vector<vector<double> > &meth_prob_table,
-                 const size_t pos,
-                 vector<vector<double> > &root_weights){ //2x2
-  assert (pos > 0);
-  // accumulate transition from position pos-1 to pos
-  const size_t node_id = 0;
-  double p_prev, p_cur;
-  for (size_t i = 0; i < 2; ++i) {
-    for (size_t k = 0; k < 2; ++k) {
-      get_posterior(meth_prob_table, pos-1, node_id, i, p_prev);
-      get_posterior(meth_prob_table, pos, node_id, k, p_cur);
-      root_weights[i][k] += p_prev*p_cur;
-    }
-  }
-}
+// static void
+// acc_root_weights(const vector<vector<double> > &meth_prob_table,
+//                  const size_t pos,
+//                  vector<vector<double> > &root_weights){ //2x2
+//   assert (pos > 0);
+//   // accumulate transition from position pos-1 to pos
+//   const size_t node_id = 0;
+//   double p_prev, p_cur;
+//   for (size_t i = 0; i < 2; ++i) {
+//     for (size_t k = 0; k < 2; ++k) {
+//       get_posterior(meth_prob_table, pos-1, node_id, i, p_prev);
+//       get_posterior(meth_prob_table, pos, node_id, k, p_cur);
+//       root_weights[i][k] += p_prev*p_cur;
+//     }
+//   }
+// }
 
-static void
-posterior_to_weights(const vector<size_t> &subtree_sizes,
-                     const vector<double> &params,
-                     const vector<size_t> &reset_points,
-                     const vector<vector<double> > &tree_prob_table,
-                     vector<vector<double> >  &triad_weights, // treesizex8
-                     vector<vector<vector<double> > > &start_weights,// treesizex2x2
-                     vector<vector<double> > &root_weights){ //2x2
+// static void
+// posterior_to_weights(const vector<size_t> &subtree_sizes,
+//                      const vector<double> &params,
+//                      const vector<size_t> &reset_points,
+//                      const vector<vector<double> > &tree_prob_table,
+//                      vector<vector<double> >  &triad_weights, // treesizex8
+//                      vector<vector<vector<double> > > &start_weights,// treesizex2x2
+//                      vector<vector<double> > &root_weights){ //2x2
 
-  const size_t n_nodes = subtree_sizes.size();
-  vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
-  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
-  root_weights = mat2x2;
-  start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
-  triad_weights = vector<vector<double> >(n_nodes, vector<double>(8, 0.0));
+//   const size_t n_nodes = subtree_sizes.size();
+//   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+//   vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
+//   root_weights = mat2x2;
+//   start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
+//   triad_weights = vector<vector<double> >(n_nodes, vector<double>(8, 0.0));
 
-  for  (size_t block = 0; block < reset_points.size() -1; ++block) {
-    // accumulate start_weights
-    for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
-      if (subtree_sizes[node_id]>1) {
-        acc_start_weight(subtree_sizes, tree_prob_table,
-                         reset_points[block], node_id, start_weights);
-      }
-    }
-    for (size_t pos = reset_points[block]+1; pos < reset_points[block+1]; ++pos ) {
-      //accumulate root_weights
-      acc_root_weights(tree_prob_table, pos, root_weights);
-      // accumulate triad_weight
-      for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
-        if (subtree_sizes[node_id]>1)
-          acc_triad_weight(subtree_sizes, tree_prob_table, pos,
-                           node_id, triad_weights);
-      }
-    }
-  }
-}
+//   for  (size_t block = 0; block < reset_points.size() -1; ++block) {
+//     // accumulate start_weights
+//     for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+//       if (subtree_sizes[node_id]>1) {
+//         acc_start_weight(subtree_sizes, tree_prob_table,
+//                          reset_points[block], node_id, start_weights);
+//       }
+//     }
+//     for (size_t pos = reset_points[block]+1; pos < reset_points[block+1]; ++pos ) {
+//       //accumulate root_weights
+//       acc_root_weights(tree_prob_table, pos, root_weights);
+//       // accumulate triad_weight
+//       for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+//         if (subtree_sizes[node_id]>1)
+//           acc_triad_weight(subtree_sizes, tree_prob_table, pos,
+//                            node_id, triad_weights);
+//       }
+//     }
+//   }
+// }
 
 double
 weights_to_llk(const vector<size_t> &subtree_sizes,
@@ -2069,7 +2099,7 @@ update_rate(const double TOL,
     }
 
     frac = frac/2;
-    if (frac < TOL ) 
+    if (frac < TOL )
       CONVERGE = true;
   }
   new_rate = prev_params[1];
@@ -2186,7 +2216,7 @@ update_G(const double TOL,
            << new_params[2] << ", " << new_params[3] << ")" << endl;
     }
     frac = frac/2;
-    if (frac < TOL) 
+    if (frac < TOL)
       CONVERGE = true;
   }
   new_g0 = prev_params[2];
@@ -2201,52 +2231,6 @@ update_pi0(const vector<vector<vector<double> > > &start_weights,
   pi0 = num/denom;
 }
 
-
-
-static void
-optimize_params(const vector<size_t> &subtree_sizes,
-                const vector<vector<double> > &tree_prob_table,
-                const vector<size_t> &reset_points,
-                const vector<double> &params,
-                vector<double> &newparams){
-
-  const size_t n_nodes = subtree_sizes.size();
-  vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
-  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
-  vector<vector<double> > root_weights = mat2x2;
-  vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
-  vector<vector<double> > triad_weights(n_nodes, vector<double>(8, 0.0));
-  posterior_to_weights(subtree_sizes, params, reset_points,
-                       tree_prob_table, triad_weights,
-                       start_weights, root_weights);
-  newparams = params;
-
-  double TOL = 1e-4;
-  double new_g0;
-  double new_g1;
-  update_G(TOL, subtree_sizes, params,
-           triad_weights, root_weights, new_g0, new_g1);
-  newparams[2] = new_g0;
-  newparams[3] = new_g1;
-
-  // update branches
-  double T = 0.0;
-  for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
-    update_branch(TOL, subtree_sizes, newparams, node_id,
-                  triad_weights, start_weights, T);
-    newparams[4+node_id] = T;
-  }
-  // update rate0
-  double new_rate;
-  update_rate(TOL, subtree_sizes, newparams, triad_weights, start_weights,
-              new_rate);
-  newparams[1] = new_rate;
-
-  //update pi0
-  double new_pi0;
-  update_pi0(start_weights, new_pi0);
-  newparams[0] = new_pi0;
-}
 
 
 static void
@@ -2396,6 +2380,7 @@ main(int argc, const char **argv) {
     size_t minCpG = 10;
     size_t minfragcpg = 5;
     double tolerance = 1e-4; //parameter convergence tolerance
+    double margin = 0.0;
     size_t MAXITER = 10;
     string outfile;
     string paramfile,outparamfile;
@@ -2412,6 +2397,8 @@ main(int argc, const char **argv) {
                       "(default: 50)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
                       "(default: 10)", false, MAXITER);
+    opt_parse.add_opt("margin", 'M', "margin size between 0 and 0.5"
+                      "(default: 0)", false, margin);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
@@ -2574,7 +2561,7 @@ main(int argc, const char **argv) {
           branches[i-4] = -log(1.0 - start_param[i]);
         }
         t.set_branch_lengths(branches);
-        
+
         ++iter;
       }
 
@@ -2614,6 +2601,7 @@ main(int argc, const char **argv) {
       vector<vector<double> > meth_prob_full_table;
       vector<size_t> reset_points;
       double g0_est, g1_est, pi0_est;
+      // meth_prob_full_table have missing data filled by heuristic
       separate_regions(VERBOSE, desert_size, minCpG,
                        meth_prob_table, meth_prob_full_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
@@ -2634,12 +2622,14 @@ main(int argc, const char **argv) {
       tree_prob_table = vector<vector<double> >(sites.size(), vector<double>(n_nodes, -1.0));
       copy_leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
 
-      // tree_prob_table_full and meth_prob_full_table have missing data filled by heuristic
+      // tree_prob_table_full have missing data filled
       vector<vector<double> > tree_prob_table_full(sites.size(), vector<double>(n_nodes, -1.0));
       leaf_to_tree_prob(subtree_sizes, meth_prob_full_table, tree_prob_table_full);
 
-      // true weights
+      guard(subtree_sizes, margin, tree_prob_table_full, tree_prob_table);
+
       vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+      // true weights
       // vector<vector<double> > root_weights = mat2x2;
       // vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
       // vector<vector<double> > triad_weights(n_nodes, vector<double>(8, 0.0));
