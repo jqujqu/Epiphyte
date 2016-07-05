@@ -1743,7 +1743,7 @@ state_to_counts(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-ouble
+double
 weights_to_llk(const vector<size_t> &subtree_sizes,
                const vector<double> &params,
                const vector<vector<double> >  &triad_weights, // treesizex8
