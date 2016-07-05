@@ -77,16 +77,16 @@ using std::istream_iterator;
 ////////////////////////////////////////////////////////////////////////////////
 
 double
-log_sum_log(const double p, const double q) {
+log_sum_log(double p, double q) {
   if (p == 0) {return q;}
   else if (q == 0) {return p;}
-  const double larger = (p > q) ? p : q;
-  const double smaller = (p > q) ? q : p;
+  double larger = (p > q) ? p : q;
+  double smaller = (p > q) ? q : p;
   return larger + log(1.0 + exp(smaller - larger));
 }
 
 double
-kronecker_delta( const size_t a, const size_t b) {
+kronecker_delta(size_t a, size_t b) {
   return (a==b) ? 1.0 : 0.0;
 }
 
@@ -99,10 +99,10 @@ struct Logscale {
   double logval;
   double symbol;
   Logscale(): logval(0.0), symbol(0.0) {}
-  Logscale(const double &l, const double &s) :
+  Logscale(double l, double s) :
     logval(l), symbol(s) {}
 
-  void assign_from_val(const double val) {
+  void assign_from_val(double val) {
     if (val == 0) {
       symbol = 0;
     } else {
@@ -168,7 +168,7 @@ print_table(const vector<vector<double> > &triad_weights) {
 }
 
 static void
-print_vec(const vector<double> &dat, const string s) {
+print_vec(const vector<double> &dat, const string &s) {
   cerr << s <<"\t";
   for (size_t i = 0; i < dat.size(); ++i) {
     cerr << dat[i] << "\t";
@@ -188,7 +188,7 @@ struct Site {
   size_t pos;
 
   Site() {}
-  Site(const string &chr, const size_t &position) :
+  Site(const string &chr, size_t position) :
     chrom(chr), pos(position) {}
 
   void
@@ -306,7 +306,7 @@ load_meth_table(const string &filename, vector<Site> &sites,
 
 static void
 load_full_states_as_prob(const string filename,
-                         const size_t n_nodes,
+                         size_t n_nodes,
                          vector<Site> &sites,
                          vector<vector<double> > &tree_prob_table) {
   std::ifstream in(filename.c_str());
@@ -396,9 +396,9 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
 }
 
 static void
-fill_leaf_prob(const bool VERBOSE,
+fill_leaf_prob(bool VERBOSE,
                const vector<Site> &sites,
-               const size_t desert_size,
+               size_t desert_size,
                vector<vector<double> > &hypo_prob_table,
                double &pi0_est) {
   size_t n_sites = hypo_prob_table.size();
@@ -463,9 +463,9 @@ fill_leaf_prob(const bool VERBOSE,
 }
 
 static void
-separate_regions(const bool VERBOSE,
-                 const size_t desert_size,
-                 const size_t min_site_per_block,
+separate_regions(bool VERBOSE,
+                 size_t desert_size,
+                 size_t min_site_per_block,
                  vector<vector<double> > &meth,
                  vector<vector<double> > &meth_full_leaf,
                  vector<Site> &sites,
@@ -591,9 +591,9 @@ separate_regions(const bool VERBOSE,
 
 //for complete data, each block should have enough sites, only set reset_points
 static void
-separate_regions(const size_t desert_size,
-                 const vector<vector<double> > &tree_prob_table,
-                 const vector<Site> &sites,
+separate_regions(size_t desert_size,
+                 vector<vector<double> > &tree_prob_table,
+                 vector<Site> &sites,
                  vector<size_t> &reset_points) {
 
   const size_t totalsites = sites.size();
@@ -635,7 +635,7 @@ is_binary(const vector<size_t> &subtree_sizes) {
 
 static void
 get_node_degrees(const vector<size_t> &subtree_sizes,
-                 const size_t tree_start,
+                 size_t tree_start,
                  vector<size_t> &degrees) {
   if (subtree_sizes[tree_start] == 1) {
     degrees[tree_start] = 1;
@@ -719,7 +719,7 @@ evaluate_emission(const vector<size_t> &subtree_sizes,
 // P(T)[0,0]: hypo -> hypo prob
 // P(T)[1,1]: hyper -> hyper prob
 static void
-temporal_trans_prob_mat(const double T, const double rate0,
+temporal_trans_prob_mat(double T, double rate0,
                         vector<vector<double> > &time_transition_matrix) {
   assert(rate0 > 0 && rate0 < 1 && T < 1 && T > 0);
   time_transition_matrix = vector<vector<double> >(2, vector<double>(2, 0.0));
@@ -730,7 +730,7 @@ temporal_trans_prob_mat(const double T, const double rate0,
 }
 
 static void
-combined_trans_prob_mat(const double g0, const double g1,
+combined_trans_prob_mat(double g0, double g1,
                         const vector<vector<double> > &time_trans_mat,
                         vector<vector<vector<double> > > &combined_trans_mat) {
   // spatial transition probabilities
@@ -767,10 +767,10 @@ combined_trans_prob_mat(const double g0, const double g1,
 static void
 trans_deriv(const vector<vector<double> > &Q,
             const vector<vector<double> > &G,
-            const double T,
-            const size_t prev,
-            const size_t anc,
-            const size_t cur,
+            double T,
+            size_t prev,
+            size_t anc,
+            size_t cur,
             const vector<vector<double> > &prev_anc_denom,
             const vector<vector<double> > &time_trans_mat,
             double &d_rate0, double &d_g0, double &d_g1, double &d_T) {
@@ -796,9 +796,7 @@ trans_deriv(const vector<vector<double> > &Q,
 // On a single branch
 // T=1-exp(-branch)
 static void
-combined_trans_prob_mat_deriv(const double rate0,
-                              const double g0, const double g1,
-                              const double T,
+combined_trans_prob_mat_deriv(double rate0, double g0, double g1, double T,
                               const vector<vector<double> > &time_trans_mat,
                               vector<vector<vector<double> > > &combined_trans_mat, //prev x anc x cur
                               vector<vector<vector<double> > > &combined_trans_mat_drate,
@@ -859,7 +857,7 @@ combined_trans_prob_mat_deriv(const double rate0,
 //////////////////////       Units grouped       ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 static void
-collect_transition_matrices(const double rate0, const double g0, const double g1,
+collect_transition_matrices(double rate0, double g0, double g1,
                             const vector<double> &Ts,
                             vector<vector<vector<double> > > &time_trans_mats,
                             vector<vector<vector<vector<double> > > > &combined_trans_mats) {
@@ -879,7 +877,7 @@ collect_transition_matrices(const double rate0, const double g0, const double g1
 
 
 static void
-collect_transition_matrices_deriv(const double rate0, const double g0, const double g1,
+collect_transition_matrices_deriv(double rate0, double g0, double g1,
                                   const vector<double> &Ts,
                                   vector<vector<vector<double> > > &time_trans_mats,
                                   vector<vector<vector<vector<double> > > > &combined_trans_mats,
@@ -917,7 +915,7 @@ collect_transition_matrices_deriv(const double rate0, const double g0, const dou
 ////////////////////////////////////////////////////////////////////////////////
 
 string
-dec2binary(const size_t len, size_t n) {
+dec2binary(size_t len, size_t n) {
   assert (n < pow(2, len));
   string result;
   do result.push_back( '0' + (n & 1) );
@@ -930,7 +928,7 @@ dec2binary(const size_t len, size_t n) {
 }
 
 size_t
-binary2dec(const string states) {
+binary2dec(string states) {
   size_t id = 0;
   for (size_t i = 0; i < states.length(); ++i) {
     if (states[states.length()-i-1] == '1')
@@ -948,7 +946,7 @@ binary2dec(const string states) {
 // assuming all leaves are initialized already
 static void
 init_internal_prob(const vector<size_t> &subtree_sizes,
-                   const size_t node_id,
+                   size_t node_id,
                    vector<double> &node_probs) {
   const double tol = 1e-5;
   size_t count = 1;
@@ -1025,7 +1023,7 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
 
 void
 guard(const vector<size_t> &subtree_sizes,
-      const double margin,
+      double margin,
       vector<vector<double> > &tree_prob_full_table,
       vector<vector<double> > &tree_prob_table) {
   assert (margin < 0.5 && margin >= 0);
@@ -1059,14 +1057,14 @@ guard(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 
 static void
-posterior_start(const bool LEAF,
+posterior_start(bool LEAF,
                 const vector<size_t> &subtree_sizes,
                 const vector<vector<double> >&G,
                 const vector<vector<vector<double> > > &time_trans_mats,
                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
-                const size_t pos,
-                const size_t node_id,
-                const size_t parent_id,
+                size_t pos,
+                size_t node_id,
+                size_t parent_id,
                 vector<bool> &updated,
                 vector<vector<double> > &meth_prob_table,
                 double &diff) {
@@ -1183,14 +1181,14 @@ posterior_start(const bool LEAF,
 
 
 static void
-posterior_middle(const bool LEAF,
+posterior_middle(bool LEAF,
                  const vector<size_t> &subtree_sizes,
                  const vector<vector<double> >&G,
                  const vector<vector<vector<double> > > &time_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats,
-                 const size_t pos,
-                 const size_t node_id,
-                 const size_t parent_id,
+                 size_t pos,
+                 size_t node_id,
+                 size_t parent_id,
                  vector<bool> &updated,
                  vector<vector<double> > &meth_prob_table,
                  double &diff) {
@@ -1340,14 +1338,14 @@ posterior_middle(const bool LEAF,
 }
 
 static void
-posterior_end(const bool LEAF,
+posterior_end(bool LEAF,
               const vector<size_t> &subtree_sizes,
               const vector<vector<double> >&G,
               const vector<vector<vector<double> > > &time_trans_mats,
               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
-              const size_t pos,
-              const size_t node_id,
-              const size_t parent_id,
+              size_t pos,
+              size_t node_id,
+              size_t parent_id,
               vector<bool> &updated,
               vector<vector<double> > &meth_prob_table,
               double &diff) {
@@ -1476,8 +1474,8 @@ iterate_update(const vector<size_t> &subtree_sizes,
                const vector<vector<double> >&G,
                const vector<vector<vector<double> > > &time_trans_mats,
                const vector<vector<vector<vector<double> > > > &combined_trans_mats,
-               const double tolerance,
-               const size_t MAXITER,
+               double tolerance,
+               size_t MAXITER,
                vector<vector<double> > &tree_hypo_prob_table) {
 
   size_t n_nodes = subtree_sizes.size();
@@ -1516,8 +1514,8 @@ static void
 approx_posterior(const vector<size_t> &subtree_sizes,
                  const vector<double> &params,
                  const vector<size_t> &reset_points,
-                 const double tolerance,
-                 const size_t MAXITER,
+                 double tolerance,
+                 size_t MAXITER,
                  vector<vector<double> > &meth_prob_table) {
 
   vector<vector<vector<double> > > time_trans_mats;
@@ -1549,13 +1547,13 @@ approx_posterior(const vector<size_t> &subtree_sizes,
 double
 MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
               const vector<size_t> &parent_ids,
-              const double pi0,
+              double pi0,
               const vector<vector<double> >&G,
               const vector<vector<vector<double> > > &time_trans_mats,
               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
               const vector<vector<size_t> > &meth_state_table,
-              const size_t node_id, const size_t pos,
-              const bool START, const bool END) {
+              size_t node_id, size_t pos,
+              bool START, bool END) {
   double lp0 = 0.0;
   double lp1 = 0.0;
   size_t par_id = parent_ids[node_id];
@@ -1613,14 +1611,14 @@ MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
 static void
 MH_single_update(const vector<size_t> &subtree_sizes,
                  const vector<size_t> &parent_ids,
-                 const double pi0,
+                 double pi0,
                  const vector<vector<double> >&G,
                  const vector<vector<vector<double> > > &time_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats,
                  const vector<vector<double> > &tree_prob_table,
                  vector<vector<size_t> > &tree_state_table,
-                 const size_t node_id, const size_t pos,
-                 const bool START, const bool END,
+                 size_t node_id, size_t pos,
+                 bool START, bool END,
                  gsl_rng * r) {
   // if leaf, sample from the observed probability
   if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
@@ -1745,125 +1743,7 @@ state_to_counts(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////     SLIM OPTIMIZATION         /////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-// static void
-// get_posterior(const vector<vector<double> > &tree_prob_table,
-//               const size_t pos, const size_t node_id,
-//               const size_t state,
-//               double &prob) {
-//   prob = (state == 0)?
-//     tree_prob_table[pos][node_id] : 1.0 - tree_prob_table[pos][node_id];
-// }
-
-// static void
-// acc_triad_weight(const vector<size_t> &subtree_sizes,
-//                  const vector<vector<double> > &tree_prob_table,
-//                  const size_t pos, const size_t node_id,
-//                  vector<vector<double> > &triad_weights) {
-
-//   if (subtree_sizes[node_id] >1)  {
-//     size_t count =1;
-//     while (count < subtree_sizes[node_id]) {
-//       size_t child_id = node_id + count;
-//       // triad_weights
-//       for (size_t i = 0; i < 2; ++i) {
-//         for (size_t j = 0; j < 2; ++j) {
-//           for (size_t k = 0; k < 2; ++k) {
-//             double p_prev, p_cur, p_anc;
-//             get_posterior(tree_prob_table, pos-1, child_id, i, p_prev);
-//             get_posterior(tree_prob_table, pos, node_id, j, p_anc);
-//             get_posterior(tree_prob_table, pos, child_id, k, p_cur);
-//             triad_weights[child_id][i*4 + j*2 + k] += p_prev*p_cur*p_anc;
-//           }
-//         }
-//       }
-//       count += subtree_sizes[child_id];
-//     }
-//   }
-// }
-
-// static void
-// acc_start_weight(const vector<size_t> &subtree_sizes,
-//                  const vector<vector<double> > &tree_prob_table,
-//                  const size_t pos,
-//                  const size_t node_id,
-//                  vector<vector<vector<double> > > &start_weights) {// treesizex2x2
-//   assert(subtree_sizes[node_id] >1 );
-//   size_t count = 1;
-//   while (count < subtree_sizes[node_id]) {
-//     size_t child_id = node_id + count;
-//     double p_cur, p_anc;
-//     for (size_t j = 0; j < 2; ++j) {
-//       for (size_t k = 0; k < 2; ++k) {
-//         get_posterior(tree_prob_table, pos, node_id, j, p_anc);
-//         get_posterior(tree_prob_table, pos, child_id, k, p_cur);
-//         start_weights[child_id][j][k] += p_cur*p_anc;
-//       }
-//     }
-//     count += subtree_sizes[child_id];
-//   }
-// }
-
-// static void
-// acc_root_weights(const vector<vector<double> > &meth_prob_table,
-//                  const size_t pos,
-//                  vector<vector<double> > &root_weights){ //2x2
-//   assert (pos > 0);
-//   // accumulate transition from position pos-1 to pos
-//   const size_t node_id = 0;
-//   double p_prev, p_cur;
-//   for (size_t i = 0; i < 2; ++i) {
-//     for (size_t k = 0; k < 2; ++k) {
-//       get_posterior(meth_prob_table, pos-1, node_id, i, p_prev);
-//       get_posterior(meth_prob_table, pos, node_id, k, p_cur);
-//       root_weights[i][k] += p_prev*p_cur;
-//     }
-//   }
-// }
-
-// static void
-// posterior_to_weights(const vector<size_t> &subtree_sizes,
-//                      const vector<double> &params,
-//                      const vector<size_t> &reset_points,
-//                      const vector<vector<double> > &tree_prob_table,
-//                      vector<vector<double> >  &triad_weights, // treesizex8
-//                      vector<vector<vector<double> > > &start_weights,// treesizex2x2
-//                      vector<vector<double> > &root_weights){ //2x2
-
-//   const size_t n_nodes = subtree_sizes.size();
-//   vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
-//   vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
-//   root_weights = mat2x2;
-//   start_weights = vector<vector<vector<double> > >(n_nodes, mat2x2);
-//   triad_weights = vector<vector<double> >(n_nodes, vector<double>(8, 0.0));
-
-//   for  (size_t block = 0; block < reset_points.size() -1; ++block) {
-//     // accumulate start_weights
-//     for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
-//       if (subtree_sizes[node_id]>1) {
-//         acc_start_weight(subtree_sizes, tree_prob_table,
-//                          reset_points[block], node_id, start_weights);
-//       }
-//     }
-//     for (size_t pos = reset_points[block]+1; pos < reset_points[block+1]; ++pos ) {
-//       //accumulate root_weights
-//       acc_root_weights(tree_prob_table, pos, root_weights);
-//       // accumulate triad_weight
-//       for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
-//         if (subtree_sizes[node_id]>1)
-//           acc_triad_weight(subtree_sizes, tree_prob_table, pos,
-//                            node_id, triad_weights);
-//       }
-//     }
-//   }
-// }
-
-double
+ouble
 weights_to_llk(const vector<size_t> &subtree_sizes,
                const vector<double> &params,
                const vector<vector<double> >  &triad_weights, // treesizex8
@@ -1902,7 +1782,7 @@ objective_branch(const vector<double> &params,
                  const vector<vector<vector<double> > > &time_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats,
                  const vector<vector<vector<vector<double> > > > &combined_trans_mats_dT,
-                 const size_t node_id,
+                 size_t node_id,
                  double &F, double &deriv) {
 
   F = 0.0;
@@ -1934,7 +1814,7 @@ objective_branch(const vector<double> &params,
 static void
 update_branch(const double TOL,
               const vector<size_t> &subtree_sizes,
-              const vector<double> &params, const size_t node_id,
+              const vector<double> &params, size_t node_id,
               const vector<vector<double> > &triad_weights,
               const vector<vector<vector<double> > > &start_weights,
               double &T){
@@ -2038,7 +1918,7 @@ objective_rate(const vector<size_t> &subtree_sizes,
 }
 
 static void
-update_rate(const double TOL,
+update_rate(double TOL,
             const vector<size_t> &subtree_sizes,
             const vector<double> &params,
             const vector<vector<double> >  &triad_weights,
@@ -2153,7 +2033,7 @@ objective_G(const vector<size_t> &subtree_sizes,
 }
 
 static void
-update_G(const double TOL,
+update_G(double TOL,
          const vector<size_t> &subtree_sizes,
          const vector<double> &params,
          const vector<vector<double> > &triad_weights, // treesizex2x2x2
@@ -2276,7 +2156,7 @@ optimize_params(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 static void
 tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
-                    const double cutoff,
+                    double cutoff,
                     vector<string> &states) {
   const size_t n_nodes = tree_prob_table[0].size();
   for (size_t i = 0; i < tree_prob_table.size(); ++i) {
@@ -2314,8 +2194,8 @@ write_treeprob_states(const vector<size_t> &subtree_sizes,
 
 
 static void
-build_domain(const size_t minCpG,
-             const size_t desert_size,
+build_domain(size_t minCpG,
+             size_t desert_size,
              const vector<Site> &sites,
              const vector<string> &states,
              vector<GenomicRegion> &domains) {
