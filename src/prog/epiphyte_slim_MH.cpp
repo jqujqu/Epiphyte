@@ -1551,6 +1551,7 @@ MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
               const vector<vector<double> >&G,
               const vector<vector<vector<double> > > &time_trans_mats,
               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+              const vector<vector<double> > &tree_prob_table,
               const vector<vector<size_t> > &meth_state_table,
               size_t node_id, size_t pos,
               bool START, bool END) {
@@ -1605,6 +1606,12 @@ MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
     lp0 += log(combined_trans_mats[node_id][0][anc][cur]);
     lp1 += log(combined_trans_mats[node_id][1][anc][cur]);
   }
+
+  if (subtree_sizes[node_id]==1) {
+    lp0 += log(tree_prob_table[pos][node_id]);
+    lp1 += log(1.0 - tree_prob_table[pos][node_id]);
+  }
+
   return lp0-lp1;
 }
 
@@ -1621,33 +1628,34 @@ MH_single_update(const vector<size_t> &subtree_sizes,
                  bool START, bool END,
                  gsl_rng * r) {
   // if leaf, sample from the observed probability
-  if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
-    double f = gsl_rng_uniform(r);
-    tree_state_table[pos][node_id] = (f < tree_prob_table[pos][node_id])? 0: 1;
+  // if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
+  //   double f = gsl_rng_uniform(r);
+  //   tree_state_table[pos][node_id] = (f < tree_prob_table[pos][node_id])? 0: 1;
+  // } else {
+  size_t count = 1;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count;
+    MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
+                     combined_trans_mats, tree_prob_table, tree_state_table,
+                     child_id,  pos, START, END, r);
+    count += subtree_sizes[child_id];
+  }
+  double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
+                                   pi0, G, time_trans_mats,
+                                   combined_trans_mats, tree_prob_table, 
+                                   tree_state_table,
+                                   node_id, pos, START, END);
+  size_t state = tree_state_table[pos][node_id];
+  double ratio = (state == 0)? exp(-log_ratio) : exp(log_ratio);
+  if (ratio >= 1.0) {
+    tree_state_table[pos][node_id] = 1 - state;
   } else {
-    size_t count = 1;
-    while (count < subtree_sizes[node_id]) {
-      size_t child_id = node_id + count;
-      MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
-                       combined_trans_mats, tree_prob_table, tree_state_table,
-                       child_id,  pos, START, END, r);
-      count += subtree_sizes[child_id];
-    }
-    double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
-                                     pi0, G, time_trans_mats,
-                                     combined_trans_mats, tree_state_table,
-                                     node_id, pos, START, END);
-    size_t state = tree_state_table[pos][node_id];
-    double ratio = (state == 0)? exp(-log_ratio) : exp(log_ratio);
-    if (ratio >= 1.0) {
+    double f = gsl_rng_uniform(r);
+    if (f < ratio) {
       tree_state_table[pos][node_id] = 1 - state;
-    } else {
-      double f = gsl_rng_uniform(r);
-      if (f < ratio) {
-        tree_state_table[pos][node_id] = 1 - state;
-      }
     }
   }
+  //}
 }
 
 static void
