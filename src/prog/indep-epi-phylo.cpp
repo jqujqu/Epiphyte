@@ -559,8 +559,7 @@ subtree_likelihood_site(const vector<size_t> &subtree_sizes,
     assert (states[tree_start][pos] >= 0);
     subtree_lik_given_root_unmeth = states[tree_start][pos];
     subtree_lik_given_root_meth = 1.0 - states[tree_start][pos];
-  }
-  else {
+  } else {
     subtree_lik_given_root_unmeth = 1.0;
     subtree_lik_given_root_meth = 1.0;
     size_t count = 1;
@@ -958,7 +957,7 @@ optimize_rootdist(const bool VERBOSE,
                   const double PARTOL,
                   const double STEPSIZE,
                   const vector<size_t> &subtree_sizes,
-                  const double rate, 
+                  const double rate,
                   const vector<double> &branches,
                   const vector<vector<double> > &states,
                   double &root_unmeth_prob) {
@@ -1101,7 +1100,7 @@ optimize_branch(const bool VERBOSE,
   return prev_llk;
 }
 
-double 
+double
 optimize_branches(const bool VERBOSE,
                   const double LIKTOL,
                   const double PARTOL,
@@ -1166,7 +1165,7 @@ optimize_branches(const bool VERBOSE,
     }
     cerr << "[log-likelihood]\t" << new_llk << "\tImprove = " << new_llk-prev_llk << endl;
   }
-  
+
   return (new_llk > prev_llk)? new_llk: prev_llk;
 }
 
@@ -1507,11 +1506,17 @@ main(int argc, const char **argv) {
       t.set_branch_lengths(branches);
     } else {
       read_params(VERBOSE, paramfile, root_unmeth_prob, lam, t);
+      branches.clear();
       t.get_branch_lengths(branches);
+      for (size_t i = 0; i< branches.size(); ++i) {
+        cerr << branches[i] << endl;
+      }
       llk = tree_loglikelihood(subtree_sizes, root_unmeth_prob, lam,
                                branches, states);
       if (VERBOSE)
-        cerr << "Data likelihood under given parameters is " << llk <<  endl;
+        cerr << "#" << t.Newick_format() << "\tRate = " << lam << ";"
+             << "\tRoot unmeth prob = " << root_unmeth_prob
+             << "\tlog-likelihood = " << llk << endl;
     }
 
     /**************************************************************************/
