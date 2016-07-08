@@ -1096,8 +1096,8 @@ optimize_branch(const bool VERBOSE,
     cerr << "param = " << new_val << "\t"<< new_llk
          << "\tImprove = " << new_llk-prev_llk << endl;
 
-  branches[which_branch] = prev_val;
-  return prev_llk;
+  branches[which_branch] = new_val;
+  return new_llk;
 }
 
 double
