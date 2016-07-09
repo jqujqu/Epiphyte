@@ -86,6 +86,16 @@ is_tree_line(const char *line){
 }
 
 static bool
+is_pi_line(const char *line) {
+  static const char *label = "PI0";
+  static const size_t label_len = 3;
+  for (size_t i = 0; i < label_len; ++i)
+    if (line[i] != label[i])
+      return false;
+  return true;
+}
+
+static bool
 is_cov_line(const char *line){
   static const char *label = "COV-PARAM";
   static const size_t label_len = 9;
@@ -117,6 +127,7 @@ is_bg_line(const char *line){
 
 void
 parse_paramfile(const string param_file,
+                double &pi0,
                 vector<double> &G, vector<double> &Q,
                 size_t &coverage, vector<double> &F_PARAM,
                 vector<double> &B_PARAM,
@@ -138,6 +149,8 @@ parse_paramfile(const string param_file,
     string tmp;
     if (is_tree_line(buffer)) {
       is >> tmp >> t;
+    } else if (is_pi_line(buffer)) {
+      is >> tmp >> pi0;
     } else if (is_G_line(buffer)) {
       is >> tmp >> G[0] >> G[1];
     } else if (is_Q_line(buffer)) {
@@ -251,6 +264,7 @@ void sim_newstate(const bool ancestor,
 void
 simulate_position(const bool first,
                   const vector<bool> &prev_states,
+                  const double pi0,
                   const vector<double> &G,
                   const vector<double> &Q,
                   const vector<size_t> &subtree_sizes,
@@ -261,8 +275,7 @@ simulate_position(const bool first,
   bool new_state;
   //Begin simulation from the root
   if (first) {
-    double p0 = G[0]/(G[0]+G[1]);
-    bool initstate = bernoulli(p0);
+    bool initstate = bernoulli(pi0);
     sim_root_state(initstate, G, new_state);
   } else {
     sim_root_state(prev_states[0], G, new_state);
@@ -427,11 +440,12 @@ int main(int argc, const char **argv) {
     string tree_rep;
     vector<double> G, Q;
     size_t coverage;
+    double pi0;
     vector<double> F_PARAM, B_PARAM;
     if(VERBOSE)
       cerr << "----Reading parameters----" << endl;
     PhyloTreePreorder t;
-    parse_paramfile(param_file, G, Q, coverage, F_PARAM, B_PARAM, t);
+    parse_paramfile(param_file, pi0, G, Q, coverage, F_PARAM, B_PARAM, t);
     vector<size_t> subtree_sizes;
     t.get_subtree_sizes(subtree_sizes);
     vector<size_t> tree_parent_index;
@@ -462,7 +476,7 @@ int main(int argc, const char **argv) {
                (j > 0 && cpgs[j].distance(cpgs[j-1]) > desertsize));
       if (SINGLE) first = true;
       prev_HME = HME;
-      simulate_position(first, prev_HME, G, Q, subtree_sizes,
+      simulate_position(first, prev_HME, pi0, G, Q, subtree_sizes,
                         tree_parent_index, branches, HME);
       HMEs.push_back(HME);
       if (DEBUG) printHME(HME);
