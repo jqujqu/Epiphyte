@@ -998,11 +998,10 @@ copy_leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
   vector<size_t> leaves_preorder;
   subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
-  // copy leaves first
   for (size_t i = 0; i < n_sites; ++i) {
     for (size_t j = 0; j < n_leaves; ++j) {
-      assert (meth_prob_table[i][j]>=0 && meth_prob_table[i][j] <=1);
-      tree_prob_table[i][leaves_preorder[j]] = min(max(tol, meth_prob_table[i][j]), 1.0-tol);
+      if (meth_prob_table[i][j]>=0 && meth_prob_table[i][j] <=1)
+        tree_prob_table[i][leaves_preorder[j]] = min(max(tol, meth_prob_table[i][j]), 1.0-tol);
     }
   }
 }
@@ -1018,35 +1017,6 @@ leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
   // initialize internal probs
   for (size_t i = 0; i < n_sites; ++i) {
     init_internal_prob(subtree_sizes, 0, tree_prob_table[i]);
-  }
-}
-
-void
-guard(const vector<size_t> &subtree_sizes,
-      const double margin,
-      vector<vector<double> > &tree_prob_full_table,
-      vector<vector<double> > &tree_prob_table) {
-  assert (margin < 0.5 && margin >= 0);
-  vector<size_t> counts(subtree_sizes.size(), 0);
-
-  const double tol = 1e-10;
-  const size_t n_sites = tree_prob_table.size();
-  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
-    if (subtree_sizes[node_id] == 1) {
-      for (size_t pos = 0; pos < n_sites; ++pos) {
-        if (tree_prob_full_table[pos][node_id] < margin) {
-          tree_prob_full_table[pos][node_id] = tol;
-          tree_prob_table[pos][node_id] = tol;
-        }
-        if (tree_prob_full_table[pos][node_id] > 1 - margin) {
-          tree_prob_full_table[pos][node_id] = 1.0 - tol;
-          tree_prob_table[pos][node_id] = 1.0 - tol;
-        }
-        if (tree_prob_table[pos][node_id] == tol || tree_prob_table[pos][node_id] == 1.0 - tol) {
-          counts[node_id] +=1;
-        }
-      }
-    }
   }
 }
 
@@ -1551,7 +1521,6 @@ MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
               const vector<vector<double> >&G,
               const vector<vector<vector<double> > > &time_trans_mats,
               const vector<vector<vector<vector<double> > > > &combined_trans_mats,
-              const vector<vector<double> > &tree_prob_table,
               const vector<vector<size_t> > &meth_state_table,
               const size_t node_id, const size_t pos,
               const bool START, const bool END) {
@@ -1606,12 +1575,6 @@ MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
     lp0 += log(combined_trans_mats[node_id][0][anc][cur]);
     lp1 += log(combined_trans_mats[node_id][1][anc][cur]);
   }
-
-  if (subtree_sizes[node_id]==1) {
-    lp0 += log(tree_prob_table[pos][node_id]);
-    lp1 += log(1.0 - tree_prob_table[pos][node_id]);
-  }
-
   return lp0-lp1;
 }
 
@@ -1627,35 +1590,35 @@ MH_single_update(const vector<size_t> &subtree_sizes,
                  const size_t node_id, const size_t pos,
                  const bool START, const bool END,
                  gsl_rng * r) {
-  // if leaf, sample from the observed probability
-  // if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
-  //   double f = gsl_rng_uniform(r);
-  //   tree_state_table[pos][node_id] = (f < tree_prob_table[pos][node_id])? 0: 1;
-  // } else {
-  size_t count = 1;
-  while (count < subtree_sizes[node_id]) {
-    size_t child_id = node_id + count;
-    MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
-                     combined_trans_mats, tree_prob_table, tree_state_table,
-                     child_id,  pos, START, END, r);
-    count += subtree_sizes[child_id];
-  }
-  double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
-                                   pi0, G, time_trans_mats,
-                                   combined_trans_mats, tree_prob_table, 
-                                   tree_state_table,
-                                   node_id, pos, START, END);
-  size_t state = tree_state_table[pos][node_id];
-  double ratio = (state == 0)? exp(-log_ratio) : exp(log_ratio);
-  if (ratio >= 1.0) {
-    tree_state_table[pos][node_id] = 1 - state;
-  } else {
+  /* if leaf observed, sample from the observed probability*/
+  if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
     double f = gsl_rng_uniform(r);
-    if (f < ratio) {
+    tree_state_table[pos][node_id] = (f < tree_prob_table[pos][node_id])? 0: 1;
+  } else {
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
+                       combined_trans_mats, tree_prob_table, tree_state_table,
+                       child_id,  pos, START, END, r);
+      count += subtree_sizes[child_id];
+    }
+    double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
+                                     pi0, G, time_trans_mats,
+                                     combined_trans_mats, 
+                                     tree_state_table,
+                                     node_id, pos, START, END);
+    size_t state = tree_state_table[pos][node_id];
+    double ratio = (state == 0)? exp(-log_ratio) : exp(log_ratio);
+    if (ratio >= 1.0) {
       tree_state_table[pos][node_id] = 1 - state;
+    } else {
+      double f = gsl_rng_uniform(r);
+      if (f < ratio) {
+        tree_state_table[pos][node_id] = 1 - state;
+      }
     }
   }
-  //}
 }
 
 static void
@@ -2268,7 +2231,6 @@ main(int argc, const char **argv) {
     size_t minCpG = 10;
     size_t minfragcpg = 5;
     double tolerance = 1e-4; //parameter convergence tolerance
-    double margin = 0.0;
     size_t MAXITER = 10;
     string outfile;
     string paramfile,outparamfile;
@@ -2285,8 +2247,6 @@ main(int argc, const char **argv) {
                       "(default: 50)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
                       "(default: 10)", false, MAXITER);
-    opt_parse.add_opt("margin", 'M', "margin size between 0 and 0.5"
-                      "(default: 0)", false, margin);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
@@ -2489,7 +2449,7 @@ main(int argc, const char **argv) {
       vector<vector<double> > meth_prob_full_table;
       vector<size_t> reset_points;
       double g0_est, g1_est, pi0_est;
-      // meth_prob_full_table have missing data filled by heuristic
+      /* meth_prob_full_table have missing data filled by heuristic */
       separate_regions(VERBOSE, desert_size, minCpG,
                        meth_prob_table, meth_prob_full_table,
                        sites, reset_points, g0_est, g1_est, pi0_est);
@@ -2506,22 +2466,15 @@ main(int argc, const char **argv) {
         start_param[3] = g1_est;
       }
 
-      // meth_prob_table and tree_prob_table have missing data assigned to -1
+      /* meth_prob_table and tree_prob_table have missing data assigned to -1 */
       tree_prob_table = vector<vector<double> >(sites.size(), vector<double>(n_nodes, -1.0));
       copy_leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
 
-      // tree_prob_table_full have missing data filled
+      /* tree_prob_table_full have missing data filled*/
       vector<vector<double> > tree_prob_table_full(sites.size(), vector<double>(n_nodes, -1.0));
       leaf_to_tree_prob(subtree_sizes, meth_prob_full_table, tree_prob_table_full);
 
-      guard(subtree_sizes, margin, tree_prob_table_full, tree_prob_table);
-
       vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
-      // true weights
-      // vector<vector<double> > root_weights = mat2x2;
-      // vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
-      // vector<vector<double> > triad_weights(n_nodes, vector<double>(8, 0.0));
-
       vector<vector<double> > root_weights_all = mat2x2;
       vector<vector<vector<double> > > start_weights_all(n_nodes, mat2x2);
       vector<vector<double> > triad_weights_all(n_nodes, vector<double>(8, 0.0));
@@ -2531,15 +2484,6 @@ main(int argc, const char **argv) {
       vector<vector<double> > triad_weights_mix(n_nodes, vector<double>(8, 0.0));
 
       vector<vector<size_t> > empty_state_table(n_sites, vector<size_t>(n_nodes, 0));
-      // vector<vector<size_t> > tree_state_table = empty_state_table;
-      // to_discrete_table(tree_prob_table, tree_state_table);
-
-      // state_to_counts(subtree_sizes, parent_ids, tree_state_table, reset_points,
-      //                 triad_weights, start_weights, root_weights);
-      // double true_llk = weights_to_llk(subtree_sizes, start_param, triad_weights,
-      //                                  start_weights, root_weights);
-      // cerr << "-----triad_weights_true------" << endl;
-      // print_table(triad_weights);
 
       bool CONVERGE = false;
       size_t ITER = 0;
@@ -2556,8 +2500,9 @@ main(int argc, const char **argv) {
         ++ITER;
         vector<double> prev_param = start_param;
 
-        // only leaves are known
-        // initialize MCMC start points (assignment of discreate states)
+        /* only leaves are known
+           initialize MCMC start points (assignment of discrete states)
+        */
         tree_prob_table_mix = tree_prob_table_full;
         tree_state_table_all = empty_state_table;
         tree_state_table_mix = empty_state_table;
@@ -2565,12 +2510,12 @@ main(int argc, const char **argv) {
           for (size_t node_id = 0; node_id < n_nodes; ++ node_id) {
             if (subtree_sizes[node_id] > 1) {
               tree_state_table_all[pos][node_id] = 1;
-              tree_prob_table_mix[pos][node_id] = 0.5;
+              //tree_prob_table_mix[pos][node_id] = 0.5;
             } else {
-              // 0 means hypo state; 1 means hyper state (opposite to the hypoprobs)
+              /* 0 means hypo state; 1 means hyper state (opposite to the hypoprobs)*/
               size_t s = (tree_prob_table_mix[pos][node_id] > 0.5)? 0 : 1;
               tree_state_table_all[pos][node_id] = s;
-              tree_prob_table_mix[pos][node_id] = tree_prob_table_full[pos][node_id];
+              //tree_prob_table_mix[pos][node_id] = tree_prob_table_full[pos][node_id];
             }
           }
         }
@@ -2579,11 +2524,11 @@ main(int argc, const char **argv) {
                          max_app_iter, tree_prob_table_mix);
         to_discrete_table(tree_prob_table_mix, tree_state_table_mix);
 
-        // E-step: MCMC
+        /************ E-step: MCMC *********************/
         size_t MHiter = 0;
         while (MHiter < MHmaxiter) {
           ++MHiter;
-          // measure KL divergence of weights from two chains
+          /* measure KL divergence of weights from two chains */
           state_to_counts(subtree_sizes, parent_ids,
                           tree_state_table_all, reset_points,
                           triad_weights_all, start_weights_all, root_weights_all);
@@ -2595,19 +2540,11 @@ main(int argc, const char **argv) {
           double mix_llk = weights_to_llk(subtree_sizes, start_param, triad_weights_mix,
                                           start_weights_mix, root_weights_mix);
 
-          // vector<double> KL_true_all;
-          //vector<double> KL_true_mix;
           vector<double> KL_mix_all;
-          // KLdistvec(triad_weights, triad_weights_all, KL_true_all);
-          // KLdistvec(triad_weights, triad_weights_mix, KL_true_mix);
           KLdistvec(triad_weights_mix, triad_weights_all, KL_mix_all);
 
-          // print_vec(KL_true_all, "KL_true_vs_all");
-          // print_vec(KL_true_mix, "KL_true_vs_mix");
           if (VERBOSE) {
             print_vec(KL_mix_all, "KL_mix_vs_all");
-            // cerr << "true_llk= " << true_llk << "\tmix_llk= " << mix_llk
-            //      << "\tall_llk= " << all_llk << endl;
             cerr << "mix_llk= " << mix_llk << "\tall_llk= " << all_llk << endl;
           }
 
@@ -2619,8 +2556,8 @@ main(int argc, const char **argv) {
           if (MHCONVERGE) {
             break;
           } else {
-            // Next round of MH sampling
-            // tree_prob_table is used to determine how leafs should be updated
+            /* Next round of MH sampling */
+            /* tree_prob_table is used to determine how leafs should be updated */
             MH_update(subtree_sizes, parent_ids, start_param, reset_points,
                       tree_prob_table, tree_state_table_all);
             MH_update(subtree_sizes, parent_ids, start_param, reset_points,
@@ -2631,7 +2568,7 @@ main(int argc, const char **argv) {
         if (VERBOSE)
           print_table(triad_weights_mix);
 
-        // M-step: optimize parameters
+        /*************** M-step: optimize parameters *****************/
         double diff = std::numeric_limits<double>::max();
         size_t iter = 0;
         while (iter < MAXITER && diff > tolerance) {
@@ -2661,7 +2598,7 @@ main(int argc, const char **argv) {
           CONVERGE = true;
       }
 
-      // get posterior one last time
+      /* get posterior one last time*/
       approx_posterior(subtree_sizes, start_param, reset_points, tol,
                        max_app_iter, tree_prob_table_mix);
 
@@ -2670,7 +2607,7 @@ main(int argc, const char **argv) {
         if (!out)
           throw SMITHLABException("bad output file: " + outfile);
 
-        //build domain
+        /*build domain*/
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5;
@@ -2679,7 +2616,7 @@ main(int argc, const char **argv) {
         if (VERBOSE)
           cerr << "Built total " << domains.size() << " domains" << endl;
 
-        //wirte out domain
+        /* wirte out domain */
         out << "#" << t.Newick_format()
             << "\tpi0=" << start_param[0] << "\tRate=" << start_param[1]
             << "\tg0=" << start_param[2] << "\tg1=" << start_param[3] << endl;
@@ -2687,7 +2624,7 @@ main(int argc, const char **argv) {
           out << domains[i] << '\n';
         }
 
-        //write out single sites
+        /* write out single sites */
         if (SINGLE) {
           string outssfile = outfile + "_bysite";
           std::ofstream outss(outssfile.c_str());
