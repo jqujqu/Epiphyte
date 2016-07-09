@@ -418,6 +418,7 @@ fill_leaf_prob(const bool VERBOSE,
     }
     mean_hypo_prob = mean_hypo_prob/obs;
     pi0_est += mean_hypo_prob;
+
     if (VERBOSE) cerr << mean_hypo_prob << endl;
 
     for (size_t j = 0; j < n_sites; ++j) {
@@ -425,13 +426,13 @@ fill_leaf_prob(const bool VERBOSE,
         prev = j;
         next = j;
       } else {
-        if (j > next) {
-          while (next < n_sites-1 && hypo_prob_table[next][i]<0) ++next;
+        if (j >= next) {
+          next = j+1;
+          while (next < n_sites && hypo_prob_table[next][i]<0) ++next;
         }
         size_t d1 = distance_between_sites(sites[j], sites[prev]);
-        size_t d2 = distance_between_sites(sites[j], sites[next]);
-
-        if (j > prev && j < next &&
+        size_t d2 = (next < n_sites) ? distance_between_sites(sites[j], sites[next]) : desert_size;
+        if (prev < j && j < next &&
             d1 < desert_size && d2 < desert_size) {
           double w1 = d2/(d1+d2);
           hypo_prob_table[j][i] =
@@ -439,21 +440,21 @@ fill_leaf_prob(const bool VERBOSE,
             hypo_prob_table[next][i]*(1.0-w1);
           ++count;
         } else if (prev < j && d1 < desert_size) {
+
           double w1 = d1/(desert_size);
           hypo_prob_table[j][i] =
             mean_hypo_prob*w1 +
             hypo_prob_table[prev][i]*(1-w1);
-          assert(hypo_prob_table[j][i] >= 0);
           ++count;
-        } else if (j < next && d2 < desert_size){
+        } else if (d2 < desert_size){
           double w1 = d2/desert_size;
           hypo_prob_table[j][i] =
             mean_hypo_prob*w1 +
             hypo_prob_table[next][i]*(1.0-w1);
-          assert(hypo_prob_table[j][i] >= 0);
           ++count;
         } else {
           hypo_prob_table[j][i] = mean_hypo_prob;
+          ++count;
         }
       }
     }
