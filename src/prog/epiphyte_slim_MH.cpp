@@ -235,6 +235,7 @@ void
 parse_table_line(istringstream &iss,
                  vector<vector<double> > &meth,
                  bool &allmissing) {
+  const double tol = 1e-10;
   double val;
   vector<double> meth_fields;
   size_t observed = 0;
@@ -242,8 +243,10 @@ parse_table_line(istringstream &iss,
   while (iss >> val) {
     if ( (val < 0 && val != -1.0) || val > 1.0)
       throw SMITHLABException("bad probability value: [" + iss.str() + "]");
-    if (val >= 0.0 )
+    if (val >= 0.0 ) {
       ++observed;
+      val = min(max(tol, val), 1.0-tol);
+    }
     meth_fields.push_back(val);
   }
 
@@ -2126,17 +2129,56 @@ optimize_params(const vector<size_t> &subtree_sizes,
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+void
+local_parsimony(const vector<size_t> &subtree_sizes, 
+                const vector<size_t> &parent_ids,
+                const size_t node_id,
+                string &state) {
+  if (subtree_sizes[node_id] == 1) 
+    return;
+
+  size_t count = 1;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count; 
+    local_parsimony(subtree_sizes, parent_ids, child_id, state);
+    count += subtree_sizes[child_id];
+  }
+  
+  count = 1;
+  char s = state[node_id+1];
+  bool SAME = true;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count;
+    if (state[child_id] != s) {
+      SAME= false; 
+      break;
+    }
+    count += subtree_sizes[child_id];
+  }
+  if (SAME) {
+    state[node_id] = s;
+  } else {
+    s = state[parent_ids[node_id]];
+    state[node_id] = s;
+  }
+}
+
 static void
-tree_prob_to_states(const vector<vector<double> > &tree_prob_table,
-                    const double cutoff,
-                    vector<string> &states) {
+tree_prob_to_states(const vector<size_t> &subtree_sizes,
+                    const vector<size_t> &parent_ids,
+                    const vector<vector<double> > &tree_prob_table,
+                    const double cutoff, vector<string> &states) {
   const size_t n_nodes = tree_prob_table[0].size();
-  for (size_t i = 0; i < tree_prob_table.size(); ++i) {
+  const size_t n_sites= tree_prob_table.size();
+  for (size_t i = 0; i < n_sites; ++i) {
     string state;
     for (size_t j = 0; j < n_nodes; ++j ) {
       state += ((tree_prob_table[i][j] <= cutoff) ? '1' : '0' );
     }
     states.push_back(state);
+  }
+  for (size_t i = 0; i < n_sites; ++i) {
+    local_parsimony(subtree_sizes, parent_ids, 0, states[i]);
   }
 }
 
@@ -2341,7 +2383,6 @@ main(int argc, const char **argv) {
       start_param[4+i] = Ts[i];
     }
 
-
     /**************************************************************************/
     /******************** LOAD METHYLATION DATA *******************************/
     vector<Site> sites;
@@ -2358,16 +2399,6 @@ main(int argc, const char **argv) {
       if (VERBOSE) cerr << "[Separating deserts]" << endl;
       separate_regions(desert_size, tree_prob_table, sites, reset_points);
 
-      if (VERBOSE) {
-        if (PARAMFIX) cerr << "Given parameter:\t";
-        else cerr << "Start parameter:\t";
-        for (size_t i = 0; i < start_param.size(); ++i) {
-          if (i < 4) cerr << start_param[i] << "\t";
-          if (i > 4) cerr << "[branch "<< i-4 <<"]="
-                          << -log(1.0 - start_param[i]) << "\t";
-        }
-        cerr << endl;
-      }
 
       const size_t n_sites = tree_prob_table.size();
 
@@ -2415,6 +2446,7 @@ main(int argc, const char **argv) {
       }
 
     } else {
+
       if (VERBOSE)
         cerr << "============ LEAF MODE =============" << endl
              << "[Loading LEAF table]" << endl;
@@ -2461,6 +2493,7 @@ main(int argc, const char **argv) {
         cerr << "After filtering: " << n_sites
              << " in " << reset_points.size() -1 << "blocks" << endl;
       }
+
       if (!PARAMFIX) {
         start_param[0] = pi0_est;
         start_param[2] = g0_est;
@@ -2487,6 +2520,7 @@ main(int argc, const char **argv) {
       vector<vector<size_t> > empty_state_table(n_sites, vector<size_t>(n_nodes, 0));
 
       bool CONVERGE = false;
+      if (PARAMFIX) CONVERGE = true; 
       size_t ITER = 0;
       const size_t EMMAXITER = 30;
       const double tol = 1e-6;
@@ -2511,12 +2545,10 @@ main(int argc, const char **argv) {
           for (size_t node_id = 0; node_id < n_nodes; ++ node_id) {
             if (subtree_sizes[node_id] > 1) {
               tree_state_table_all[pos][node_id] = 1;
-              //tree_prob_table_mix[pos][node_id] = 0.5;
             } else {
               /* 0 means hypo state; 1 means hyper state (opposite to the hypoprobs)*/
               size_t s = (tree_prob_table_mix[pos][node_id] > 0.5)? 0 : 1;
               tree_state_table_all[pos][node_id] = s;
-              //tree_prob_table_mix[pos][node_id] = tree_prob_table_full[pos][node_id];
             }
           }
         }
@@ -2600,6 +2632,7 @@ main(int argc, const char **argv) {
       }
 
       /* get posterior one last time*/
+      if (VERBOSE) cerr << "Last round of posterior estimation" << endl;
       approx_posterior(subtree_sizes, start_param, reset_points, tol,
                        max_app_iter, tree_prob_table_mix);
 
@@ -2612,7 +2645,8 @@ main(int argc, const char **argv) {
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5;
-        tree_prob_to_states(tree_prob_table_mix, cutoff, states);
+        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table_mix, 
+                            cutoff, states);
         build_domain(minfragcpg, desert_size, sites, states, domains);
         if (VERBOSE)
           cerr << "Built total " << domains.size() << " domains" << endl;
