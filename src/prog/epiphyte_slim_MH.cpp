@@ -437,13 +437,12 @@ fill_leaf_prob(const bool VERBOSE,
         size_t d2 = (next < n_sites) ? distance_between_sites(sites[j], sites[next]) : desert_size;
         if (prev < j && j < next &&
             d1 < desert_size && d2 < desert_size) {
-          double w1 = d2/(d1+d2);
+          double w1 = static_cast<double>(d2)/(d1+d2);
           hypo_prob_table[j][i] =
             hypo_prob_table[prev][i]*w1 +
             hypo_prob_table[next][i]*(1.0-w1);
           ++count;
         } else if (prev < j && d1 < desert_size) {
-
           double w1 = d1/(desert_size);
           hypo_prob_table[j][i] =
             mean_hypo_prob*w1 +
