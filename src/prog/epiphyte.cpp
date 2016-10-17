@@ -434,7 +434,10 @@ fill_leaf_prob(const bool VERBOSE,
           while (next < n_sites && hypo_prob_table[next][i]<0) ++next;
         }
         size_t d1 = distance_between_sites(sites[j], sites[prev]);
-        size_t d2 = (next < n_sites) ? distance_between_sites(sites[j], sites[next]) : desert_size;
+        size_t d2 = desert_size;
+        if (next < n_sites) {
+          d2 = distance_between_sites(sites[j], sites[next]);
+        }
         if (prev < j && j < next &&
             d1 < desert_size && d2 < desert_size) {
           double w1 = static_cast<double>(d2)/(d1+d2);
@@ -460,7 +463,9 @@ fill_leaf_prob(const bool VERBOSE,
         }
       }
     }
-    if (VERBOSE) cerr << "Filled " << count << " missing sites in leaf" << i << endl;
+    if (VERBOSE)
+      cerr << "Filled " << count
+           << " missing sites in leaf" << i << endl;
   }
   pi0_est = pi0_est/n_leaf;
 }
@@ -487,12 +492,15 @@ separate_regions(const bool VERBOSE,
     if (VERBOSE)
       cerr << "Processing sample" << i ;
     size_t j = 0;
-    for (j = 0; j < totalsites && meth[j][i] == -1.0; ++j) {
-      is_desert[j] = true;
-    }
+    while (j < totalsites && meth[j][i] == -1.0) ++j;
 
-    if (j == totalsites)
+    if (j == totalsites) {
       throw SMITHLABException("No valid observation.");
+    } else if (distance_between_sites(sites[0], sites[j]) > desert_size ) {
+      for (size_t w = 0; w < j; ++w) {
+        is_desert[w] = true;
+      }
+    }
 
     Site prev_obs = sites[j];
     for (size_t k = j+1; k < totalsites; ++k) {
@@ -506,10 +514,11 @@ separate_regions(const bool VERBOSE,
           }
         }
         j = k;
-        prev_obs = sites[k];
+        prev_obs = sites[j];
       } else {
-        for (size_t w = j+1; w < totalsites; ++w)
+        for (size_t w = j+1; w < totalsites; ++w) {
           is_desert[w] = true;
+        }
       }
     }
     if (VERBOSE)
@@ -589,6 +598,11 @@ separate_regions(const bool VERBOSE,
   }
   g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
   g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
+
+  for (size_t j = 0; j < sites.size(); ++j) {
+      if (sites[j].pos == 57454390) cerr << "Found site " << sites[j].chrom << "\t" << sites[j].pos << endl;
+  }
+
 }
 
 
@@ -1608,7 +1622,7 @@ MH_single_update(const vector<size_t> &subtree_sizes,
     }
     double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
                                      pi0, G, time_trans_mats,
-                                     combined_trans_mats, 
+                                     combined_trans_mats,
                                      tree_state_table,
                                      node_id, pos, START, END);
     size_t state = tree_state_table[pos][node_id];
@@ -2129,27 +2143,27 @@ optimize_params(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 void
-local_parsimony(const vector<size_t> &subtree_sizes, 
+local_parsimony(const vector<size_t> &subtree_sizes,
                 const vector<size_t> &parent_ids,
                 const size_t node_id,
                 string &state) {
-  if (subtree_sizes[node_id] == 1) 
+  if (subtree_sizes[node_id] == 1)
     return;
 
   size_t count = 1;
   while (count < subtree_sizes[node_id]) {
-    size_t child_id = node_id + count; 
+    size_t child_id = node_id + count;
     local_parsimony(subtree_sizes, parent_ids, child_id, state);
     count += subtree_sizes[child_id];
   }
-  
+
   count = 1;
   char s = state[node_id+1];
   bool SAME = true;
   while (count < subtree_sizes[node_id]) {
     size_t child_id = node_id + count;
     if (state[child_id] != s) {
-      SAME= false; 
+      SAME= false;
       break;
     }
     count += subtree_sizes[child_id];
@@ -2282,11 +2296,12 @@ main(int argc, const char **argv) {
     bool SINGLE = false;
     bool COMPLETE = false;
 
-    OptionParser opt_parse(strip_path(argv[0]), "test funcitonality of "
-                           "phylo-methylome segmentation",
+    OptionParser opt_parse(strip_path(argv[0]), "Estimate phylogeny shape "
+                           "and methylation state transition rates for " 
+                           "methylome evolution",
                            "<newick> <hypoprob-tab>");
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block"
-                      "(default: 50)", false, minCpG);
+                      "(default: 10)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
                       "(default: 10)", false, MAXITER);
     opt_parse.add_opt("complete", 'c', "complete observations",
@@ -2519,7 +2534,7 @@ main(int argc, const char **argv) {
       vector<vector<size_t> > empty_state_table(n_sites, vector<size_t>(n_nodes, 0));
 
       bool CONVERGE = false;
-      if (PARAMFIX) CONVERGE = true; 
+      if (PARAMFIX) CONVERGE = true;
       size_t ITER = 0;
       const size_t EMMAXITER = 30;
       const double tol = 1e-6;
@@ -2644,7 +2659,7 @@ main(int argc, const char **argv) {
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5;
-        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table_mix, 
+        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table_mix,
                             cutoff, states);
         build_domain(minfragcpg, desert_size, sites, states, domains);
         if (VERBOSE)
