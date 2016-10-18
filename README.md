@@ -263,7 +263,7 @@ $ paste Name_Human.hypoprob Name_Chimp.hypoprob Name_Mouse.hypoprob \
        {print  $1":"$2,$5,$11,$17,$23,$29, $35}' > Name.hypoprob_table
 ```
 
-##### Estimate phylo-epigenetic tree
+##### Estimate phylo-epigenetic tree using hypomethylation probabilities
 ```sh
 $ epiphyte init.nwk Name.hypoprob_table -i 50 -v -s   \
   -o Name_hme.out -P Name_hme.params 2> Name_RunInfo.txt
@@ -272,7 +272,7 @@ $ epiphyte init.nwk Name.hypoprob_table -i 50 -v -s   \
 ##### Examine the results
 ```sh
 $ head Name_hme.out
-#((Human:0.233754,Chimp:0.254006)HC:0.525329,(Mouse:0.488647,Rat:0.457306)MR:0.316842,Dog:0.454417)HCMRD:0;	pi0=0.262087	Rate=0.394385	g0=0.885621	g1=0.94534
+#((Human:0.243985,Chimp:0.256054)HC:0.511797,(Mouse:0.484676,Rat:0.459043)MR:0.324749,Dog:0.42804)HCMRD:0;	pi0=0.277354	Rate=0.405005	g0=0.886627	g1=0.944707
 chr1	19465257	19465388	01110000	6	+
 chr1	19465595	19465652	11101111	9	+
 chr1	19465820	19466136	00000000	22	+
@@ -294,21 +294,55 @@ $ for i in `seq 1 8`; do
       {j+=1; if(substr($1,node,1)==substr($2,node,1)) i+=1}} END{print i/j}' `;
   echo node $i accuracy $rate;
   done
-# node 1 accuracy 0.948621
-# node 2 accuracy 0.973123
+# node 1 accuracy 0.947695
+# node 2 accuracy 0.972738
 # node 3 accuracy 0.993424
 # node 4 accuracy 0.992879
-# node 5 accuracy 0.956937
+# node 5 accuracy 0.956276
 # node 6 accuracy 0.992716
 # node 7 accuracy 0.991833
 # node 8 accuracy 0.992711
 ```
 
+##### Estimate phylo-epigenetic tree using true methylation states at extant species
+`Name_hypoprobs` contains simulated methylation states for extant species.
+```sh
+$ epiphyte init.nwk Name_hypoprobs -i 50 -v -s   \
+  -o Name_hme.out -P Name_hme.params 2> Name_RunInfo.txt
+```
+Accuracy is slightly improved for internal species
+```sh
+node 1 accuracy 0.949482
+node 2 accuracy 0.975884
+node 5 accuracy 0.957491
+```
+Model parameter estimation is also closer to the true parameters.
+```sh
+#((Human:0.186025,Chimp:0.215872)HC:0.485865,(Mouse:0.434805,Rat:0.406914)MR:0.285986,Dog:0.41114)HCMRD:0;	pi0=0.267176	Rate=0.380835	g0=0.897656	g1=0.951864
+```
 
-License
+### Copyright
+
+  Copyright (C) 2015 University of Southern California
+                Andrew D. Smith
+
+  Authors: Jianghan Qu and Andrew D. Smith
+
+  EPIPHYTE is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  EPIPHYTE is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with EPIPHYTE.  If not, see <http://www.gnu.org/licenses/>.
+
+
 ----
-
-
 
 [//]: # (These are reference links used in the body of this note and get stripped out when the markdown processor does its job. There is no need to format nicely because it shouldn't be seen. Thanks SO - http://stackoverflow.com/questions/4823468/store-comments-in-markdown-syntax)
 
