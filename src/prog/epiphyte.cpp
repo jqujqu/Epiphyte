@@ -2287,7 +2287,9 @@ main(int argc, const char **argv) {
     size_t minCpG = 10;
     size_t minfragcpg = 5;
     double tolerance = 1e-4; //parameter convergence tolerance
-    size_t MAXITER = 10;
+    size_t MAXITER = 10; // iterations inside the M-step
+    size_t EMMAXITER = 30; //rounds of EM iterations
+
     string outfile;
     string paramfile,outparamfile;
 
@@ -2297,13 +2299,13 @@ main(int argc, const char **argv) {
     bool COMPLETE = false;
 
     OptionParser opt_parse(strip_path(argv[0]), "Estimate phylogeny shape "
-                           "and methylation state transition rates for " 
+                           "and methylation state transition rates for "
                            "methylome evolution",
                            "<newick> <hypoprob-tab>");
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block"
                       "(default: 10)", false, minCpG);
     opt_parse.add_opt("maxiter", 'i', "maximum iteration"
-                      "(default: 10)", false, MAXITER);
+                      "(default: 30)", false, EMMAXITER);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
@@ -2536,7 +2538,6 @@ main(int argc, const char **argv) {
       bool CONVERGE = false;
       if (PARAMFIX) CONVERGE = true;
       size_t ITER = 0;
-      const size_t EMMAXITER = 30;
       const double tol = 1e-6;
       const size_t max_app_iter = 100;
       const size_t MHmaxiter = 500;
