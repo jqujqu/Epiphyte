@@ -28,7 +28,7 @@ endif
 PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte
 
 CXX = g++
-CXXFLAGS = -Wall -fmessage-length=50
+CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
 OPTFLAGS = -O2 
 DEBUGFLAGS = -g
 LIBS = -lgsl -lgslcblas
@@ -44,15 +44,6 @@ endif
 COMMON_DIR = $(realpath ../common)
 INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL}
 INCLUDEARGS = $(addprefix -I, $(INCLUDEDIRS))
-
-# Flags for Mavericks
-ifeq "$(shell uname)" "Darwin"
-CXXFLAGS += -arch x86_64
-ifeq "$(shell if [ `sysctl -n kern.osrelease | cut -d . -f 1` -ge 13 ];\
-              then echo 'true'; fi)" "true"
-CXXFLAGS += -stdlib=libstdc++
-endif
-endif
 
 all: $(PROGS)
 

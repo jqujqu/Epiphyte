@@ -22,7 +22,7 @@ SOURCES = $(wildcard *.cpp)
 OBJECTS = $(patsubst %.cpp,%.o,$(SOURCES))
 
 CXX = g++
-CXXFLAGS = -Wall
+CXXFLAGS = -Wall -std=c++11
 OPTFLAGS = -O2
 DEBUGFLAGS = -g
 
@@ -34,14 +34,6 @@ ifdef OPT
 CXXFLAGS += $(OPTFLAGS)
 endif
 
-# Flags for Mavericks
-ifeq "$(shell uname)" "Darwin"
-CXXFLAGS += -arch x86_64
-ifeq "$(shell if [ `sysctl -n kern.osrelease | cut -d . -f 1` -ge 13 ];\
-		then echo 'true'; fi)" "true"
-CXXFLAGS += -stdlib=libstdc++
-endif
-endif
 
 all: $(OBJECTS)
 %.o: %.cpp %.hpp
