@@ -26,8 +26,8 @@
 #include <iomanip> // std::setw
 #include <fstream>
 #include <numeric> //std::accumulate
-#include <tr1/unordered_map>
-#include <tr1/random>
+#include <unordered_map>
+#include <random>
 #include <algorithm>
 #include <cmath>    //std::abs, floor
 #include <limits>   //std::numeric_limits
@@ -53,7 +53,7 @@ using std::vector;
 
 using std::pair;
 using std::make_pair;
-using std::tr1::unordered_map;
+using std::unordered_map;
 
 using std::abs;
 using std::numeric_limits;

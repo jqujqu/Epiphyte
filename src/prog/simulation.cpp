@@ -31,7 +31,7 @@
 #include <fstream>
 #include <numeric>
 #include <sstream>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <algorithm> //std::max
 
 #include <gsl/gsl_randist.h>
@@ -52,7 +52,7 @@ using std::cerr;
 using std::cout;
 using std::pair;
 using std::make_pair;
-using std::tr1::unordered_set;
+using std::unordered_set;
 using std::max;
 
 static bool
@@ -328,9 +328,10 @@ write_site(std::ostream &out,
            const string &chrom, const size_t &pos,
            const string &strand, const string &seq,
            const double &meth, const size_t &coverage) {
-  return (out << chrom << "\t" << pos << "\t" << strand
-          << "\t" << seq << "\t" << (coverage == 0 ? 0.0 : meth) << "\t"
-          << coverage << '\n');
+  out << chrom << "\t" << pos << "\t" << strand
+      << "\t" << seq << "\t" << (coverage == 0 ? 0.0 : meth) << "\t"
+      << coverage << '\n';
+  return out.good();
 }
 
 bool
@@ -343,8 +344,9 @@ write_states(std::ostream &out,
     if(HME[i]) seq +="T";
     else seq += "C";
   }
-  return (out << chrom << "\t" << pos << "\t" << strand
-          << "\t" << seq << '\n');
+  out << chrom << "\t" << pos << "\t" << strand
+      << "\t" << seq << '\n';
+  return out.good();
 }
 
 // hypoprob = 1 <=> true, hypo, state="0", "T"
@@ -366,8 +368,9 @@ write_hypoprob(std::ostream &out,
                const string &chrom, const size_t &pos,
                const vector<size_t> &subtree_sizes,
                const vector<bool> HME) {
-  return (out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME)
-          << '\n' );
+  out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME)
+      << '\n';
+  return out.good();
 }
 
 static void
