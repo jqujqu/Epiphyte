@@ -244,9 +244,10 @@ methpipe::write_site(std::ostream &out,
                      const string &chrom, const size_t &pos,
                      const string &strand, const string &seq,
                      const double &meth, const size_t &coverage) {
-  return (out << chrom << "\t" << pos << "\t" << strand
-          << "\t" << seq << "\t" << (coverage == 0 ? 0.0 : meth) << "\t"
-          << coverage << '\n');
+  out << chrom << "\t" << pos << "\t" << strand
+      << "\t" << seq << "\t" << (coverage == 0 ? 0.0 : meth) << "\t"
+      << coverage << '\n';
+  return out.good();
 }
 
 bool
