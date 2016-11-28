@@ -367,7 +367,7 @@ bool
 write_hypoprob(std::ostream &out,
                const string &chrom, const size_t &pos,
                const vector<size_t> &subtree_sizes,
-               const vector<bool> HME) {
+               const vector<bool> &HME) {
   out << chrom <<":" << pos << HME_to_hypoprob(subtree_sizes, HME)
       << '\n';
   return out.good();
