@@ -29,11 +29,10 @@
 #include <unordered_map>
 #include <random>
 #include <algorithm> //std::max, min
-#include <cmath>    //std::abs, floor
+#include <cmath>    // std::abs
 #include <limits>   //std::numeric_limits
 #include <iterator>     // std::distance
 #include <unistd.h>
-#include <math.h>  //sqrt
 #include <gsl/gsl_rng.h>
 
 
