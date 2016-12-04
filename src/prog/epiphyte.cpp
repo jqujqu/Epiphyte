@@ -2462,7 +2462,6 @@ main(int argc, const char **argv) {
     vector<Site> sites;
     vector<size_t> reset_points;
     vector<vector<double> > tree_prob_table;
-    vector<vector<double> > tree_state_table;
 
     if (COMPLETE) {
       if (VERBOSE)
