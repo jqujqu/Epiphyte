@@ -598,10 +598,6 @@ separate_regions(const bool VERBOSE,
   g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
   g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
 
-  for (size_t j = 0; j < sites.size(); ++j) {
-    if (sites[j].pos == 57454390) cerr << "Found site " << sites[j].chrom << "\t" << sites[j].pos << endl;
-  }
-
 }
 
 
@@ -965,7 +961,7 @@ static void
 init_internal_prob(const vector<size_t> &subtree_sizes,
                    const size_t node_id,
                    vector<double> &node_probs) {
-  const double tol = 1e-5;
+  const double tol = 1e-10;
   size_t count = 1;
   // Recursion
   size_t n_desc_leaf = 0;
@@ -998,7 +994,8 @@ init_internal_prob(const vector<size_t> &subtree_sizes,
         ++n_extra_leaves;
       }
     }
-    sum_desc_leaf_prob += sum_extra_leaf_hypo_prob/(n_extra_leaves + tol);
+    if (n_extra_leaves > 0)
+      sum_desc_leaf_prob += sum_extra_leaf_hypo_prob/n_extra_leaves;
     ++n_desc_leaf;
   }
 
@@ -1668,7 +1665,7 @@ MH_update(const vector<size_t> &subtree_sizes,
   gsl_rng * r;
   T = gsl_rng_default;
   r = gsl_rng_alloc(T);
-  gsl_rng_set(r, time(NULL));
+  gsl_rng_set(r, 0); //time(NULL));
 
   double pi0 = params[0];
   double rate0 = params[1];
@@ -2192,7 +2189,7 @@ optimize_params(const vector<size_t> &subtree_sizes,
   //update G
   double new_g0;
   double new_g1;
-  update_G(TOL, subtree_sizes, params, triad_weights, root_weights,
+  update_G(TOL, subtree_sizes, newparams, triad_weights, root_weights,
            new_g0, new_g1);
   newparams[2] = new_g0;
   newparams[3] = new_g1;
