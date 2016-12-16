@@ -1181,7 +1181,7 @@ posterior_middle(const bool LEAF,
   double p_cur = 0.0;
   if (subtree_sizes[node_id] == 1) { // leaf
     if (LEAF) {
-      double p_prev = meth_prob_table[pos-1][parent_id];
+      double p_prev = meth_prob_table[pos-1][node_id];
       double p_parent_next = meth_prob_table[pos+1][parent_id];
       double p_parent_cur = meth_prob_table[pos][parent_id];
       double p_next = meth_prob_table[pos+1][node_id];
