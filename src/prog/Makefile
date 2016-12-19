@@ -29,7 +29,7 @@ PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte epiphy
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
-OPTFLAGS = -O2 
+OPTFLAGS = -O2 -funroll-loops
 DEBUGFLAGS = -g
 LIBS = -lgsl -lgslcblas
 
