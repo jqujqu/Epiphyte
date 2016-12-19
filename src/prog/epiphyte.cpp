@@ -23,16 +23,18 @@
 #include <sstream>
 #include <vector>
 #include <iostream>
+#include <iomanip> // std::setw
 #include <fstream>
-#include <numeric>    //std::accumulate
+#include <numeric> //std::accumulate
+#include <unordered_map>
 #include <random>
-#include <algorithm>  //std::max, min
-#include <cmath>      //std::abs
-#include <limits>     //std::numeric_limits
-#include <iterator>   //std::distance
+#include <algorithm> //std::max, min
+#include <cmath>    // std::abs
+#include <limits>   //std::numeric_limits
+#include <iterator>     // std::distance
 #include <unistd.h>
-
 #include <gsl/gsl_rng.h>
+
 
 /* from smithlab_cpp */
 #include "OptionParser.hpp"
@@ -42,6 +44,7 @@
 
 /* from methpipe */
 #include "MethpipeFiles.hpp"
+//#include "BetaBin.hpp"
 
 /* headers for epigenomic evolution */
 #include "PhyloTreePreorder.hpp"
@@ -52,8 +55,10 @@ using std::vector;
 using std::endl;
 using std::cerr;
 using std::cout;
+using std::setw;
 using std::pair;
 using std::make_pair;
+using std::unordered_map;
 using std::abs;
 using std::numeric_limits;
 using std::accumulate;
@@ -61,20 +66,7 @@ using std::inner_product;
 using std::min;
 using std::max;
 using std::istringstream;
-
-using std::ostream_iterator;
-
-#include <functional>
-using std::placeholders::_1;
-using std::bind;
-using std::plus;
-
-static const double PROBABILITY_GUARD = 1e-10;
-//static const double PARAMTOL = 1e-4; // tolerance for parameter convergence
-static const double POST_CONV_TOL = 1e-6;  //MAGIC
-static const double KL_CONV_TOL = 1e-8;    //MAGIC
-
-gsl_rng * rng; // ADS: this should not be global...
+using std::istream_iterator;
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -83,48 +75,105 @@ gsl_rng * rng; // ADS: this should not be global...
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-template <class T> double
-log_sum_log(const T p, const T q) {
-
-  if (p == 0) return q;
-  if (q == 0) return p;
-
-  const T larger = max(p, q);
-  return larger + log(1.0 + exp(min(p, q) - larger));
+double
+log_sum_log(const double p, const double q) {
+  if (p == 0) {return q;}
+  else if (q == 0) {return p;}
+  double larger = (p > q) ? p : q;
+  double smaller = (p > q) ? q : p;
+  return larger + log(1.0 + exp(smaller - larger));
 }
 
-template <class T> double
-kronecker_delta(const T &a, const T &b) {
-  return (a == b) ? 1.0 : 0.0;
+double
+kronecker_delta(const size_t a, const size_t b) {
+  return (a==b) ? 1.0 : 0.0;
 }
 
-static double
+double
 sign(const double val) {
-  return (val == 0.0) ? 0.0 : (val > 0.0 ? 1.0 : -1.0);
+  return (val == 0)? 0.0 : ( (val>0)? 1.0 : -1.0 );
 }
 
-static double
-kl_divergence(const vector<double> &P, const vector<double> &Q){
+struct Logscale {
+  double logval;
+  double symbol;
+  Logscale(): logval(0.0), symbol(0.0) {}
+  Logscale(double l, double s) :
+    logval(l), symbol(s) {}
+
+  void assign_from_val(const double val) {
+    if (val == 0) {
+      symbol = 0;
+    } else {
+      symbol = (val>0) ? 1.0 : -1.0;
+      logval = log(abs(val));
+    }
+  }
+};
+
+double
+KLdist(const vector<double> &P, const vector<double> &Q){
   assert(P.size()==Q.size());
-  const double psum = std::accumulate(P.begin(), P.end(), 0.0);
-  const double qsum = std::accumulate(Q.begin(), Q.end(), 0.0);
-  const double norm = log(psum) - log(qsum);
+  double psum =std::accumulate(P.begin(), P.end(), 0.0);
+  double qsum =std::accumulate(Q.begin(), Q.end(), 0.0);
+  double norm = log(psum)-log(qsum);
 
   double d = 0.0;
-  for (size_t i = 0; i < P.size(); ++i)
-    d += P[i]/psum*(log(P[i]) - log(Q[i]) - norm);
+  for (size_t i =0; i < P.size(); ++i) {
+    d += P[i]/psum*(log(P[i])-log(Q[i]) - norm);
+  }
   return d;
 }
 
-// ADS: temporary debug function; remember to remove; not even used?
-template <class T> void
-print_vec(std::ostream &out,
-          const vector<T> &dat, const string &s, string delim = "\t") {
-  out << s << '\n';
-  copy(dat.begin(), dat.end(), ostream_iterator<double>(out, delim.c_str()));
-  out << endl;
+static void
+KLdistvec(const vector<vector<double> > &P,
+          const vector<vector<double> > &Q,
+          vector<double> &kld) {
+  const double TOL = 1e-10;
+  assert(P.size()==Q.size());
+  kld = vector<double>(P.size(), 0.0);
+  for (size_t i = 0; i < P.size(); ++i) {
+    vector<double> p = P[i];
+    vector<double> q = Q[i];
+    assert (p.size() == q.size());
+    //add pseudo counts
+    for (size_t j = 0; j < p.size(); ++j) {
+      p[j] += TOL;
+      q[j] += TOL;
+    }
+    kld[i] = KLdist(p, q);
+  }
 }
 
+double
+L1dist(const vector<double> &P,
+       const vector<double> &Q) {
+  assert(P.size()==Q.size());
+  double d = 0.0;
+  for (size_t i = 0; i < P.size(); ++i) {
+    d += abs(P[i]-Q[i]);
+  }
+  return d;
+}
+
+static void
+print_table(const vector<vector<double> > &triad_weights) {
+  for (size_t b = 1; b < triad_weights.size(); ++b) {
+    cerr << b << "\t";
+    for (size_t i = 0; i < 8; ++i)
+      cerr << triad_weights[b][i] << "\t";
+    cerr << endl;
+  }
+}
+
+static void
+print_vec(const vector<double> &dat, const string &s) {
+  cerr << s <<"\t";
+  for (size_t i = 0; i < dat.size(); ++i) {
+    cerr << dat[i] << "\t";
+  }
+  cerr << endl;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -140,12 +189,6 @@ struct Site {
   Site() {}
   Site(const string &chr, size_t position) :
     chrom(chr), pos(position) {}
-  Site(const string &line) {
-    const size_t chrom_end = line.find_first_of(':');
-    chrom = line.substr(0, chrom_end);
-    const size_t pos_end = line.find_first_of(':', chrom_end + 1);
-    pos = stoi(line.substr(chrom_end + 1, pos_end - chrom_end));
-  }
 
   void
   assign_from_methtab_first_column(const string &line) {
@@ -154,45 +197,54 @@ struct Site {
     const size_t pos_end = line.find_first_of(':', chrom_end + 1);
     pos = atoi(line.substr(chrom_end + 1, pos_end - chrom_end).c_str());
   }
-  static size_t
-  distance(const Site &s, const Site &t) {
-    size_t d = std::numeric_limits<size_t>::max();
-    if (s.chrom == t.chrom)
-      d = (t.pos > s.pos) ? t.pos - s.pos : s.pos - t.pos;
-    return d;
-  }
 };
 
-
-static bool
-missing_meth_value(const double x) {
-  return x == -1.0;
+size_t
+distance_between_sites(Site s, Site t) {
+  size_t d = std::numeric_limits<size_t>::max();
+  if (s.chrom == t.chrom)
+    d = (t.pos > s.pos)? t.pos - s.pos : s.pos - t.pos;
+  return d;
 }
 
-static bool
-valid_meth_value(const double x) {
-  return (x >= 0.0 && x <= 1.0) || missing_meth_value(x);
+bool
+parse_table_line(istringstream &iss,
+                 vector<vector<pair<size_t, size_t> > > &meth) {
+  vector<pair<size_t, size_t> > counts;
+  size_t meth_count = 0, unmeth_count = 0;
+  size_t observed = 0;
+  while (iss >> meth_count) {
+    if (iss >> unmeth_count) {
+      counts.push_back(make_pair(meth_count, unmeth_count));
+      if (meth_count + unmeth_count > 0)
+        ++ observed;
+    } else {
+      throw SMITHLABException("bad line format: " + iss.str());
+    }
+  }
+  if (observed > 0) {
+    meth.push_back(counts);
+    return true;
+  } else {
+    return false;
+  }
 }
 
-static double
-away_from_extremes(const double x) {
-  return min(max(PROBABILITY_GUARD, x), 1.0 - PROBABILITY_GUARD);
-}
-
-static bool
-parse_table_line(istringstream &iss, vector<vector<double> > &meth) {
+void
+parse_table_line(istringstream &iss,
+                 vector<vector<double> > &meth,
+                 bool &allmissing) {
+  const double tol = 1e-10;
   double val;
   vector<double> meth_fields;
   size_t observed = 0;
 
   while (iss >> val) {
-    // hypomethylation probability should be -1.0 or [0,1]
-    // -1.0 indicates missing data
-    if (!valid_meth_value(val))
+    if ( (val < 0 && val != -1.0) || val > 1.0)
       throw SMITHLABException("bad probability value: [" + iss.str() + "]");
-    if (!missing_meth_value(val)) {
+    if (val >= 0.0 ) {
       ++observed;
-      val = away_from_extremes(val);
+      val = min(max(tol, val), 1.0-tol);
     }
     meth_fields.push_back(val);
   }
@@ -200,12 +252,13 @@ parse_table_line(istringstream &iss, vector<vector<double> > &meth) {
   if (meth_fields.empty())
     throw SMITHLABException("bad line format: " + iss.str());
 
-  if (observed > 0)
+  if (observed > 0) {
     meth.push_back(meth_fields);
-
-  return (observed > 0);
+    allmissing = false;
+  } else {
+    allmissing = true;
+  }
 }
-
 
 template <class T> void
 parse_meth_table_line(const string &line, vector<Site> &sites,
@@ -216,14 +269,17 @@ parse_meth_table_line(const string &line, vector<Site> &sites,
   // take care of the site location (chrom and position)
   string first_column;
   iss >> first_column;
-  Site site(first_column);
+  Site site;
+  site.assign_from_methtab_first_column(first_column);
 
   // now get the methylation information, either as pairs of read
   // counts or posteriors, depending on the file type (run mode)
-  if (parse_table_line(iss, meth))
+  bool allmissing;
+  parse_table_line(iss, meth, allmissing);
+  if (!allmissing)
     sites.push_back(site);
-}
 
+}
 
 template <class T> void
 load_meth_table(const string &filename, vector<Site> &sites,
@@ -250,147 +306,87 @@ load_meth_table(const string &filename, vector<Site> &sites,
   }
 }
 
-
 static void
-load_full_states_as_prob(const string filename, const size_t n_nodes,
+load_full_states_as_prob(const string filename,
+                         const size_t n_nodes,
                          vector<Site> &sites,
                          vector<vector<double> > &tree_prob_table) {
   std::ifstream in(filename.c_str());
   if (!in)
     throw SMITHLABException("cannot read:" + filename);
 
+  const double TOL = 1e-10;
   string line;
   while (getline(in, line)) {
-    if (line[0] != '#') { //skip header lines
+    if (line[0] == '#') { //skip header lines
+      continue;
+    } else {
       istringstream iss(line);
       string first_column;
       iss >> first_column;
-      sites.push_back(Site(first_column));
+      Site site;
+      site.assign_from_methtab_first_column(first_column);
+      sites.push_back(site);
 
       string state;
       iss >> state;
       vector<double> probs;
       if (state.length() != n_nodes)
         throw SMITHLABException("inconsistent state length: " + line);
-
-      for (size_t i = 0; i < n_nodes; ++i)
-        probs.push_back(state[i] == '0' ? 1.0 - PROBABILITY_GUARD : PROBABILITY_GUARD);
-
+      for (size_t i = 0; i < n_nodes; ++i) {
+        probs.push_back( (state[i] == '0')? 1.0 - TOL : TOL);
+      }
       tree_prob_table.push_back(probs);
     }
   }
 }
 
 
-struct param_set {
-
-  static double tolerance; // tolerance for parameter estimate precision
-
-  double pi0;
-  double rate0;
-  double g0;
-  double g1;
-  vector<double> T;
-
-  param_set() {}
-  param_set(double _pi0, double _rate0, double _g0, double _g1) :
-    pi0(_pi0), rate0(_rate0), g0(_g0), g1(_g1) {}
-  param_set(double _pi0, double _rate0,
-            double _g0, double _g1, const vector<double> &_T) :
-    pi0(_pi0), rate0(_rate0), g0(_g0), g1(_g1), T(_T) {}
-
-  void assign_branches(const vector<double> &_T) {T = _T;}
-
-  static double
-  absolute_difference(const param_set &a, const param_set &b) {
-    assert(a.T.size() == b.T.size());
-    double d = (abs(a.g0 - b.g0) + abs(a.g1 - b.g1)+
-                abs(a.pi0 - b.pi0) + abs(a.rate0 - b.rate0));
-    for (size_t i = 0; i < a.T.size(); ++i)
-      d += abs(a.T[i] - b.T[i]);
-    return d;
-  }
-
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "pi0=" << pi0 << ", "
-        << "rate0=" << rate0 << ", "
-        << "g0=" << g0 << ", "
-        << "g1=" << g1 << ", "
-        << "T=(";
-    // ADS: is the approach below safe to use? What about |T|=0?
-    // JQU: Now it's safe
-    if (!T.empty()) {
-      copy(T.begin(), T.end()-1, ostream_iterator<double>(oss, ","));
-      oss << T.back();
-    }
-    oss << ')';
-    return oss.str();
-  }
-
-  void read(const string &paramfile, PhyloTreePreorder &t);
-  bool is_valid() const { // strict inequalities to avoid invalid log value
-    return (pi0 < 1.0 && pi0 > 0.0 && rate0 < 1.0 && rate0 > 0.0 &&
-            g0 < 1.0 && g0 > 0.0 && g1 < 1.0 && g1 > 0.0);
-  }
-};
-double param_set::tolerance = 1e-4; // tolerance for parameter estimate precision
-
-
-std::ostream &
-operator<<(std::ostream &out, const param_set &ps) {
-  return out << ps.tostring();
-}
-
-
-void
-param_set::read(const string &paramfile, PhyloTreePreorder &t) {
-
+static void
+read_params(const string &paramfile,
+            double &root_unmeth_prob, double &rate0,
+            double &g0, double &g1,
+            PhyloTreePreorder &t) {
   std::ifstream in(paramfile.c_str());
   if (!in)
-    throw std::runtime_error("cannot read: " + paramfile);
+    throw SMITHLABException("cannot read: " + paramfile);
 
-  // First read in the tree (Newick format). The reason this is done
-  // here is to ensure the format of the file is correct. When
-  // parameters are provided and not learned, the tree will be read as
-  // usual, from the tree file, but also replicated here
-  in >> t;
-  in >> pi0;
-  in >> rate0;
-  in >> g0;
-  in >> g1;
+  string line;
+  getline(in, line);
+  istringstream iss(line);
+  iss >> t;
 
-  // sync the transformed values for brances in parameter set
-  vector<double> branches;
-  t.get_branch_lengths(branches);
-  T.clear();
-  T.resize(branches.size(), 0.0);
-  for (size_t i = 1; i < branches.size(); ++i)
-    // ADS: need some way to check that this transformation has
-    // happened and has been reversed when appropriate.
-    // JQU: T should always hold transformed values
-    T[i] = 1.0 - 1.0/exp(branches[i]);
-
-  assert(is_valid());
+  getline(in, line);
+  istringstream issp_1(line);
+  issp_1 >> root_unmeth_prob >> rate0;
+  getline(in, line);
+  istringstream issp_2(line);
+  issp_2 >> g0 >> g1;
+  if (root_unmeth_prob >= 1.0 || root_unmeth_prob <= 0.0 ||
+      rate0 >= 1.0 || rate0 <= 0.0 || g0 >=1.0 || g0 <= 0.0 ||
+      g1 >= 1.0 || g1 <= 0.0)
+    throw SMITHLABException("wrong parameter range: " + paramfile);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ///////////// ABOVE CODE IS FOR LOADING DATA  //////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-///////////// BELOW CODE IS FOR PROCESSING TREE ////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-static void
-get_parent_id(const vector<size_t> &subtree_sizes, vector<size_t> &parent_id) {
+
+void
+get_parent_id(const vector<size_t> &subtree_sizes,
+              vector<size_t> &parent_id) {
   parent_id = vector<size_t>(subtree_sizes.size(), 0);
-  for (size_t i = 0; i < subtree_sizes.size(); ++i)
-    for (size_t count = 1; count < subtree_sizes[i];){
+  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    size_t count = 1;
+    while (count < subtree_sizes[i]){
       size_t child_id = i + count;
       parent_id[child_id] = i;
       count += subtree_sizes[child_id];
     }
+  }
 }
 
 static bool
@@ -403,73 +399,75 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
 
 static void
 fill_leaf_prob(const bool VERBOSE,
-               const vector<Site> &sites, const size_t desert_size,
-               vector<vector<double> > &hypo_prob_table, double &pi0_est) {
-
-  const size_t n_sites = hypo_prob_table.size();
-  const size_t n_leaf = hypo_prob_table[0].size();
-
+               const vector<Site> &sites,
+               const size_t desert_size,
+               vector<vector<double> > &hypo_prob_table,
+               double &pi0_est) {
+  size_t n_sites = hypo_prob_table.size();
+  size_t n_leaf = hypo_prob_table[0].size();
   pi0_est = 0.0;
   for (size_t i = 0; i < n_leaf; ++i) {
-    double mean_hypo_prob = 0.0;
-    size_t n_obs = 0;
-    for (size_t j = 0; j < n_sites; ++j)
-      if (hypo_prob_table[j][i] >= 0.0) {
-        mean_hypo_prob += hypo_prob_table[j][i];
-        ++n_obs;
-      }
-    mean_hypo_prob = mean_hypo_prob/n_obs;
-    pi0_est += mean_hypo_prob;
-
-    if (VERBOSE)
-      cerr << "[mean_hypo_prob: " << mean_hypo_prob << "]" << endl;
-
-    // ADS: not clear on what is the purpose of the loop below
-    // JQU: For missing observations, weight two nearest observations
-    //      (one upstream, one downstream, up to desert_size from current site)
-    //      to augment the missing value.
     size_t prev = 0;
     size_t next = 0;
     size_t count = 0;
+    double mean_hypo_prob = 0.0;
+    size_t obs = 0;
+    for (size_t j = 0; j < n_sites; ++j) {
+      if (hypo_prob_table[j][i] >= 0 ) {
+        mean_hypo_prob += hypo_prob_table[j][i] ;
+        ++obs;
+      }
+    }
+    mean_hypo_prob = mean_hypo_prob/obs;
+    pi0_est += mean_hypo_prob;
+
+    if (VERBOSE) cerr << mean_hypo_prob << endl;
+
     for (size_t j = 0; j < n_sites; ++j) {
       if (hypo_prob_table[j][i] >= 0) {
         prev = j;
         next = j;
       } else {
         if (j >= next) {
-          next = j + 1;
-          while (next < n_sites && hypo_prob_table[next][i] < 0.0)
-            ++next;
+          next = j+1;
+          while (next < n_sites && hypo_prob_table[next][i]<0) ++next;
         }
-        const size_t d1 = Site::distance(sites[j], sites[prev]);
-        const size_t d2 = (next < n_sites) ?
-          Site::distance(sites[j], sites[next]) : desert_size;
-
-        if (prev < j && j < next && d1 < desert_size && d2 < desert_size) {
-          const double w1 = static_cast<double>(d2)/(d1 + d2);
-          hypo_prob_table[j][i] = (hypo_prob_table[prev][i]*w1 +
-                                   hypo_prob_table[next][i]*(1.0 - w1));
+        size_t d1 = distance_between_sites(sites[j], sites[prev]);
+        size_t d2 = desert_size;
+        if (next < n_sites) {
+          d2 = distance_between_sites(sites[j], sites[next]);
+        }
+        if (prev < j && j < next &&
+            d1 < desert_size && d2 < desert_size) {
+          double w1 = static_cast<double>(d2)/(d1+d2);
+          hypo_prob_table[j][i] =
+            hypo_prob_table[prev][i]*w1 +
+            hypo_prob_table[next][i]*(1.0-w1);
+          ++count;
         } else if (prev < j && d1 < desert_size) {
-          const double w1 = d1/(desert_size);
-          hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
-                                   hypo_prob_table[prev][i]*(1.0 - w1));
-        } else if (d2 < desert_size) {
-          const double w1 = d2/desert_size;
-          hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
-                                   hypo_prob_table[next][i]*(1.0 - w1));
+          double w1 = d1/(desert_size);
+          hypo_prob_table[j][i] =
+            mean_hypo_prob*w1 +
+            hypo_prob_table[prev][i]*(1-w1);
+          ++count;
+        } else if (d2 < desert_size){
+          double w1 = d2/desert_size;
+          hypo_prob_table[j][i] =
+            mean_hypo_prob*w1 +
+            hypo_prob_table[next][i]*(1.0-w1);
+          ++count;
         } else {
           hypo_prob_table[j][i] = mean_hypo_prob;
+          ++count;
         }
-        ++count;
       }
     }
     if (VERBOSE)
-      cerr << "[filled " << count << " "
-           << "missing sites in leaf: " << i << "]" << endl;
+      cerr << "Filled " << count
+           << " missing sites in leaf" << i << endl;
   }
   pi0_est = pi0_est/n_leaf;
 }
-
 
 static void
 separate_regions(const bool VERBOSE,
@@ -480,7 +478,6 @@ separate_regions(const bool VERBOSE,
                  vector<Site> &sites,
                  vector<size_t> &reset_points,
                  double &g0_est, double &g1_est, double &pi0_est) {
-
   const size_t nleaf = meth[0].size();
   const size_t totalsites = sites.size();
 
@@ -492,43 +489,47 @@ separate_regions(const bool VERBOSE,
   vector<bool> is_desert(totalsites, false);
   for (size_t i = 0; i < nleaf; ++i) {
     if (VERBOSE)
-      cerr << "[Processing sample: " << i ;
+      cerr << "Processing sample" << i ;
     size_t j = 0;
     while (j < totalsites && meth[j][i] == -1.0) ++j;
 
-    if (j == totalsites)
+    if (j == totalsites) {
       throw SMITHLABException("No valid observation.");
-
-    if (Site::distance(sites[0], sites[j]) > desert_size )
-      for (size_t w = 0; w < j; ++w)
+    } else if (distance_between_sites(sites[0], sites[j]) > desert_size ) {
+      for (size_t w = 0; w < j; ++w) {
         is_desert[w] = true;
+      }
+    }
 
     Site prev_obs = sites[j];
     for (size_t k = j+1; k < totalsites; ++k) {
-
-      while (k < totalsites && meth[k][i] == -1.0) ++k;
-
+      while (k < totalsites && meth[k][i]== -1.0) {
+        ++k;
+      }
       if (k < totalsites) {
-        if (Site::distance(prev_obs, sites[k]) > desert_size)
-          for (size_t w = j + 1; w < k; ++w)
+        if (distance_between_sites(prev_obs, sites[k]) > desert_size)  {
+          for (size_t w = j+1; w < k; ++w) {
             is_desert[w] = true;
+          }
+        }
         j = k;
         prev_obs = sites[j];
       } else {
-        for (size_t w = j + 1; w < totalsites; ++w)
+        for (size_t w = j+1; w < totalsites; ++w) {
           is_desert[w] = true;
+        }
       }
     }
     if (VERBOSE)
-      cerr << " done]" << endl;
+      cerr << "[Done]" << endl;
   }
 
   size_t good = 0;
-  for (size_t i = 0; i < totalsites; ++i)
+  for (size_t i = 0; i < totalsites; ++i) {
     if (!is_desert[i]) ++good;
-
+  }
   if (VERBOSE)
-    cerr << "[n_good_sites: " << good << "]" << endl;
+    cerr << "Total" << good << " good sites" << endl;
 
   vector<Site> sites_copy;
   Site last_site;
@@ -547,17 +548,18 @@ separate_regions(const bool VERBOSE,
       // Maintain blocks
       if (sites_copy.size()==1) {
         reset_points.push_back(0);
-      } else if (Site::distance(last_site, sites[i]) > desert_size) {
+      } else if (distance_between_sites(last_site, sites[i]) > desert_size) {
         if (last_block_size < min_site_per_block) { //remove small block
-          const size_t start = reset_points.back();
-          sites_copy.erase(sites_copy.begin() + start, sites_copy.end());
-          meth_copy.erase(meth_copy.begin() + start, meth_copy.end());
-          meth_full_leaf.erase(meth_full_leaf.begin() + start, meth_full_leaf.end());
+          size_t start = reset_points.back();
+          sites_copy.erase(sites_copy.begin()+start, sites_copy.end() );
+          meth_copy.erase(meth_copy.begin()+start, meth_copy.end());
+          meth_full_leaf.erase(meth_full_leaf.begin()+start, meth_full_leaf.end());
+
           reset_points.pop_back();
-          last_block_size = reset_points.empty() ?
-            0 : meth_copy.size() - reset_points.back();
+          last_block_size =
+            reset_points.empty()? 0 : meth_copy.size()-reset_points.back();
         } else { //end block, and start new block
-          reset_points.push_back(sites_copy.size() - 1);
+          reset_points.push_back(sites_copy.size()-1);
           last_block_size = 1;
         }
       }
@@ -568,12 +570,13 @@ separate_regions(const bool VERBOSE,
 
   if (last_block_size < min_site_per_block) { //remove small block
     size_t start = reset_points.back();
-    sites_copy.erase(sites_copy.begin() + start, sites_copy.end() );
-    meth_copy.erase(meth_copy.begin() + start, meth_copy.end());
-    meth_full_leaf.erase(meth_full_leaf.begin() + start, meth_full_leaf.end());
+    sites_copy.erase(sites_copy.begin()+start, sites_copy.end() );
+    meth_copy.erase(meth_copy.begin()+start, meth_copy.end());
+    meth_full_leaf.erase(meth_full_leaf.begin()+start, meth_full_leaf.end());
+
     reset_points.pop_back();
     last_block_size =
-      reset_points.empty() ? 0 : meth_copy.size() - reset_points.back();
+      reset_points.empty()? 0 : meth_copy.size()-reset_points.back();
   } else {
     reset_points.push_back(sites_copy.size());
   }
@@ -581,30 +584,41 @@ separate_regions(const bool VERBOSE,
   meth.swap(meth_copy);
   sites.swap(sites_copy);
 
-  double g00 = 0.0, g01 = 0.0, g10 = 0.0, g11 = 0.0;
-  for (size_t i = 0; i < nleaf; ++i)
-    for (size_t j = 0; j < meth.size() - 1; ++j)
-      if (meth[j][i] >= 0 && meth[j + 1][i] >= 0) {
-        g00 += meth[j][i]*meth[j + 1][i];
-        g01 += meth[j][i]*(1.0 - meth[j + 1][i]);
-        g10 += (1.0 - meth[j][i])*meth[j + 1][i];
-        g11 += (1.0 - meth[j][i])*(1.0 - meth[j + 1][i]);
+  double g00= 0.0, g01=0.0, g10=0.0, g11=0.0;
+  for (size_t i = 0; i < nleaf; ++i) {
+    for (size_t j = 0; j < meth.size()-1; ++j) {
+      if (meth[j][i] >= 0 && meth[j+1][i] >= 0) {
+        g00 += meth[j][i]*meth[j+1][i];
+        g01 += meth[j][i]*(1.0 - meth[j+1][i]);
+        g10 += (1.0 - meth[j][i])*meth[j+1][i];
+        g11 += (1.0 - meth[j][i])*(1.0 - meth[j+1][i]);
       }
-
+    }
+  }
   g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
   g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
+
 }
 
 
-//for complete data, assume each block have enough sites, only set reset_points
+//for complete data, each block should have enough sites, only set reset_points
 static void
 separate_regions(const size_t desert_size,
-                 vector<Site> &sites, vector<size_t> &reset_points) {
+                 vector<vector<double> > &tree_prob_table,
+                 vector<Site> &sites,
+                 vector<size_t> &reset_points) {
+
+  const size_t totalsites = sites.size();
+
   reset_points.push_back(0);
-  for (size_t i = 1; i < sites.size(); ++i)
-    if (Site::distance(sites[i-1], sites[i]) > desert_size)
+  Site last_site = sites[0];
+  for (size_t i = 1; i < totalsites; ++i) {
+    if (distance_between_sites(last_site, sites[i]) > desert_size) {
       reset_points.push_back(i);
-  reset_points.push_back(sites.size());
+    }
+    last_site = sites[i];
+  }
+  reset_points.push_back(totalsites);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -616,79 +630,69 @@ separate_regions(const size_t desert_size,
 static void
 subtree_sizes_to_leaves_preorder(const vector<size_t> &subtree_sizes,
                                  vector<size_t> &leaves_preorder) {
-  for (size_t i = 0; i < subtree_sizes.size(); ++i)
-    if (subtree_sizes[i] == 1)
+  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    if (subtree_sizes[i] == 1) {
       leaves_preorder.push_back(i);
+    }
+  }
 }
 
 
-// bool
-// is_binary(const vector<size_t> &subtree_sizes) {
-//   // ADS: this function seems not to be used
-//   return (subtree_sizes[0] == 1 + subtree_sizes[1] +
-//           subtree_sizes[subtree_sizes[1] + 1]);
-// }
+bool
+is_binary(const vector<size_t> &subtree_sizes) {
+  return (subtree_sizes[0] ==
+          1 + subtree_sizes[1] + subtree_sizes[subtree_sizes[1]+1]);
+}
+
 
 static void
 get_node_degrees(const vector<size_t> &subtree_sizes,
                  const size_t tree_start,
                  vector<size_t> &degrees) {
-
-  assert(degrees.size() == subtree_sizes.size());
-
   if (subtree_sizes[tree_start] == 1) {
     degrees[tree_start] = 1;
   } else {
+    size_t count = 1;
     if (tree_start > 0)
       degrees[tree_start] = 1;
-
-    for (size_t count = 1; count < subtree_sizes[tree_start]; ) {
-      const size_t next_child = tree_start + count;
+    while (count < subtree_sizes[tree_start]) {
+      size_t next_child = tree_start + count;
       get_node_degrees(subtree_sizes, next_child, degrees);
-      degrees[tree_start] += 1;
       count += subtree_sizes[next_child];
+      degrees[tree_start] += 1;
     }
+    assert (count == subtree_sizes[tree_start]);
   }
 }
 
+
 static void
-get_degrees(const vector<size_t> &subtree_sizes, vector<size_t> &degrees) {
+get_degrees(const vector<size_t> &subtree_sizes,
+            vector<size_t> &degrees) {
   degrees = vector<size_t>(subtree_sizes.size(), 0);
   get_node_degrees(subtree_sizes, 0, degrees);
 }
 
+
 bool
 is_semi_binary(const vector<size_t> &degrees) {
-
-  if (degrees[0] < 2 || degrees[0] > 3)
-    return false;
-
-  for (size_t i = 1; i < degrees.size(); ++i )
-    if (degrees[i] != 1 && degrees[i] != 3)
-      return false;
-
-  return true;
+  bool semi_binary = (degrees[0] ==2 || degrees[0] == 3);
+  size_t i = 1;
+  while (semi_binary && i < degrees.size()) {
+    semi_binary = (degrees[i] ==1 || degrees[i] ==3);
+    ++i;
+  }
+  return semi_binary;
 }
 
-static bool
-is_root(const size_t node_id) {return node_id == 0;}
-
-static bool
-is_leaf(const size_t subtree_size) {return subtree_size == 1;}
-
-static size_t
-count_leaves(const vector<size_t> &subtree_sizes) {
+size_t
+leafsize(const vector<size_t> &subtree_sizes) {
   size_t n_leaf = 0;
-  for (size_t i = 0; i < subtree_sizes.size(); ++i)
-    n_leaf += is_leaf(subtree_sizes[i]);
+  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    if (subtree_sizes[i] == 1)
+      ++n_leaf;
+  }
   return n_leaf;
-}
-
-static void
-get_children(const size_t node_id, const vector<size_t> &subtree_sizes,
-             vector<size_t> &children) {
-  for (size_t c = 1; c < subtree_sizes[node_id]; c += subtree_sizes[node_id + c])
-    children.push_back(node_id + c);
 }
 
 
@@ -698,281 +702,253 @@ get_children(const size_t node_id, const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-struct pair_state {
-  double uu, um; // think 2x2 matrix
-  double mu, mm;
 
-  pair_state(double _uu, double _um, double _mu, double _mm) :
-    uu(_uu), um(_um), mu(_mu), mm(_mm) {}
-  pair_state() : uu(0.0), um(0.0), mu(0.0), mm(0.0) {}
-
-  // WARNING: no range checking (for i,j > 1)
-  double operator()(int i, int j) const { // version for l-values
-    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////      quantity units          ////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+double
+evaluate_emission(const vector<size_t> &subtree_sizes,
+                  const string states,
+                  const vector<double> &hypo_prob) {
+  const double TOL = 1e-10;
+  double llk = 0;
+  size_t leaf_count = 0;
+  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    if (subtree_sizes[i] == 1 ) {
+      double p = hypo_prob[leaf_count];
+      if (p >= 0) {
+        if (p < TOL) p = TOL;
+        if (p > 1.0-TOL) p = 1.0-TOL;
+        llk += (states[i] == '0') ? log(p) : log(1.0 - p);
+      }
+      ++ leaf_count;
+    }
   }
-  double & operator()(int i, int j) { // version for r-values
-    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
-  }
-  pair_state operator+(const pair_state &other) const {
-    return pair_state(uu + other.uu, um + other.um,
-                      mu + other.mu, mm + other.mm);
-  }
-  void div(const double x) {
-    uu /= x; um /= x;
-    mu /= x; mm /= x;
-  }
-  void make_logs() {
-    uu = log(uu); um = log(um);
-    mu = log(mu); mm = log(mm);
-  }
-  void flatten(vector<double> &p) const {
-    p.clear();
-    p.push_back(uu); p.push_back(um);
-    p.push_back(mu); p.push_back(mm);
-  }
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "[" << uu << ", " << um << "]\n"
-        << "[" << mu << ", " << mm << "]";
-    return oss.str();
-  }
-};
-
-std::ostream &
-operator<<(std::ostream &out, const pair_state &ps) {
-  return out << ps.tostring();
-}
-
-
-struct triple_state {
-  double uuu, uum; // think: a 2x2 matrix
-  double umu, umm;
-
-  double muu, mum; // think: another 2x2 matrix
-  double mmu, mmm;
-
-  triple_state() : uuu(0.0), uum(0.0), umu(0.0), umm(0.0),
-                   muu(0.0), mum(0.0), mmu(0.0), mmm(0.0) {};
-  triple_state(double _uuu, double _uum, double _umu, double _umm,
-               double _muu, double _mum, double _mmu, double _mmm) :
-    uuu(_uuu), uum(_uum), umu(_umu), umm(_umm),
-    muu(_muu), mum(_mum), mmu(_mmu), mmm(_mmm) {};
-
-  // WARNING: no range checking
-  double operator()(int i, int j, int k) const { // version for l-value (lhs)
-    if (i == 0)
-      return (j == 0) ? (k == 0 ? uuu : uum) : (k == 0 ? umu : umm);
-    else
-      return (j == 0) ? (k == 0 ? muu : mum) : (k == 0 ? mmu : mmm);
-  }
-  double & operator()(int i, int j, int k) { // version for r-value (rhs)
-    if (i == 0)
-      return (j == 0) ? (k == 0 ? uuu : uum) : (k == 0 ? umu : umm);
-    else
-      return (j == 0) ? (k == 0 ? muu : mum) : (k == 0 ? mmu : mmm);
-  }
-
-  triple_state operator+(const triple_state &other) const {
-    return triple_state(uuu + other.uuu, uum + other.uum,
-                        umu + other.umu, umm + other.umm,
-                        muu + other.muu, mum + other.mum,
-                        mmu + other.mmu, mmm + other.mmm);
-  }
-  void div(const double x) {
-    uuu /= x; uum /= x;
-    umu /= x; umm /= x;
-
-    muu /= x; mum /= x;
-    mmu /= x; mmm /= x;
-  }
-  void make_logs() {
-    uuu = log(uuu); uum = log(uum);
-    umu = log(umu); umm = log(umm);
-
-    muu = log(muu); mum = log(mum);
-    mmu = log(mmu); mmm = log(mmm);
-  }
-  void flatten(vector<double> &p) const {
-    p.clear();
-    p.push_back(uuu); p.push_back(uum);
-    p.push_back(umu); p.push_back(umm);
-    p.push_back(muu); p.push_back(mum);
-    p.push_back(mmu); p.push_back(mmm);
-  }
-
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "u [" << uuu << ", " << uum << "]\n"
-        << "  [" << umu << ", " << umm << "]\n"
-        << "m [" << muu << ", " << mum << "]\n"
-        << "  [" << mmu << ", " << mmm << "]";
-    return oss.str();
-  }
-};
-
-std::ostream &
-operator<<(std::ostream &out, const triple_state &ts) {
-  return out << ts.tostring();
-}
-
-
-static void
-kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
-              vector<double> &kld) {
-  assert(P.size() == Q.size());
-  kld = vector<double>(P.size(), 0.0);
-  for (size_t i = 0; i < P.size(); ++i) {
-    vector<double> p, q;
-    P[i].flatten(p);
-    Q[i].flatten(q);
-    transform(p.begin(), p.end(), p.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    transform(q.begin(), q.end(), q.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    kld[i] = kl_divergence(p, q);
-  }
+  return llk;
 }
 
 
 // P(T)[0,0]: hypo -> hypo prob
 // P(T)[1,1]: hyper -> hyper prob
-void
-make_vertical_matrix(const double T, const double rate0, pair_state &P) {
-  assert(rate0 > 0 && rate0 < 1 && T < 1 && T > 0);
-  P = pair_state(1.0 - rate0*T,   rate0*T,
-                 (1.0 - rate0)*T, 1.0 - (1.0 - rate0)*T);
-}
-
-
-// input G instead of g0 g1
 static void
-combine_horiz_and_vert(const pair_state &G,
-                       const pair_state &P, triple_state &GP) {
-   // normalization denominators
-  pair_state GP_denom;
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      GP_denom(prev, anc) = G(prev, 0)*P(anc, 0) + G(prev, 1)*P(anc, 1);
+temporal_trans_prob_mat(const double T, const double rate0,
+                        vector<vector<double> > &time_transition_matrix) {
+  assert(rate0 > 0 && rate0 < 1 && T < 1 && T > 0);
+  time_transition_matrix = vector<vector<double> >(2, vector<double>(2, 0.0));
+  time_transition_matrix[0][0] = 1.0 - rate0*T;
+  time_transition_matrix[0][1] = rate0*T;
+  time_transition_matrix[1][0] = (1.0 - rate0)*T;
+  time_transition_matrix[1][1] = 1.0 - (1.0-rate0)*T;
+}
 
-  // collecting the combined probabilities
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      for (size_t cur = 0; cur < 2; ++cur)
-        GP(prev, anc, cur) = G(prev, cur)*P(anc, cur)/GP_denom(prev, anc);
+static void
+combined_trans_prob_mat(const double g0, const double g1,
+                        const vector<vector<double> > &time_trans_mat,
+                        vector<vector<vector<double> > > &combined_trans_mat) {
+  // spatial transition probabilities
+  vector<vector<double> >G(2, vector<double>(2, 0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][0] = 1.0 - g1;
+  G[1][1] = g1;
+
+  // normalization denominators
+  vector<vector<double> > prev_anc_denom(2, vector<double>(2,0.0));
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      prev_anc_denom[prev][anc] = G[prev][0]*time_trans_mat[anc][0] +
+        G[prev][1]*time_trans_mat[anc][1];
+    }
+  }
+
+  combined_trans_mat =
+    vector<vector<vector<double> > >(2, vector<vector<double> >(2,vector<double>(2,0.0)));
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      for (size_t cur = 0; cur < 2; ++cur) {
+        combined_trans_mat[prev][anc][cur] =
+          G[prev][cur]*time_trans_mat[anc][cur]/prev_anc_denom[prev][anc];
+      }
+    }
+  }
 }
 
 
-// compute the derivative of the transition matrix, passing values
-// back through parameters [T=1-exp(-branch)]
-// for a single branch
-void
-trans_deriv(const pair_state &Q, const pair_state &G, const double T,
-            const size_t prev, const size_t anc, const size_t cur,
-            const pair_state &GP_denom, const pair_state &P,
+
+//T=1-exp(-branch)
+static void
+trans_deriv(const vector<vector<double> > &Q,
+            const vector<vector<double> > &G,
+            const double T,
+            const size_t prev,
+            const size_t anc,
+            const size_t cur,
+            const vector<vector<double> > &prev_anc_denom,
+            const vector<vector<double> > &time_trans_mat,
             double &d_rate0, double &d_g0, double &d_g1, double &d_T) {
 
-  const double denom = GP_denom(prev, anc);
+  const double denom = prev_anc_denom[prev][anc];
 
-  double term =
-    kronecker_delta(cur, 1ul)*2 - 1.0 -
-    P(anc, cur)*(G(prev, 1) - G(prev, 0))/denom;
-
-  d_rate0 = T*G(prev, cur)/denom*term;
+  double term = kronecker_delta(cur, 1)*2 - 1.0 - time_trans_mat[anc][cur]*(G[prev][1]-G[prev][0])/denom;
+  d_rate0 = T*G[prev][cur]/denom*term;
 
   if (prev == 0) {
     d_g1 = 0;
-    term = kronecker_delta(cur, 0ul)*2 - 1.0 -
-      G(prev, cur)*(P(anc, 0) - P(anc, 1))/denom;
-    d_g0 = P(anc, cur)/denom*term;
+    term = kronecker_delta(cur, 0)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][0] - time_trans_mat[anc][1])/denom ;
+    d_g0= time_trans_mat[anc][cur]/denom*term;
   } else {
     d_g0 = 0;
-    term = kronecker_delta(cur, 1ul)*2 - 1.0 -
-      G(prev, cur)*(P(anc, 1) - P(anc, 0))/denom;
-    d_g1 = P(anc, cur)/denom*term;
+    term = kronecker_delta(cur, 1)*2 - 1.0 - G[prev][cur]*(time_trans_mat[anc][1] - time_trans_mat[anc][0])/denom;
+    d_g1 = time_trans_mat[anc][cur]/denom*term;
   }
-  term = Q(anc, cur) -
-    P(anc, cur)*(G(prev, 0)*Q(anc, 0) + G(prev, 1)*Q(anc, 1))/denom;
-  d_T = G(prev, cur)/denom*term;
+  term = Q[anc][cur] - time_trans_mat[anc][cur]*(G[prev][0]*Q[anc][0]+G[prev][1]*Q[anc][1])/denom;
+  d_T = G[prev][cur]/denom*term;
 }
 
-
-// For individual branch: T=1-exp(-branch)
-void
-combined_trans_prob_mat_deriv(const param_set &ps,
-                              const size_t &node_id,
-                              const pair_state &P,
-                              triple_state &GP, //prev x anc x cur
-                              triple_state &GP_drate,
-                              triple_state &GP_dg0,
-                              triple_state &GP_dg1,
-                              triple_state &GP_dT) {
+// On a single branch
+// T=1-exp(-branch)
+static void
+combined_trans_prob_mat_deriv(const double rate0, const double g0, const double g1, const double T,
+                              const vector<vector<double> > &time_trans_mat,
+                              vector<vector<vector<double> > > &combined_trans_mat, //prev x anc x cur
+                              vector<vector<vector<double> > > &combined_trans_mat_drate,
+                              vector<vector<vector<double> > > &combined_trans_mat_dg0,
+                              vector<vector<vector<double> > > &combined_trans_mat_dg1,
+                              vector<vector<vector<double> > > &combined_trans_mat_dT) {
   // deriv: (rate0, g0, g1, T)
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-  pair_state Q(-ps.rate0, ps.rate0, 1.0 - ps.rate0, ps.rate0 - 1.0);
+  vector<vector<double> > G(2,vector<double>(2,0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][1] = g1;
+  G[1][0] = 1.0 - g1;
+  vector<vector<double> > Q(2,vector<double>(2,0.0));
+  Q[0][0] = -1.0*rate0;
+  Q[0][1] = rate0;
+  Q[1][0] = 1.0 - rate0;
+  Q[1][1] = rate0 - 1.0;
 
-  pair_state GP_denom;
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      GP_denom(prev, anc) = G(prev, 0)*P(anc, 0) + G(prev, 1)*P(anc, 1);
+  vector<vector<double> > prev_anc_denom(2, vector<double>(2, 0.0));
+  for (size_t prev = 0; prev < 2; ++ prev) {
+    for (size_t anc = 0; anc < 2; ++ anc) {
+      prev_anc_denom[prev][anc] =
+        G[prev][0]*time_trans_mat[anc][0] + G[prev][1]*time_trans_mat[anc][1] ;
+    }
+  }
 
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      for (size_t cur = 0; cur < 2; ++cur)
-        GP(prev, anc, cur) = G(prev, cur)*P(anc, cur)/GP_denom(prev, anc);
+  combined_trans_mat =
+    vector<vector<vector<double> > >(2, vector<vector<double> >(2,vector<double>(2, 0.0)));
+  combined_trans_mat_drate = combined_trans_mat;
+  combined_trans_mat_dg0 = combined_trans_mat;
+  combined_trans_mat_dg1 = combined_trans_mat;
+  combined_trans_mat_dT = combined_trans_mat;
 
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      for (size_t cur = 0; cur < 2; ++ cur)
-        trans_deriv(Q, G, ps.T[node_id], prev, anc, cur, GP_denom, P,
-                    GP_drate(prev, anc, cur), GP_dg0(prev, anc, cur),
-                    GP_dg1(prev, anc, cur), GP_dT(prev, anc, cur));
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      for (size_t cur = 0; cur < 2; ++cur) {
+        combined_trans_mat[prev][anc][cur] =
+          G[prev][cur]*time_trans_mat[anc][cur]/prev_anc_denom[prev][anc];
+      }
+    }
+  }
+
+  for (size_t prev = 0; prev < 2; ++prev) {
+    for (size_t anc = 0; anc < 2; ++anc) {
+      for (size_t cur = 0; cur < 2; ++ cur) {
+        trans_deriv(Q, G, T, prev, anc, cur,
+                    prev_anc_denom, time_trans_mat,
+                    combined_trans_mat_drate[prev][anc][cur],
+                    combined_trans_mat_dg0[prev][anc][cur],
+                    combined_trans_mat_dg1[prev][anc][cur],
+                    combined_trans_mat_dT[prev][anc][cur]);
+      }
+    }
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////       Units grouped       ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
 static void
-get_transition_matrices(const param_set &ps,
-                            vector<pair_state> &P, vector<triple_state> &GP) {
-  assert(ps.is_valid());
+collect_transition_matrices(const double rate0, const double g0, const double g1,
+                            const vector<double> &Ts,
+                            vector<vector<vector<double> > > &time_trans_mats,
+                            vector<vector<vector<vector<double> > > > &combined_trans_mats) {
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
 
-  const size_t n_nodes = ps.T.size();
-  P = vector<pair_state>(n_nodes);
-  GP = vector<triple_state>(n_nodes);
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  const size_t n_nodes = Ts.size();
+  vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+  time_trans_mats = vector<vector<vector<double> > >(n_nodes, mat2x2);
+  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
+  combined_trans_mats = vector<vector<vector<vector<double> > > >(n_nodes, mat2x2x2);
 
   for (size_t i = 1; i < n_nodes; ++i) {
-    make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
-    combine_horiz_and_vert(G, P[i], GP[i]);
+    temporal_trans_prob_mat(Ts[i], rate0, time_trans_mats[i]);
+    combined_trans_prob_mat(g0, g1, time_trans_mats[i], combined_trans_mats[i]);
   }
 }
 
+
 static void
-get_transition_matrices_deriv(const param_set &ps,
-                                  vector<pair_state> &P,
-                                  vector<triple_state> &GP,
-                                  vector<triple_state> &GP_drate,
-                                  vector<triple_state> &GP_dg0,
-                                  vector<triple_state> &GP_dg1,
-                                  vector<triple_state> &GP_dT) {
+collect_transition_matrices_deriv(const double rate0,
+                                  const double g0, const double g1,
+                                  const vector<double> &Ts,
+                                  vector<vector<vector<double> > > &time_trans_mats,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg0,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dg1,
+                                  vector<vector<vector<vector<double> > > > &combined_trans_mats_dT) {
 
-  const size_t n_nodes = ps.T.size();
-  P = vector<pair_state>(n_nodes);
-
-  GP = vector<triple_state>(n_nodes); // dimensions: n_nodes x [prev x anc x cur]
-  GP_drate = vector<triple_state>(n_nodes);
-  GP_dg0 = vector<triple_state>(n_nodes);
-  GP_dg1 = vector<triple_state>(n_nodes);
-  GP_dT = vector<triple_state>(n_nodes);
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  const size_t n_nodes = Ts.size();
+  vector<vector<double> > mat2x2(2, vector<double>(2, 0.0));
+  vector<vector<vector<double> > > mat2x2x2(2, mat2x2);
+  time_trans_mats = vector<vector<vector<double> > > (n_nodes, mat2x2);
+  vector<vector<vector<vector<double> > > > multi_mat2x2x2(n_nodes, mat2x2x2);
+  combined_trans_mats =  multi_mat2x2x2; // node x prev x anc x cur
+  combined_trans_mats_drate = multi_mat2x2x2;
+  combined_trans_mats_dg0 = multi_mat2x2x2;
+  combined_trans_mats_dg1 = multi_mat2x2x2;
+  combined_trans_mats_dT = multi_mat2x2x2;
 
   for (size_t i = 1; i < n_nodes; ++i) {
-    make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
-    combined_trans_prob_mat_deriv(ps, i, P[i], GP[i], GP_drate[i],
-                                  GP_dg0[i], GP_dg1[i], GP_dT[i]);
+    temporal_trans_prob_mat(Ts[i], rate0, time_trans_mats[i]);
+    combined_trans_prob_mat_deriv(rate0, g0, g1, Ts[i], time_trans_mats[i],
+                                  combined_trans_mats[i],
+                                  combined_trans_mats_drate[i],
+                                  combined_trans_mats_dg0[i],
+                                  combined_trans_mats_dg1[i],
+                                  combined_trans_mats_dT[i]);
   }
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+///////////    transformation between states and states-id     /////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+string
+dec2binary(const size_t len, size_t n) {
+  assert (n < pow(2, len));
+  string result;
+  do result.push_back( '0' + (n & 1) );
+  while (n >>= 1);
+  while (result.length() < len) {
+    result.push_back('0');
+  }
+  reverse(result.begin(), result.end());
+  return result;
+}
+
+size_t
+binary2dec(const string states) {
+  size_t id = 0;
+  for (size_t i = 0; i < states.length(); ++i) {
+    if (states[states.length()-i-1] == '1')
+      id += pow(2, i);
+  }
+  return id;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -985,427 +961,306 @@ static void
 init_internal_prob(const vector<size_t> &subtree_sizes,
                    const size_t node_id,
                    vector<double> &node_probs) {
+  const double tol = 1e-10;
+  size_t count = 1;
   // Recursion
   size_t n_desc_leaf = 0;
   double sum_desc_leaf_prob = 0;
-  for (size_t count = 1; count < subtree_sizes[node_id]; ) {
+  while (count < subtree_sizes[node_id]) {
     const size_t child_id = node_id + count;
-    if (node_probs[child_id] < 0)
+    if (node_probs[child_id] < 0) {
       init_internal_prob(subtree_sizes, child_id, node_probs);
+    }
     count += subtree_sizes[child_id];
   }
 
   double direction = 0.0;
   for (size_t i = 1; i < subtree_sizes[node_id]; ++i) {
-    if (subtree_sizes[i + node_id]==1) {
+    if (subtree_sizes[i+node_id]==1) {
       ++n_desc_leaf;
-      sum_desc_leaf_prob += node_probs[i + node_id];
-      direction += (node_probs[i + node_id] > 0.5) ? 1.0 : -1.0;
+      sum_desc_leaf_prob += node_probs[i+node_id];
+      direction += (node_probs[i+node_id] > 0.5) ? 1.0 : -1.0;
     }
   }
 
-  if (node_id!=0 && (abs(direction) < n_desc_leaf)) {
+  if (node_id!=0 && abs(direction) < n_desc_leaf) {
     double sum_extra_leaf_hypo_prob = 0.0;
     size_t n_extra_leaves = 0;
     // children disagree, find majority state of leaf species outside this subtree
-    for (size_t i = 0; i < subtree_sizes.size(); ++i) {
+    for(size_t i = 0; i < subtree_sizes.size(); ++i) {
       if (subtree_sizes[i] == 1 &&
           (i < node_id || i >= node_id+subtree_sizes[node_id])) {
         sum_extra_leaf_hypo_prob += node_probs[i];
         ++n_extra_leaves;
       }
     }
-
     if (n_extra_leaves > 0)
       sum_desc_leaf_prob += sum_extra_leaf_hypo_prob/n_extra_leaves;
-
     ++n_desc_leaf;
   }
 
-  node_probs[node_id] = min(max(PROBABILITY_GUARD, sum_desc_leaf_prob/n_desc_leaf),
-                             1.0 - PROBABILITY_GUARD);
+  node_probs[node_id] = min(max(tol, sum_desc_leaf_prob/n_desc_leaf), 1.0 - tol);
 }
 
 static void
 copy_leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                        const vector<vector<double> > &meth_prob_table,
                        vector<vector<double> > &tree_prob_table) {
+  const double tol = 1e-10;
   const size_t n_sites = meth_prob_table.size();
   const size_t n_leaves = meth_prob_table[0].size();
   vector<size_t> leaves_preorder;
   subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
-  for (size_t i = 0; i < n_sites; ++i)
-    for (size_t j = 0; j < n_leaves; ++j)
-      if (meth_prob_table[i][j] >= 0.0 && meth_prob_table[i][j] <= 1.0)
-        tree_prob_table[i][leaves_preorder[j]] =
-          away_from_extremes(meth_prob_table[i][j]);
+  for (size_t i = 0; i < n_sites; ++i) {
+    for (size_t j = 0; j < n_leaves; ++j) {
+      if (meth_prob_table[i][j]>=0 && meth_prob_table[i][j] <=1)
+        tree_prob_table[i][leaves_preorder[j]] = min(max(tol, meth_prob_table[i][j]), 1.0-tol);
+    }
+  }
 }
 
 static void
 leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
                   const vector<vector<double> > &meth_prob_table,
                   vector<vector<double> > &tree_prob_table) {
+  size_t n_sites = tree_prob_table.size();
   // copy leaves first
-  copy_leaf_to_tree_prob(subtree_sizes, meth_prob_table, tree_prob_table);
+  copy_leaf_to_tree_prob(subtree_sizes, meth_prob_table,
+                         tree_prob_table);
   // initialize internal probs
-  for (size_t i = 0; i < tree_prob_table.size(); ++i)
+  for (size_t i = 0; i < n_sites; ++i) {
     init_internal_prob(subtree_sizes, 0, tree_prob_table[i]);
+  }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////         APPROX POSTERIOR        /////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-// The next several functions are for estimating the marginal
-// posterior for each site and each node. In each case, we want to
-// compute the probability for a given state based on all possible
-// combinations of states in the Markov blanket. The functions are
-// organized according to whether the current site is the "start", the
-// "middle" or the "end". These situations are for the first site, a
-// regular site (with neighbors on both sides), or the last
-// site. Within each of these functions, there are three major
-// conditions corresponding to the current site being at the root, a
-// leaf, or an internal node of the tree.
-
-
-static double
-val_or_flip(const double val, int flip) {
-  return flip ? 1.0 - val : val;
-}
 
 static void
-posterior_start(const bool update_leaves,
-                const vector<size_t> &subtree_sizes, const pair_state &G,
-                const vector<pair_state> &P, const vector<triple_state > &GP,
-                const size_t pos, const size_t node_id, const size_t parent_id,
-                vector<double> &meth_curr, //tree probability at current position
-                vector<double> &meth_next, //tree probability at next position
+posterior_start(const bool LEAF,
+                const vector<size_t> &subtree_sizes,
+                const vector<vector<double> >&G,
+                const vector<vector<vector<double> > > &time_trans_mats,
+                const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                const size_t pos,
+                const size_t node_id,
+                const size_t parent_id,
+                vector<bool> &updated,
+                vector<vector<double> > &meth_prob_table,
                 double &diff) {
-  if (is_leaf(subtree_sizes[node_id])) { //leaf
-    if (update_leaves) {
-      const double p_par_next_orig = meth_next[parent_id];
-      const double p_par_orig = meth_curr[parent_id];
-      const double p_next_orig = meth_next[node_id];
-
-      double p_cur = 0.0;
-      for (size_t next = 0; next < 2; ++next) { // state of v_{n+1}
-        const double p_next = val_or_flip(p_next_orig, next);
-        for (size_t par_next = 0; par_next <2; ++par_next) { // state of u_{n+1}
-          const double p_par_next = val_or_flip(p_par_next_orig, par_next);
-          for (size_t par_cur = 0; par_cur < 2; ++ par_cur) { // state of v_{n}
-            const double p_par = val_or_flip(p_par_orig, par_cur);
-            const double marginal = p_next*p_par_next*p_par;
-            const double p_cur_u =
-              P[node_id](par_cur, 0)*GP[node_id](0, par_next, next);
-            const double p_cur_m =
-              P[node_id](par_cur, 1)*GP[node_id](1, par_next, next);
-            const double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-            p_cur += p_cur_mb*marginal;
-          }
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    }
-  } else {  // current node is internal
-    vector<size_t> children;
-    get_children(node_id, subtree_sizes, children);
-
-    // recursively update children
-    for (size_t i = 0; i < children.size(); ++i)
-      posterior_start(update_leaves, subtree_sizes, G, P, GP, pos,
-                      children[i], node_id, meth_curr, meth_next, diff);
-
-    if (node_id == 0) { //root node  //root has 3 children!
-      const double p_next_orig = meth_next[node_id];
-      const double p_c0_orig = meth_curr[children[0]];
-      const double p_c1_orig = meth_curr[children[1]];
-      const double p_c2_orig = meth_curr[children[2]];
-
-      double p_cur = 0.0;
-      for (size_t c0 = 0; c0 < 2; ++c0) { // state of c0_{n}
-        const double p_c0 = val_or_flip(p_c0_orig, c0);
-        for (size_t c1 = 0; c1 < 2; ++c1) { // state of c1_{n}
-          const double p_c1 = val_or_flip(p_c1_orig, c1);
-          for (size_t c2 = 0; c2 < 2; ++c2) { // state of c2_{n}
-            const double p_c2 = val_or_flip(p_c2_orig, c2);
-            for (size_t next = 0; next < 2; ++ next) { // state of r_{n+1}
-              const double p_next = val_or_flip(p_next_orig, next);
-              const double marginal = p_c0*p_c1*p_c2*p_next;
-              const double p_cur_u = (P[children[0]](0, c0)*
-                                      P[children[1]](0, c1)*
-                                      P[children[2]](0, c2)*G(0, next));
-              const double p_cur_m = (P[children[0]](1, c0)*
-                                      P[children[1]](1, c1)*
-                                      P[children[2]](1, c2)*G(1, next));
-              p_cur += p_cur_u/(p_cur_m + p_cur_u)*marginal;
-            }
-          }
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    } else { // internal node // two children
-      double p_c0_orig = meth_curr[children[0]]; // hypoprob of c0_n
-      double p_c1_orig = meth_curr[children[1]]; // hypoprob of c1_n
-      double p_next_orig = meth_next[node_id];   // hypoprob of v_{n+1}
-      double p_par_orig = meth_curr[parent_id];  // hypoprob of u_{n}
-      double p_par_next_orig = meth_next[parent_id]; // hypoprob of u_{n+1}
-
-      double p_cur = 0.0;
-      for (size_t c0 = 0; c0 < 2; ++c0) { // state of c0_n
-        const double p_c0 = val_or_flip(p_c0_orig, c0);
-        for (size_t c1 = 0; c1 < 2; ++c1) { // state of c1_n
-          const double p_c1 = val_or_flip(p_c1_orig, c1);
-          for (size_t next = 0; next < 2; ++next) { // state of v_{n+1}
-            const double p_next = val_or_flip(p_next_orig, next);
-            for (size_t par_cur = 0; par_cur < 2; ++par_cur) { // state of u_{n}
-              const double p_par = val_or_flip(p_par_orig, par_cur);
-              for (size_t par_next = 0; par_next < 2; ++par_next) { // state of u_{n+1}
-                const double p_par_next = val_or_flip(p_par_next_orig, par_next);
-                const double marginal = p_c0*p_c1*p_next*p_par*p_par_next;
-                const double p_cur_u = (P[node_id](par_cur, 0)*
-                                        P[children[0]](0, c0)*
-                                        P[children[1]](0, c1)*
-                                        GP[node_id](0, par_next, next));
-                const double p_cur_m = (P[node_id](par_cur, 1)*
-                                        P[children[0]](1, c0)*
-                                        P[children[1]](1, c1)*
-                                        GP[node_id](1, par_next, next));
-                p_cur += p_cur_u/(p_cur_u + p_cur_m)*marginal;
-              }
-            }
-          }
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    }
-  }
-}
-
-
-static void
-posterior_middle(const bool update_leaves,
-                 const vector<size_t> &subtree_sizes, const pair_state &G,
-                 const vector<pair_state> &P, const vector<triple_state> &GP,
-                 const size_t pos, const size_t node_id, const size_t parent_id,
-                 vector<double> &meth_prev, vector<double> &meth_curr,
-                 vector<double> &meth_next, double &diff) {
+  //vector<bool> updated(subtree_sizes.size(), false);
   double p_cur = 0.0;
-  if (is_leaf(subtree_sizes[node_id])) { // leaf
-    if (update_leaves) {
-      double p_prev_orig = meth_prev[parent_id]; // hypoprob of v_{n-1}
-      double p_next_orig = meth_next[node_id];   // hypoprob of v_{n+1}
-      double p_par_orig = meth_curr[parent_id];  // hypoprob of u_{n}
-      double p_par_next_orig = meth_next[parent_id]; // hypoprob of u_{n+1}
+  double mar;
+  if (subtree_sizes[node_id] == 1) { //leaf
+    if (LEAF) {
+      double p_parent_next = meth_prob_table[pos+1][parent_id];
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_next = meth_prob_table[pos+1][node_id];
 
-      for (size_t prev = 0; prev < 2; ++prev) { // state of v_{n-1}
-        const double p_prev = val_or_flip(p_prev_orig, prev);
-        for (size_t next = 0; next < 2; ++next) { // state of v_{n+1}
-          const double p_next = val_or_flip(p_next_orig, next);
-          for (size_t par_next = 0; par_next <2; ++par_next) { // state of u_{n+1}
-            const double p_par_next = val_or_flip(p_par_next_orig, par_next);
-            for (size_t par = 0; par < 2; ++ par) { // state of u_{n}
-              const double p_par = val_or_flip(p_par_orig, par);
-              const double marginal = p_prev*p_next*p_par_next*p_par;
-              const double p_cur_u = (GP[node_id](prev, par, 0)*
-                                      GP[node_id](0, par_next, next));
-              const double p_cur_m = (GP[node_id](prev, par, 1)*
-                                      GP[node_id](1, par_next, next));
-              const double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-              p_cur += p_cur_mb*marginal;
-            }
+      for (size_t next = 0; next < 2; ++next) {
+        double next_p = (next == 0) ? p_next : 1.0 - p_next;
+        for (size_t par_next = 0; par_next <2; ++par_next) {
+          double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+          for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+            double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+            mar = next_p*par_next_p*par_cur_p;
+            double p_cur_u =  time_trans_mats[node_id][par_cur][0] *
+              combined_trans_mats[node_id][0][par_next][next];
+            double p_cur_m =  time_trans_mats[node_id][par_cur][1] *
+              combined_trans_mats[node_id][1][par_next][next];
+            double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+            p_cur += p_cur_mb*mar;
           }
         }
       }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    }
-  } else {
-    // get children and recurse
-    vector<size_t> children;
-    get_children(node_id, subtree_sizes, children);
-    for (size_t i = 0; i < children.size(); ++i) {
-      posterior_middle(update_leaves, subtree_sizes, G, P, GP, pos, children[i],
-                       node_id, meth_prev, meth_curr, meth_next, diff);
-    }
-
-    if (is_root(node_id)) { //root node  //root has 3 children!
-      double p_prev_orig = meth_prev[node_id];  // hypoprob of r_{n-1}
-      double p_prev_c0_orig = meth_prev[children[0]]; // hypoprob of c0_{n-1}
-      double p_prev_c1_orig = meth_prev[children[1]]; // hypoprob of c1_{n-1}
-      double p_prev_c2_orig = meth_prev[children[2]]; // hypoprob of c2_{n-1}
-      double p_c0_orig = meth_curr[children[0]]; // hypoprob of c0_{n}
-      double p_c1_orig = meth_curr[children[1]]; // hypoprob of c1_{n}
-      double p_c2_orig = meth_curr[children[2]]; // hypoprob of c2_{n}
-      double p_next_orig = meth_next[node_id]; // hypoprob of r_{n+1}
-
-
-      for (size_t prev = 0; prev < 2; ++prev) { // state of r_{n-1}
-        const double p_prev = val_or_flip(p_prev_orig, prev);
-        for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) { // state of c0_{n-1}
-          const double p_prev_c0 = val_or_flip(p_prev_c0_orig, prev_c0);
-          for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) { // state of c1_{n-1}
-            const double p_prev_c1 = val_or_flip(p_prev_c1_orig, prev_c1);
-            for (size_t prev_c2 = 0; prev_c2 < 2; ++ prev_c2) { // state of c2_{n-1}
-              const double p_prev_c2 = val_or_flip(p_prev_c2_orig, prev_c2);
-              for (size_t c0 = 0; c0 < 2; ++c0) { // state of c0_{n}
-                const double p_c0 = val_or_flip(p_c0_orig, c0);
-                for (size_t c1 = 0; c1 < 2; ++c1) { // state of c1_{n}
-                  const double p_c1 = val_or_flip(p_c1_orig, c1);
-                  for (size_t c2 = 0; c2 < 2; ++c2) { // state of c2_{n}
-                    const double p_c2 = val_or_flip(p_c2_orig, c2);
-                    for (size_t next = 0; next < 2; ++ next) { // state of r_{n+1}
-                      const double p_next = val_or_flip(p_next_orig, next);
-                      const double marginal = (p_prev*p_prev_c0*p_prev_c1*
-                                               p_prev_c2*p_c0*p_c1*p_c2*p_next);
-                      const double p_cur_u = (GP[children[0]](prev, 0, c0)*
-                                              GP[children[1]](prev, 0, c1)*
-                                              GP[children[2]](prev, 0, c2)*
-                                              G(0, next)*G(prev, 0));
-                      const double p_cur_m = (GP[children[0]](prev, 1, c0)*
-                                              GP[children[1]](prev, 1, c1)*
-                                              GP[children[2]](prev, 1, c2)*
-                                              G(1, next)*G(prev, 1));
-                      p_cur += p_cur_u/(p_cur_m + p_cur_u)*marginal;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    } else { // internal node // two children
-      double p_prev_c0_orig = meth_prev[children[0]]; // hypoprob at c0_{n-1}
-      double p_prev_c1_orig = meth_prev[children[1]]; // hypoprob at c1_{n-1}
-      double p_prev_orig = meth_prev[node_id];        // hypoprob at v_{n-1}
-      double p_c0_orig = meth_curr[children[0]];      // hypoprob at c0_{n}
-      double p_c1_orig = meth_curr[children[1]];      // hypoprob at c1_{n}
-      double p_par_orig = meth_curr[parent_id];       // hypoprob at u_{n}
-      double p_par_next_orig = meth_next[parent_id];  // hypoprob at u_{n+1}
-      double p_next_orig = meth_next[node_id];        // hypoprob at v_{n+1}
-
-      for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
-        const double p_prev_c0 = val_or_flip(p_prev_c0_orig, prev_c0);
-        for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
-          const double p_prev_c1 = val_or_flip(p_prev_c1_orig, prev_c1);
-          for (size_t prev = 0; prev < 2; ++ prev) {
-            const double p_prev = val_or_flip(p_prev_orig, prev);
-            for (size_t c0 = 0; c0 < 2; ++c0) {
-              const double p_c0 = val_or_flip(p_c0_orig, c0);
-              for (size_t c1 = 0; c1 < 2; ++c1) {
-                const double p_c1 = val_or_flip(p_c1_orig, c1);
-                for (size_t next = 0; next < 2; ++next) {
-                  const double p_next = val_or_flip(p_next_orig, next);
-                  for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
-                    const double p_par = val_or_flip(p_par_orig, par_cur);
-                    for (size_t par_next = 0; par_next < 2; ++par_next) {
-                      const double p_par_next = val_or_flip(p_par_next_orig, par_next);
-                      const double marginal = (p_prev_c0*p_prev_c1*p_prev*p_c0
-                                               *p_c1*p_next*p_par*p_par_next);
-                      const double p_cur_u = (GP[node_id](prev, par_cur, 0)*
-                                              GP[children[0]](prev_c0, 0, c0)*
-                                              GP[children[1]](prev_c1, 0, c1)*
-                                              GP[node_id](0, par_next, next));
-                      const double p_cur_m = (GP[node_id](prev, par_cur, 1)*
-                                              GP[children[0]](prev_c0, 1, c0)*
-                                              GP[children[1]](prev_c1, 1, c1)*
-                                              GP[node_id](1, par_next, next));
-                      p_cur += p_cur_u/(p_cur_u + p_cur_m)*marginal;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
-    }
-  }
-}
-
-
-
-static void
-posterior_end(const bool update_leaves,
-              const vector<size_t> &subtree_sizes, const pair_state &G,
-              const vector<pair_state> &P, const vector<triple_state> &GP,
-              const size_t pos, const size_t node_id, const size_t parent_id,
-              vector<double> &meth_prev, vector<double> &meth_curr,
-              double &diff) {
-  if (is_leaf(subtree_sizes[node_id])) { // leaf
-    if (update_leaves) {
-      const double p_par_orig = meth_curr[parent_id];
-      const double p_prev_orig = meth_prev[node_id];
-
-      double p_cur = 0.0;
-      for (size_t prev = 0; prev < 2; ++prev) {
-        const double p_prev = val_or_flip(p_prev_orig, prev);
-        for (size_t par = 0; par < 2; ++ par) {
-          const double p_par = val_or_flip(p_par_orig, par);
-          const double marginal = p_prev*p_par;
-          const double p_cur_u = GP[node_id](prev, par, 0);
-          const double p_cur_m = GP[node_id](prev, par, 1);
-          const double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
-          p_cur += p_cur_mb*marginal;
-        }
-      }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     }
   } else {
     //check if all children are updated
     vector<size_t> children;
-    get_children(node_id, subtree_sizes, children);
-    for (size_t i = 0; i < children.size(); ++i) {
-      posterior_end(update_leaves, subtree_sizes, G, P, GP, pos, children[i],
-                    node_id, meth_prev, meth_curr, diff);
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_start(LEAF, subtree_sizes, G, time_trans_mats, combined_trans_mats,
+                        pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
     }
 
-    if (is_root(node_id)) { //root node  //root has 3 children!
-      const double p_prev_orig = meth_prev[node_id];
-      const double p_c0_orig = meth_curr[children[0]];
-      const double p_c1_orig = meth_curr[children[1]];
-      const double p_c2_orig = meth_curr[children[2]];
-      const double p_prev_c0_orig = meth_prev[children[0]];
-      const double p_prev_c1_orig = meth_prev[children[1]];
-      const double p_prev_c2_orig = meth_prev[children[2]];
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
 
-      double p_cur = 0.0;
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t c2 = 0; c2 < 2; ++c2) {
+            double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
+            for (size_t next = 0; next < 2; ++ next) {
+              double next_p = (next == 0) ?  hypo_prob_next : 1.0 - hypo_prob_next;
+              mar = c0_p*c1_p*c2_p*next_p;
+              double p_cur_u = time_trans_mats[children[0]][0][c0]*
+                time_trans_mats[children[1]][0][c1]*
+                time_trans_mats[children[2]][0][c2]*G[0][next];
+              double p_cur_m = time_trans_mats[children[0]][1][c0]*
+                time_trans_mats[children[1]][1][c1]*
+                time_trans_mats[children[2]][1][c2]*G[1][next];
+              p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+            }
+          }
+        }
+      }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
+    } else { // internal node // two children
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+      double hypo_prob_par_next = meth_prob_table[pos+1][parent_id];
+
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t next = 0; next < 2; ++next) {
+            double next_p = (next == 0) ? hypo_prob_next : 1.0 - hypo_prob_next;
+            for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+              double par_cur_p =
+                (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+              for (size_t par_next = 0; par_next < 2; ++par_next) {
+                double par_next_p =
+                  (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
+                mar = c0_p*c1_p*next_p*par_cur_p*par_next_p;
+                double p_cur_u = time_trans_mats[node_id][par_cur][0]*
+                  time_trans_mats[children[0]][0][c0]*
+                  time_trans_mats[children[1]][0][c1]*
+                  combined_trans_mats[node_id][0][par_next][next];
+                double p_cur_m = time_trans_mats[node_id][par_cur][1]*
+                  time_trans_mats[children[0]][1][c0]*
+                  time_trans_mats[children[1]][1][c1]*
+                  combined_trans_mats[node_id][1][par_next][next];
+                p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+              }
+            }
+          }
+        }
+      }
+    }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
+  }
+  updated[node_id] = true;
+}
+
+
+static void
+posterior_middle(const bool LEAF,
+                 const vector<size_t> &subtree_sizes,
+                 const vector<vector<double> >&G,
+                 const vector<vector<vector<double> > > &time_trans_mats,
+                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                 const size_t pos,
+                 const size_t node_id,
+                 const size_t parent_id,
+                 vector<bool> &updated,
+                 vector<vector<double> > &meth_prob_table,
+                 double &diff) {
+
+  double mar;
+  double p_cur = 0.0;
+  if (subtree_sizes[node_id] == 1) { // leaf
+    if (LEAF) {
+      double p_prev = meth_prob_table[pos-1][node_id];
+      double p_parent_next = meth_prob_table[pos+1][parent_id];
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_next = meth_prob_table[pos+1][node_id];
+
       for (size_t prev = 0; prev < 2; ++prev) {
-        const double p_prev = val_or_flip(p_prev_orig, prev);
-        for (size_t c0 = 0; c0 < 2; ++c0) {
-          const double p_c0 = val_or_flip(p_c0_orig, c0);
-          for (size_t c1 = 0; c1 < 2; ++c1) {
-            const double p_c1 = val_or_flip(p_c1_orig, c1);
-            for (size_t c2 = 0; c2 < 2; ++c2) {
-              const double p_c2 = val_or_flip(p_c2_orig, c2);
-              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
-                const double p_prev_c0 = val_or_flip(p_prev_c0_orig, prev_c0);
-                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
-                  const double p_prev_c1 = val_or_flip(p_prev_c1_orig, prev_c1);
-                  for (size_t prev_c2 = 0; prev_c2 < 2; ++prev_c2) {
-                    const double p_prev_c2 = val_or_flip(p_prev_c2_orig, prev_c2);
-                    const double marginal = (p_prev*p_c0*p_c1*p_c2*
-                                             p_prev_c0*p_prev_c1*p_prev_c2);
-                    const double p_cur_u = (GP[children[0]](prev_c0, 0, c0)*
-                                            GP[children[1]](prev_c1, 0, c1)*
-                                            GP[children[2]](prev_c2, 0, c2)*
-                                            G(prev, 0));
-                    const double p_cur_m = (GP[children[0]](prev_c0, 1, c0)*
-                                            GP[children[1]](prev_c1, 1, c1)*
-                                            GP[children[2]](prev_c2, 1, c2)*
-                                            G(prev, 1));
-                    p_cur += p_cur_u/(p_cur_m + p_cur_u)*marginal;
+        double prev_p = (prev == 0) ? p_prev: 1.0 - p_prev;
+        for (size_t next = 0; next < 2; ++next) {
+          double next_p = (next == 0) ? p_next : 1.0 - p_next;
+          for (size_t par_next = 0; par_next <2; ++par_next) {
+            double par_next_p = (par_next == 0) ? p_parent_next : 1.0- p_parent_next;
+            for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+              double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+              mar = prev_p*next_p*par_next_p*par_cur_p;
+              double p_cur_u =  combined_trans_mats[node_id][prev][par_cur][0] *
+                combined_trans_mats[node_id][0][par_next][next];
+              double p_cur_m =  combined_trans_mats[node_id][prev][par_cur][1] *
+                combined_trans_mats[node_id][1][par_next][next];
+              double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+              p_cur += p_cur_mb*mar;
+            }
+          }
+        }
+      }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
+    }
+  } else {
+    //check if all children are updated
+    vector<size_t> children;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_middle(LEAF, subtree_sizes, G, time_trans_mats, combined_trans_mats,
+                         pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
+    }
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev_child_2 = meth_prob_table[pos-1][children[2]];
+
+      for (size_t prev = 0; prev < 2; ++prev) {
+        double prev_p = (prev==0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+        for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
+          double prev_c0_p =
+            (prev_c0==0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+          for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
+            double prev_c1_p =
+              (prev_c1==0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+            for (size_t prev_c2 =0; prev_c2 < 2; ++ prev_c2) {
+              double prev_c2_p =
+                (prev_c2==0) ? hypo_prob_prev_child_2 : 1.0 - hypo_prob_prev_child_2;
+              for (size_t c0 = 0; c0 < 2; ++c0) {
+                double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+                for (size_t c1 = 0; c1 < 2; ++c1) {
+                  double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+                  for (size_t c2 = 0; c2 < 2; ++c2) {
+                    double c2_p = (c2 == 0) ? hypo_prob_child_2 : 1.0 - hypo_prob_child_2;
+                    for (size_t next = 0; next < 2; ++ next) {
+                      double next_p = (next == 0) ?  hypo_prob_next : 1.0 - hypo_prob_next;
+                      mar = prev_p*prev_c0_p*prev_c1_p*prev_c2_p*c0_p*c1_p*c2_p*next_p;
+                      double p_cur_u = combined_trans_mats[children[0]][prev][0][c0]*
+                        combined_trans_mats[children[1]][prev][0][c1]*
+                        combined_trans_mats[children[2]][prev][0][c2]*
+                        G[0][next]*G[prev][0];
+                      double p_cur_m = combined_trans_mats[children[0]][prev][1][c0]*
+                        combined_trans_mats[children[1]][prev][1][c1]*
+                        combined_trans_mats[children[2]][prev][1][c2]*
+                        G[1][next]*G[prev][1];
+                      p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+                    }
                   }
                 }
               }
@@ -1413,283 +1268,480 @@ posterior_end(const bool update_leaves,
           }
         }
       }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
     } else { // internal node // two children
-      double p_c0_orig = meth_curr[children[0]];
-      double p_c1_orig = meth_curr[children[1]];
-      double p_prev_c0_orig = meth_prev[children[0]];
-      double p_prev_c1_orig = meth_prev[children[1]];
-      double p_prev_orig = meth_prev[node_id];
-      double p_par_orig = meth_curr[parent_id];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_next = meth_prob_table[pos+1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+      double hypo_prob_par_next = meth_prob_table[pos+1][parent_id];
 
-      double p_cur = 0.0;
-      for (size_t c0 = 0; c0 < 2; ++c0) {
-        const double p_c0 = val_or_flip(p_c0_orig, c0);
-        for (size_t c1 = 0; c1 < 2; ++c1) {
-          const double p_c1 = val_or_flip(p_c1_orig, c1);
-          for (size_t prev = 0; prev < 2; ++prev) {
-            const double p_prev = val_or_flip(p_prev_orig, prev);
-            for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
-              const double p_par = val_or_flip(p_par_orig, par_cur);
-              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
-                const double p_prev_c0 = val_or_flip(p_prev_c0_orig, prev_c0);
-                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
-                  const double p_prev_c1 = val_or_flip(p_prev_c1_orig, prev_c1);
-                  const double marginal = p_c0*p_c1*p_prev*p_par*p_prev_c0*p_prev_c1;
-                  const double p_cur_u = (GP[node_id](prev, par_cur, 0)*
-                                          GP[children[0]](prev_c0, 0, c0)*
-                                          GP[children[1]](prev_c1, 0, c1));
-                  const double p_cur_m = (GP[node_id](prev, par_cur, 1)*
-                                          GP[children[0]](prev_c0, 1, c0)*
-                                          GP[children[1]](prev_c1, 1, c1));
-                  p_cur += p_cur_u/(p_cur_u + p_cur_m)*marginal;
+      for (size_t prev_c0 = 0; prev_c0 < 2; ++ prev_c0) {
+        double prev_c0_p = (prev_c0 == 0) ? hypo_prob_prev_child_0 : 1.0 - hypo_prob_prev_child_0;
+        for (size_t prev_c1 = 0; prev_c1 < 2; ++ prev_c1) {
+          double prev_c1_p = (prev_c1 == 0) ? hypo_prob_prev_child_1 : 1.0 - hypo_prob_prev_child_1;
+          for (size_t prev = 0; prev < 2; ++ prev) {
+            double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+            for (size_t c0 = 0; c0 < 2; ++c0) {
+              double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+              for (size_t c1 = 0; c1 < 2; ++c1) {
+                double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+                for (size_t next = 0; next < 2; ++next) {
+                  double next_p = (next == 0) ? hypo_prob_next : 1.0 - hypo_prob_next;
+                  for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+                    double par_cur_p = (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+                    for (size_t par_next = 0; par_next < 2; ++par_next) {
+                      double par_next_p = (par_next == 0) ? hypo_prob_par_next : 1.0 - hypo_prob_par_next;
+                      mar = prev_c0_p*prev_c1_p*prev_p*c0_p*c1_p*next_p*par_cur_p*par_next_p;
+                      double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0]*
+                        combined_trans_mats[children[0]][prev_c0][0][c0]*
+                        combined_trans_mats[children[1]][prev_c1][0][c1]*
+                        combined_trans_mats[node_id][0][par_next][next];
+                      double p_cur_m =combined_trans_mats[node_id][prev][par_cur][1]*
+                        combined_trans_mats[children[0]][prev_c0][1][c0]*
+                        combined_trans_mats[children[1]][prev_c1][1][c1]*
+                        combined_trans_mats[node_id][1][par_next][next];
+                      p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+                    }
+                  }
                 }
               }
             }
           }
         }
       }
-      diff += abs(meth_curr[node_id] - p_cur);
-      meth_curr[node_id] = p_cur;
+    }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
+  }
+  updated[node_id] = true;
+}
+
+static void
+posterior_end(const bool LEAF,
+              const vector<size_t> &subtree_sizes,
+              const vector<vector<double> >&G,
+              const vector<vector<vector<double> > > &time_trans_mats,
+              const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+              const size_t pos,
+              const size_t node_id,
+              const size_t parent_id,
+              vector<bool> &updated,
+              vector<vector<double> > &meth_prob_table,
+              double &diff) {
+
+  double mar;
+  double p_cur = 0.0;
+
+  if (subtree_sizes[node_id] == 1) { //leaf
+    if (LEAF) {
+      double p_parent_cur = meth_prob_table[pos][parent_id];
+      double p_prev = meth_prob_table[pos-1][node_id];
+      for (size_t prev = 0; prev < 2; ++prev) {
+        double prev_p = (prev == 0) ? p_prev : 1.0 - p_prev;
+        for (size_t par_cur = 0; par_cur < 2; ++ par_cur) {
+          double par_cur_p = (par_cur == 0) ? p_parent_cur : 1.0- p_parent_cur;
+          mar = prev_p*par_cur_p;
+          double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0];
+          double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1];
+          double p_cur_mb = p_cur_u/(p_cur_u + p_cur_m);
+          p_cur += p_cur_mb*mar;
+        }
+      }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
+    }
+  } else {
+    //check if all children are updated
+    vector<size_t> children;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      children.push_back(child_id);
+      if (!updated[child_id]) {
+        posterior_end(LEAF, subtree_sizes, G,
+                      time_trans_mats, combined_trans_mats,
+                      pos, child_id, node_id, updated, meth_prob_table, diff);
+      }
+      count += subtree_sizes[child_id];
+    }
+
+    if (node_id == 0) { //root node  //root has 3 children!
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_child_2 = meth_prob_table[pos][children[2]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev_child_2 = meth_prob_table[pos-1][children[2]];
+
+      for (size_t prev = 0; prev < 2; ++ prev) {
+        const double prev_p = (prev == 0 ? hypo_prob_prev :
+                               1.0 - hypo_prob_prev);
+        for (size_t c0 = 0; c0 < 2; ++c0) {
+          const double c0_p = (c0 == 0 ?
+                               hypo_prob_child_0 : 1.0 - hypo_prob_child_0);
+          for (size_t c1 = 0; c1 < 2; ++c1) {
+            const double c1_p = (c1 == 0 ?
+                                 hypo_prob_child_1 : 1.0 - hypo_prob_child_1);
+            for (size_t c2 = 0; c2 < 2; ++c2) {
+              const double c2_p = (c2 == 0 ?
+                                   hypo_prob_child_2 : 1.0 - hypo_prob_child_2);
+              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
+                const double prev_c0_p = (prev_c0 == 0 ?
+                                          hypo_prob_prev_child_0 :
+                                          1.0 - hypo_prob_prev_child_0);
+                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
+                  const double prev_c1_p = (prev_c1 == 0 ?
+                                            hypo_prob_prev_child_1 :
+                                            1.0 - hypo_prob_prev_child_1);
+                  for (size_t prev_c2 = 0; prev_c2 < 2; ++prev_c2) {
+                    const double prev_c2_p = (prev_c2 == 0 ?
+                                              hypo_prob_prev_child_2 :
+                                              1.0 - hypo_prob_prev_child_2);
+                    mar = prev_p*c0_p*c1_p*c2_p*prev_c0_p*prev_c1_p*prev_c2_p;
+                    const double p_cur_u =
+                      combined_trans_mats[children[0]][prev_c0][0][c0]*
+                      combined_trans_mats[children[1]][prev_c1][0][c1]*
+                      combined_trans_mats[children[2]][prev_c2][0][c2]*
+                      G[prev][0];
+                    const double p_cur_m =
+                      combined_trans_mats[children[0]][prev_c0][1][c0]*
+                      combined_trans_mats[children[1]][prev_c1][1][c1]*
+                      combined_trans_mats[children[2]][prev_c2][1][c2]*
+                      G[prev][1];
+                    p_cur += p_cur_u/(p_cur_m + p_cur_u)*mar;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      diff += abs(meth_prob_table[pos][node_id] - p_cur);
+      meth_prob_table[pos][node_id] = p_cur;
+    } else { // internal node // two children
+      double hypo_prob_child_0 = meth_prob_table[pos][children[0]];
+      double hypo_prob_child_1 = meth_prob_table[pos][children[1]];
+      double hypo_prob_prev_child_0 = meth_prob_table[pos-1][children[0]];
+      double hypo_prob_prev_child_1 = meth_prob_table[pos-1][children[1]];
+      double hypo_prob_prev = meth_prob_table[pos-1][node_id];
+      double hypo_prob_par_cur = meth_prob_table[pos][parent_id];
+
+      for (size_t c0 = 0; c0 < 2; ++c0) {
+        double c0_p = (c0 == 0) ? hypo_prob_child_0 : 1.0 - hypo_prob_child_0;
+        for (size_t c1 = 0; c1 < 2; ++c1) {
+          double c1_p = (c1 == 0) ? hypo_prob_child_1 : 1.0 - hypo_prob_child_1;
+          for (size_t prev = 0; prev < 2; ++prev) {
+            double prev_p = (prev == 0) ? hypo_prob_prev : 1.0 - hypo_prob_prev;
+            for (size_t par_cur = 0; par_cur < 2; ++par_cur) {
+              double par_cur_p =
+                (par_cur == 0) ? hypo_prob_par_cur : 1.0 - hypo_prob_par_cur;
+              for (size_t prev_c0 = 0; prev_c0 < 2; ++prev_c0) {
+                const double prev_c0_p = (prev_c0 == 0 ?
+                                          hypo_prob_prev_child_0 :
+                                          1.0 - hypo_prob_prev_child_0);
+                for (size_t prev_c1 = 0; prev_c1 < 2; ++prev_c1) {
+                  const double prev_c1_p = (prev_c1 == 0 ?
+                                            hypo_prob_prev_child_1 :
+                                            1.0 - hypo_prob_prev_child_1);
+                  mar = c0_p*c1_p*prev_p*par_cur_p*prev_c0_p*prev_c1_p;
+                  double p_cur_u = combined_trans_mats[node_id][prev][par_cur][0]*
+                    combined_trans_mats[children[0]][prev_c0][0][c0]*
+                    combined_trans_mats[children[1]][prev_c1][0][c1];
+                  double p_cur_m = combined_trans_mats[node_id][prev][par_cur][1]*
+                    combined_trans_mats[children[0]][prev_c0][1][c0]*
+                    combined_trans_mats[children[1]][prev_c1][1][c1];
+                  p_cur += p_cur_u/(p_cur_u + p_cur_m)*mar;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    diff += abs(meth_prob_table[pos][node_id] - p_cur);
+    meth_prob_table[pos][node_id] = p_cur;
+  }
+  updated[node_id] = true;
+}
+
+static void
+iterate_update(const vector<size_t> &subtree_sizes,
+               const vector<size_t> &reset_points,
+               const vector<vector<double> >&G,
+               const vector<vector<vector<double> > > &time_trans_mats,
+               const
+               vector<vector<vector<vector<double> > > > &combined_trans_mats,
+               const double tolerance,
+               const size_t MAXITER,
+               vector<vector<double> > &tree_hypo_prob_table) {
+
+  size_t n_nodes = subtree_sizes.size();
+  bool LEAF = false;
+  for (size_t i = 0; i < reset_points.size()-1; ++i) {
+    double diff = std::numeric_limits<double>::max();
+    size_t start = reset_points[i];
+    size_t end = reset_points[i+1];
+    double tol = (LEAF) ? tolerance*n_nodes*(end-start) : tolerance*n_nodes*(end-start)/2;
+    size_t iter = 0;
+    while (diff > tol && iter < MAXITER) {
+      diff = 0.0;
+      for (size_t j = start; j < end; ++j) {
+        vector<bool> updated (subtree_sizes.size(), false);
+        if (j == start) {
+          posterior_start(LEAF, subtree_sizes, G, time_trans_mats,
+                          combined_trans_mats, j, 0,
+                          0, updated, tree_hypo_prob_table, diff);
+        } else if (j == end -1) {
+          posterior_end(LEAF, subtree_sizes, G, time_trans_mats,
+                        combined_trans_mats, j, 0,
+                        0, updated, tree_hypo_prob_table, diff);
+        } else {
+          posterior_middle(LEAF, subtree_sizes, G, time_trans_mats,
+                           combined_trans_mats, j, 0,
+                           0, updated, tree_hypo_prob_table, diff);
+        }
+      }
+      ++iter;
     }
   }
 }
 
-/* approx_posterior: this function this function iteratively update estimates
-   for the tree_hypo_prob_table, which is the probabilities for each site in
-   each species, of being hypo
- */
+
 static void
 approx_posterior(const vector<size_t> &subtree_sizes,
-                 const param_set &ps,
+                 const vector<double> &params,
                  const vector<size_t> &reset_points,
                  const double tolerance,
                  const size_t MAXITER,
-                 vector<vector<double> > &hypo_prob_table) {
-  static const bool update_leaves = false; // recursion never starts at leaf
+                 vector<vector<double> > &meth_prob_table) {
 
+  vector<vector<vector<double> > > time_trans_mats;
   // collect probabilities and derivatives by branch
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-  vector<pair_state> P;
-  vector<triple_state> GP;
-  get_transition_matrices(ps, P, GP);
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  vector<double> Ts(params.begin()+4, params.end());
+  collect_transition_matrices(rate0, g0, g1, Ts, time_trans_mats,
+                              combined_trans_mats);
+  vector<vector<double> >G(2, vector<double>(2, 0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][0] = 1.0 - g1;
+  G[1][1] = g1;
 
-  const size_t n_nodes = subtree_sizes.size();
-
-  for (size_t i = 0; i < reset_points.size() - 1; ++i) {
-    const size_t start = reset_points[i];
-    const size_t end = reset_points[i + 1] - 1;
-    if (start < end) { // A block should have at least 2 sites.
-      const double tol = (update_leaves ? // ADS: is it possible for this to be true?
-                          tolerance*n_nodes*(end - start) :
-                          tolerance*n_nodes*(end - start)/2);
-
-      double diff = std::numeric_limits<double>::max();
-      for (size_t iter = 0; iter < MAXITER && diff > tol; ++iter) {
-        diff = 0.0; // ADS: why set this value here??  // JQU: set to 0 at the begining of each iteration
-        posterior_start(update_leaves, subtree_sizes, G, P, GP, start, 0, 0,
-                        hypo_prob_table[start], hypo_prob_table[start + 1], diff);
-        for (size_t j = start + 1; j < end; ++j)
-          posterior_middle(update_leaves, subtree_sizes, G, P, GP, j, 0, 0,
-                           hypo_prob_table[j - 1], hypo_prob_table[j],
-                           hypo_prob_table[j + 1], diff);
-        posterior_end(update_leaves, subtree_sizes, G, P, GP, end, 0, 0,
-                      hypo_prob_table[end - 1], hypo_prob_table[end], diff);
-      }
-    }
-  }
+  //update iteratively
+  iterate_update(subtree_sizes, reset_points, G, time_trans_mats,
+                 combined_trans_mats, tolerance, MAXITER, meth_prob_table);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-///////////   Markov blanket proposal acceptance probabilities   ///////////////
+//////////////////         Markov Blanket Prob       ///////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-/// split this function into 3
-static double
-MB_prob_0_v_1(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
+double
+MB_prob_0_v_1(const vector<size_t> &subtree_sizes,
+              const vector<size_t> &parent_ids,
               const double pi0,
-              const pair_state &logG, const vector<pair_state> &logP,
-              const vector<triple_state> &logGP,
-              const vector<size_t> &meth_prev,
-              const vector<size_t> &meth_curr,
-              const vector<size_t> &meth_next,
-              const size_t node_id, const bool START, const bool END) {
+              const vector<vector<double> >&G,
+              const vector<vector<vector<double> > > &time_trans_mats,
+              const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+              const vector<vector<size_t> > &meth_state_table,
+              const size_t node_id, const size_t pos,
+              const bool START, const bool END) {
   double lp0 = 0.0;
   double lp1 = 0.0;
   size_t par_id = parent_ids[node_id];
   //parents
-  if (node_id == 0 && !START) {    // root & non-start
-    lp0 += logG(meth_prev[node_id], 0);
-    lp1 += logG(meth_prev[node_id], 1);
-  } else if (node_id == 0 && START) { // root & start
+  if (node_id == 0 && !START) {
+    lp0 += log(G[meth_state_table[pos-1][node_id]][0]);
+    lp1 += log(G[meth_state_table[pos-1][node_id]][1]);
+  } else if (node_id == 0 && START) {
     lp0 += log(pi0);
-    lp1 += log(1.0 - pi0);
-  } else if (node_id > 0 && !START) { // non-root & non-start
-    const size_t anc = meth_curr[par_id];
-    const size_t prev = meth_prev[node_id];
-    lp0 += logGP[node_id](prev, anc, 0);
-    lp1 += logGP[node_id](prev, anc, 1);
-  } else if (node_id > 0 && START) { // non-root & start
-    const size_t anc = meth_curr[par_id];
-    lp0 += logP[node_id](anc, 0);
-    lp1 += logP[node_id](anc, 1);
+    lp1 += log(1.0-pi0);
+  } else if (node_id > 0 && !START) {
+    size_t anc = meth_state_table[pos][par_id];
+    size_t prev = meth_state_table[pos-1][node_id];
+    lp0 += log(combined_trans_mats[node_id][prev][anc][0]);
+    lp1 += log(combined_trans_mats[node_id][prev][anc][1]);
+  } else if (node_id > 0 && START) {
+    size_t anc = meth_state_table[pos][par_id];
+    lp0 += log(time_trans_mats[node_id][anc][0]);
+    lp1 += log(time_trans_mats[node_id][anc][1]);
   }
-
   //children and children's parents in graph
   if (START) {
     size_t count = 1;
     while (count < subtree_sizes[node_id]) {
-      const size_t child_id = node_id + count;
-      const size_t cur = meth_curr[child_id];
-      lp0 += logP[child_id](0, cur);
-      lp1 += logP[child_id](1, cur);
+      size_t child_id = node_id + count;
+      size_t cur = meth_state_table[pos][child_id];
+      lp0 += log(time_trans_mats[child_id][0][cur]);
+      lp1 += log(time_trans_mats[child_id][1][cur]);
       count += subtree_sizes[child_id];
     }
   } else {
     size_t count = 1;
     while (count < subtree_sizes[node_id]) {
-      const size_t child_id = node_id + count;
-      const size_t prev = meth_prev[child_id];
-      const size_t cur = meth_curr[child_id];
-      lp0 += logGP[child_id](prev, 0, cur);
-      lp1 += logGP[child_id](prev, 1, cur);
+      size_t child_id = node_id + count;
+      size_t prev = meth_state_table[pos-1][child_id];
+      size_t cur = meth_state_table[pos][child_id];
+      lp0 += log(combined_trans_mats[child_id][prev][0][cur]);
+      lp1 += log(combined_trans_mats[child_id][prev][1][cur]);
       count += subtree_sizes[child_id];
     }
   }
-
-  if (node_id == 0 && !END) {
-    const size_t cur = meth_next[node_id];
-    lp0 += logG(0, cur);
-    lp1 += logG(1, cur);
+  if (node_id ==0 && !END) {
+    size_t cur =  meth_state_table[pos+1][node_id];
+    lp0 += log(G[0][cur]);
+    lp1 += log(G[1][cur]);
   } else if (node_id > 0 && !END) {
-    const size_t anc = meth_next[par_id];
-    const size_t cur = meth_next[node_id];
-    lp0 += logGP[node_id](0, anc, cur);
-    lp1 += logGP[node_id](1, anc, cur);
+    size_t anc = meth_state_table[pos+1][par_id];
+    size_t cur = meth_state_table[pos+1][node_id];
+    lp0 += log(combined_trans_mats[node_id][0][anc][cur]);
+    lp1 += log(combined_trans_mats[node_id][1][anc][cur]);
   }
-  return lp0 - lp1;
+  return lp0-lp1;
 }
 
-/// split this function into 3
 static void
 MH_single_update(const vector<size_t> &subtree_sizes,
                  const vector<size_t> &parent_ids,
                  const double pi0,
-                 const pair_state &logG,
-                 const vector<pair_state> &logP,
-                 const vector<triple_state> &logGP,
-                 const vector<double> &probs_table,
-                 const vector<size_t> &states_prev,
-                 vector<size_t> &states_curr,
-                 const vector<size_t> &states_next,
-                 const size_t node_id,
-                 const bool START, const bool END) {
+                 const vector<vector<double> >&G,
+                 const vector<vector<vector<double> > > &time_trans_mats,
+                 const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+                 const vector<vector<double> > &tree_prob_table,
+                 vector<vector<size_t> > &tree_state_table,
+                 const size_t node_id, const size_t pos,
+                 const bool START, const bool END,
+                 gsl_rng * r) {
   /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0.0) {
-    states_curr[node_id] = gsl_rng_uniform(rng) < probs_table[node_id] ? 0 : 1;
+  if (subtree_sizes[node_id]==1 && tree_prob_table[pos][node_id] >=0) {
+    double f = gsl_rng_uniform(r);
+    tree_state_table[pos][node_id] = (f < tree_prob_table[pos][node_id])? 0: 1;
   } else {
-    vector<size_t> children;
-    get_children(node_id, subtree_sizes, children);
-    for (size_t i = 0; i < children.size(); ++i)
-      MH_single_update(subtree_sizes, parent_ids, pi0, logG, logP, logGP,
-                       probs_table, states_prev, states_curr, states_next,
-                       children[i], START, END);
-
-    const double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids, pi0,
-                                           logG, logP, logGP, states_prev,
-                                           states_curr, states_next,
-                                           node_id, START, END);
-
-    const size_t state = states_curr[node_id];
-    const double ratio = (state == 0) ? exp(-log_ratio) : exp(log_ratio);
-    if (gsl_rng_uniform(rng) < ratio)
-      states_curr[node_id] = 1 - state;
-  }
-}
-
-// split this function into three
-void
-MH_update(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-             const param_set &ps, const vector<size_t> &reset_points,
-             const vector<vector<double> > &probs_table,
-             vector<vector<size_t> > &states_table) {
-
-  pair_state logG(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-  logG.make_logs();
-
-  vector<pair_state> logP;
-  vector<triple_state> logGP;
-  get_transition_matrices(ps, logP, logGP); // not logs yet
-  for (size_t i = 0; i < logP.size(); ++i) {
-    logP[i].make_logs();
-    logGP[i].make_logs();
-  }
-
-  for (size_t i = 0; i < reset_points.size() - 1; ++i) {
-    size_t start = reset_points[i];
-    size_t end = reset_points[i + 1];
-    for (size_t pos = start; pos < end; ++pos) {
-      bool START = (pos == start);
-      bool END = (pos == end - 1);
-      size_t prev_pos, next_pos;
-      if (START) {
-        prev_pos = pos;  // won't be accessed in MH_single_update()
-        next_pos = pos + 1;
-      } else if (END) {
-        prev_pos = pos - 1;
-        next_pos = pos;
-      } else {
-        prev_pos = pos - 1;
-        next_pos = pos + 1;
+    size_t count = 1;
+    while (count < subtree_sizes[node_id]) {
+      size_t child_id = node_id + count;
+      MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
+                       combined_trans_mats, tree_prob_table, tree_state_table,
+                       child_id,  pos, START, END, r);
+      count += subtree_sizes[child_id];
+    }
+    double log_ratio = MB_prob_0_v_1(subtree_sizes, parent_ids,
+                                     pi0, G, time_trans_mats,
+                                     combined_trans_mats,
+                                     tree_state_table,
+                                     node_id, pos, START, END);
+    size_t state = tree_state_table[pos][node_id];
+    double ratio = (state == 0)? exp(-log_ratio) : exp(log_ratio);
+    if (ratio >= 1.0) {
+      tree_state_table[pos][node_id] = 1 - state;
+    } else {
+      double f = gsl_rng_uniform(r);
+      if (f < ratio) {
+        tree_state_table[pos][node_id] = 1 - state;
       }
-      MH_single_update(subtree_sizes, parent_ids, ps.pi0, logG, logP, logGP,
-                       probs_table[pos], states_table[prev_pos],
-                       states_table[pos], states_table[next_pos],
-                       0, START, END);
     }
   }
 }
 
 static void
-count_triads(const vector<size_t> &subtree_sizes,
-             const vector<size_t> &parent_ids,
-             const vector<vector<size_t> > &tree_state_table,
-             const vector<size_t> &reset_points,
-             vector<triple_state> &triad_counts,
-             vector<pair_state> &start_counts,
-             pair_state &root_counts) {
-  // all properly set to 0.0?
-  triad_counts = vector<triple_state>(subtree_sizes.size());
-  start_counts = vector<pair_state>(subtree_sizes.size());
-  root_counts = pair_state();
+MH_update(const vector<size_t> &subtree_sizes,
+          const vector<size_t> &parent_ids,
+          const vector<double> &params,
+          const vector<size_t> &reset_points,
+          const vector<vector<double> > &tree_prob_table,
+          vector<vector<size_t> > &tree_state_table) {
+  const gsl_rng_type * T;
+  gsl_rng * r;
+  T = gsl_rng_default;
+  r = gsl_rng_alloc(T);
+  gsl_rng_set(r, 0); //time(NULL));
 
-  for (size_t i = 0; i < reset_points.size() - 1; ++i) {
-
+  double pi0 = params[0];
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  vector<vector<double> >G(2,vector<double>(2, 0.0));
+  G[0][0] = g0; G[0][1] = 1.0-g0;
+  G[1][0] = 1.0-g1; G[1][1] = g1;
+  vector<double> Ts(params.begin()+4, params.end());
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  collect_transition_matrices(rate0, g0, g1, Ts, time_trans_mats,
+                              combined_trans_mats);
+  for (size_t i = 0; i < reset_points.size()-1; ++i) {
     size_t start = reset_points[i];
-    size_t end = reset_points[i + 1];
-
-    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-      const size_t anc = tree_state_table[start][parent_ids[node_id]];
-      const size_t cur = tree_state_table[start][node_id];
-      start_counts[node_id](anc, cur) += 1.0;
+    size_t end = reset_points[i+1];
+    for (size_t pos= start; pos < end; ++pos) {
+      bool START = (pos==start);
+      bool END = (pos==end-1);
+      size_t node_id = 0;
+      MH_single_update(subtree_sizes, parent_ids, pi0, G, time_trans_mats,
+                       combined_trans_mats, tree_prob_table, tree_state_table,
+                       node_id, pos, START, END, r);
     }
+  }
+}
 
-    for (size_t pos = start + 1; pos < end; ++pos) {
 
-      root_counts(tree_state_table[pos - 1][0], tree_state_table[pos][0]) += 1.0;
+static void
+to_discrete_table(const vector<vector<double> > &tree_prob_table,
+                  vector<vector<size_t> > &tree_prob_table_discrete) {
+  for (size_t i = 0; i < tree_prob_table.size(); ++i) {
+    for (size_t j = 0; j < tree_prob_table[0].size(); ++j) {
+      assert(tree_prob_table[i][j] >=0 && tree_prob_table[i][j] <= 1.0);
+      // 0 means hypo state; 1 means methylated state (opposite of the hypoprob)
+      tree_prob_table_discrete[i][j] = (tree_prob_table[i][j] > 0.5)? 0: 1;
+    }
+  }
+}
 
-      for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id){
-        const size_t anc = tree_state_table[pos][parent_ids[node_id]];
-        const size_t prev = tree_state_table[pos - 1][node_id];
-        const size_t cur = tree_state_table[pos][node_id];
-        triad_counts[node_id](prev, anc, cur) += 1.0;
+void
+state_to_counts(const vector<size_t> &subtree_sizes,
+                const vector<size_t> &parent_ids,
+                const vector<vector<size_t> > &tree_state_table,
+                const vector<size_t> &reset_points,
+                vector<vector<double> > &triad_counts,
+                vector<vector<vector<double> > > &start_counts,
+                vector<vector<double> > &root_counts) {
+  triad_counts = vector<vector<double> >(subtree_sizes.size(),
+                                         vector<double>(8,0.0));
+  start_counts =
+    vector<vector<vector<double> > > (subtree_sizes.size(),
+                                      vector<vector<double> >(2, vector<double>(2, 0.0)));
+  root_counts = vector<vector<double> >(2, vector<double>(2, 0.0));
+  for (size_t i = 0; i < reset_points.size()-1; ++i) {
+    size_t start = reset_points[i];
+    size_t end = reset_points[i+1];
+    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id){
+      size_t anc = tree_state_table[start][parent_ids[node_id]];
+      size_t cur = tree_state_table[start][node_id];
+      start_counts[node_id][anc][cur] += 1.0;
+    }
+    for (size_t pos= start+1; pos < end; ++pos) {
+      root_counts[tree_state_table[pos-1][0]][tree_state_table[pos][0]]+=1;
+      for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id){
+        size_t anc = tree_state_table[pos][parent_ids[node_id]];
+        size_t prev = tree_state_table[pos-1][node_id];
+        size_t cur = tree_state_table[pos][node_id];
+        triad_counts[node_id][prev*4+anc*2+cur] += 1.0;
       }
     }
   }
 }
+
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -1698,399 +1750,504 @@ count_triads(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 
 double
-log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
-               const vector<triple_state>  &triad_weights, // treesize x 2 x 2 x 2
-               const vector<pair_state > &start_weights,// treesize x 2 x 2
-               const pair_state &root_weights) {
+weights_to_llk(const vector<size_t> &subtree_sizes,
+               const vector<double> &params,
+               const vector<vector<double> >  &triad_weights, // treesizex8
+               const vector<vector<vector<double> > > &start_weights,// treesizex2x2
+               const vector<vector<double> > &root_weights) {
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  vector<double> Ts(params.begin()+4, params.end());
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  collect_transition_matrices(rate0, g0, g1, Ts,
+                              time_trans_mats, combined_trans_mats);
 
-  vector<pair_state> P;
-  vector<triple_state> GP;
-  get_transition_matrices(ps, P, GP);
-
-  double llk =
-    (root_weights(0, 0)*log(ps.g0) + root_weights(0, 1)*log(1.0 - ps.g0) +
-     root_weights(1, 0)*log(1.0 - ps.g1) + root_weights(1, 1)*log(ps.g1));
-
-  for (size_t node = 1; node < subtree_sizes.size(); ++node)
-    for (size_t j = 0; j < 2; ++j)
+  double llk = 0.0;
+  llk += root_weights[0][0]*log(g0) + root_weights[0][1]*log(1.0-g0) +
+    root_weights[1][0]*log(1.0-g1) + root_weights[1][1]*log(g1);
+  for (size_t node = 1; node < subtree_sizes.size(); ++node) {
+    for (size_t j = 0; j < 2; ++j) {
       for (size_t k = 0; k < 2; ++k) {
-        llk += start_weights[node](j, k)*log(P[node](j, k));
-        for (size_t i = 0; i < 2; ++ i)
-          llk += (triad_weights[node](i, j, k)*log(GP[node](i, j, k)));
+        llk += start_weights[node][j][k]*log(time_trans_mats[node][j][k]);
+        for(size_t i = 0; i < 2; ++ i){
+          llk += triad_weights[node][i*4+j*2+k]*
+            log(combined_trans_mats[node][i][j][k]);
+        }
       }
-
+    }
+  }
   return llk;
 }
 
-void
-objective_branch(const param_set &ps,
-                 const vector<triple_state> &triad_weights,
-                 const vector<pair_state> &start_weights,
-                 const vector<pair_state> &P,
-                 const vector<triple_state> &GP,
-                 const vector<triple_state> &GP_dT,
+
+static void
+objective_branch(const vector<double> &params,
+                 const vector<vector<double> > &triad_weights,
+                 const vector<vector<vector<double> > > &start_weights,
+                 const vector<vector<vector<double> > > &time_trans_mats,
+                 const vector<vector<vector<vector<double> > > >
+                 &combined_trans_mats,
+                 const vector<vector<vector<vector<double> > > >
+                 &combined_trans_mats_dT,
                  const size_t node_id,
                  double &F, double &deriv) {
 
   F = 0.0;
   deriv = 0.0;
-  for (size_t i = 0; i < 2; ++i)
-    for (size_t j = 0; j < 2; ++j)
+  for (size_t i = 0; i < 2; ++i) {
+    for (size_t j = 0; j < 2; ++j) {
       for (size_t k = 0; k < 2; ++k) {
-        F += triad_weights[node_id](i, j, k)*log(GP[node_id](i, j, k));
-        deriv += triad_weights[node_id](i, j, k)*
-          (GP_dT[node_id](i, j, k)/GP[node_id](i, j, k));
+        F += triad_weights[node_id][i*4 + j*2 + k]*
+          log(combined_trans_mats[node_id][i][j][k]);
+        deriv += triad_weights[node_id][i*4 + j*2 + k]*
+          (combined_trans_mats_dT[node_id][i][j][k]/
+           combined_trans_mats[node_id][i][j][k]);
       }
-
-  double rate0 = ps.rate0;
-  pair_state P_dT(-rate0, rate0, 1.0 - rate0, rate0 - 1.0);
-
-  for (size_t j = 0; j < 2; ++j)
-    for (size_t k = 0; k < 2; ++k) {
-      F += start_weights[node_id](j, k)*log(P[node_id](j, k));
-      deriv += start_weights[node_id](j, k)*(P_dT(j, k)/P[node_id](j, k));
     }
+  }
+
+  double rate0 = params[1];
+  vector<vector<double> > time_trans_mats_dT(2, vector<double>(2, 0.0));
+  time_trans_mats_dT[0][0] = -rate0;
+  time_trans_mats_dT[0][1] = rate0;
+  time_trans_mats_dT[1][0] = 1.0-rate0;
+  time_trans_mats_dT[1][1] = rate0-1.0;
+
+  for (size_t j = 0; j < 2; ++j) {
+    for (size_t k = 0; k < 2; ++k) {
+      F += start_weights[node_id][j][k]*log(time_trans_mats[node_id][j][k]);
+      deriv += start_weights[node_id][j][k]*
+        (time_trans_mats_dT[j][k]/time_trans_mats[node_id][j][k]);
+    }
+  }
 }
 
+static void
+update_branch(const double TOL,
+              const vector<size_t> &subtree_sizes,
+              const vector<double> &params, size_t node_id,
+              const vector<vector<double> > &triad_weights,
+              const vector<vector<vector<double> > > &start_weights,
+              double &T){
 
-template <class T> static bool
-btwn_01_inclusive(const T x, const double &epsilon) {
-  return x > (0.0 + epsilon) && x < (1.0 - epsilon);
-}
+  double rate0 = params[1];
+  double g0 = params[2];
+  double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  vector<double> Ts(params.begin()+4, params.end());
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_drate;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
+  collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats,
+                                    combined_trans_mats_drate,
+                                    combined_trans_mats_dg0,
+                                    combined_trans_mats_dg1,
+                                    combined_trans_mats_dT);
+  vector<double> prev_params = params;
+  vector<double> new_params = params;
 
-
-void
-update_branch(const bool VERBOSE, const vector<size_t> &subtree_sizes,
-              const param_set &orig_ps, size_t node_id,
-              const vector<triple_state> &triad_weights,
-              const vector<pair_state> &start_weights, param_set &ps) {
-
-  vector<pair_state> P;
-  vector<triple_state> GP, GP_drate, GP_dg0, GP_dg1, GP_dT;
-  get_transition_matrices_deriv(orig_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
-
-  param_set prev_ps(orig_ps);
   double prev_F, new_F;
   double prev_deriv, new_deriv;
-
-  objective_branch(prev_ps, triad_weights, start_weights, P, GP, GP_dT,
+  objective_branch(prev_params, triad_weights, start_weights, time_trans_mats,
+                   combined_trans_mats, combined_trans_mats_dT,
                    node_id, prev_F, prev_deriv);
-
   double frac = 1.0;
   bool CONVERGE = false;
-  double improvement = 0.0;
+  double improve = 0.0;
   while (!CONVERGE) {
-    while (frac > param_set::tolerance &&
-           !btwn_01_inclusive(frac*sign(prev_deriv) +
-                              prev_ps.T[node_id], param_set::tolerance)) {
+    while (frac > TOL &&
+           (frac*sign(prev_deriv) + prev_params[4+node_id] < TOL ||
+            frac*sign(prev_deriv) + prev_params[4+node_id] > 1.0 - TOL)) {
       frac = frac/2;
     }
-
-    ps.T[node_id] = prev_ps.T[node_id] + frac*sign(prev_deriv);
-
+    new_params[4+node_id] = prev_params[4+node_id] + frac*sign(prev_deriv);
     // update trans mats and derivs with new-params
-    get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
+    vector<double> trial_Ts(new_params.begin()+4, new_params.end());
+    assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+    collect_transition_matrices_deriv(rate0, g0, g1, trial_Ts,
+                                      time_trans_mats, combined_trans_mats,
+                                      combined_trans_mats_drate,
+                                      combined_trans_mats_dg0,
+                                      combined_trans_mats_dg1,
+                                      combined_trans_mats_dT);
 
-    objective_branch(ps, triad_weights, start_weights, P, GP,
-                     GP_dT, node_id, new_F, new_deriv);
+    objective_branch(new_params, triad_weights, start_weights, time_trans_mats,
+                     combined_trans_mats, combined_trans_mats_dT,
+                     node_id, new_F, new_deriv);
 
     if (new_F > prev_F) {
-      improvement += new_F - prev_F;
-      if (VERBOSE)
-        cerr << "[update_branch: delta=" << improvement
-             << ", branch[" << node_id << "]=" << ps.T[node_id] << ']' << endl;
+      improve += new_F - prev_F;
+      cerr << "SUCCESS\tImprov=" << improve
+           << "\tbranch[" << node_id << "]=" << new_params[4+node_id]<< endl;
       prev_F = new_F;
       prev_deriv = new_deriv;
-      prev_ps.T[node_id] = ps.T[node_id];
+      prev_params = new_params;
     }
     frac = frac/2;
-    if (frac < param_set::tolerance)
-      CONVERGE = true;
+    if (frac < TOL) CONVERGE = true;
   }
-  ps.T[node_id] = prev_ps.T[node_id];
+  T = prev_params[4+node_id];
 }
 
 
 static void
-objective_rate(const vector<size_t> &subtree_sizes, const param_set &ps,
-               const vector<triple_state> &triad_weights,
-               const vector<pair_state> &start_weights,
-               const vector<pair_state> &P, const vector<triple_state> &GP,
-               const vector<triple_state> &GP_drate,
+objective_rate(const vector<size_t> &subtree_sizes,
+               const vector<double> &params,
+               const vector<vector<double> >  &triad_weights, // treesizex8
+               const vector<vector<vector<double> > > &start_weights,
+               const vector<vector<vector<double> > > &time_trans_mats,
+               const vector<vector<vector<vector<double> > > > &combined_trans_mats, // treesizex2x2
+               const vector<vector<vector<vector<double> > > > &combined_trans_mats_drate,
                double &F, double &deriv_rate) {
-
-  const size_t n_nodes = subtree_sizes.size();
 
   F = 0.0;
   deriv_rate = 0.0;
-  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
 
-    for (size_t i = 0; i < 2; ++i)
-      for (size_t j = 0; j < 2; ++j)
+  const size_t n_nodes = subtree_sizes.size();
+  const vector<double> T(params.begin()+4, params.end());
+
+  for (size_t node_id = 1; node_id < n_nodes; ++ node_id) {
+    vector<vector<double> > time_trans_mats_drate(2, vector<double>(2,0.0));
+    time_trans_mats_drate[0][0] = -T[node_id];
+    time_trans_mats_drate[0][1] = T[node_id];
+    time_trans_mats_drate[1][0] = -T[node_id];
+    time_trans_mats_drate[1][1] = T[node_id];
+
+    for (size_t i = 0; i < 2; ++i) {
+      for (size_t j = 0; j < 2; ++j) {
         for (size_t k = 0; k < 2; ++k) {
-          F += triad_weights[node_id](i, j, k)*log(GP[node_id](i, j, k));
-          deriv_rate += triad_weights[node_id](i, j, k)*
-            (GP_drate[node_id](i, j, k)/GP[node_id](i, j, k));
+          F += triad_weights[node_id][i*4 + j*2 +k]*
+            log(combined_trans_mats[node_id][i][j][k]);
+          deriv_rate += triad_weights[node_id][i*4 + j*2 +k]*
+            (combined_trans_mats_drate[node_id][i][j][k]/
+             combined_trans_mats[node_id][i][j][k]);
         }
-
-    const double T_val = ps.T[node_id];
-    const pair_state P_drate(-T_val, T_val, -T_val, T_val);
-    for (size_t j = 0; j < 2; ++j)
-      for (size_t k = 0; k < 2; ++k) {
-        F += start_weights[node_id](j, k)*log(P[node_id](j, k));
-        deriv_rate += start_weights[node_id](j, k)*
-          P_drate(j, k)/P[node_id](j, k);
       }
+    }
+
+    for (size_t j = 0; j < 2; ++j) {
+      for (size_t k = 0; k < 2; ++k) {
+        F += start_weights[node_id][j][k]*log(time_trans_mats[node_id][j][k]);
+        deriv_rate += start_weights[node_id][j][k]*time_trans_mats_drate[j][k]/time_trans_mats[node_id][j][k];
+      }
+    }
   }
 }
 
+static void
+update_rate(const double TOL,
+            const vector<size_t> &subtree_sizes,
+            const vector<double> &params,
+            const vector<vector<double> >  &triad_weights,
+            const vector<vector<vector<double> > > &start_weights,
+            double &new_rate){
 
-void
-update_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
-            const param_set &orig_ps, const vector<triple_state>  &triad_weights,
-            const vector<pair_state> &start_weights, param_set &ps) {
-
-  vector<pair_state> P;
-  vector<triple_state> GP, GP_drate, GP_dg0, GP_dg1, GP_dT;
-  get_transition_matrices_deriv(orig_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
-
-  param_set prev_ps = orig_ps;
-  ps = orig_ps;
+  const double rate0 = params[1];
+  const double g0 = params[2];
+  const double g1 = params[3];
+  assert(g0 > 0 && g0 <1 && g1 > 0 && g1 <1);
+  const vector<double> Ts(params.begin()+4, params.end());
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_drate;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
+  collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats,
+                                    combined_trans_mats_drate,
+                                    combined_trans_mats_dg0,
+                                    combined_trans_mats_dg1,
+                                    combined_trans_mats_dT);
+  vector<double> prev_params = params;
+  vector<double> new_params = params;
 
   double prev_F = 0.0;
   double new_F = 0.0;
   double prev_deriv, new_deriv;
-  objective_rate(subtree_sizes, prev_ps, triad_weights,
-                 start_weights, P, GP, GP_drate, prev_F, prev_deriv);
+
+  objective_rate(subtree_sizes, prev_params, triad_weights,
+                 start_weights, time_trans_mats,
+                 combined_trans_mats, combined_trans_mats_drate,
+                 prev_F, prev_deriv);
 
   double denom = abs(prev_deriv);
   double frac = 1.0;
   bool CONVERGE = false;
-  double improvement = 0.0;
+  double improve = 0.0;
   while (!CONVERGE) {
-    while (frac >  param_set::tolerance &&
-           !btwn_01_inclusive(frac*sign(prev_deriv) +
-                              prev_ps.rate0, param_set::tolerance)) {
+    while (frac > TOL && (frac*sign(prev_deriv) + prev_params[1] > 1 - TOL ||
+                          frac*sign(prev_deriv) + prev_params[1] < TOL)) {
       frac = frac/2;
     }
-    ps.rate0 = prev_ps.rate0 + frac*(prev_deriv/denom);
-    get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
-
-    objective_rate(subtree_sizes, ps, triad_weights, start_weights,
-                   P, GP, GP_drate, new_F, new_deriv);
+    new_params[1] = prev_params[1] + frac*(prev_deriv/denom); //rate0
+    collect_transition_matrices_deriv(new_params[1], g0, g1, Ts,
+                                      time_trans_mats, combined_trans_mats,
+                                      combined_trans_mats_drate,
+                                      combined_trans_mats_dg0,
+                                      combined_trans_mats_dg1,
+                                      combined_trans_mats_dT);
+    objective_rate(subtree_sizes, new_params, triad_weights,
+                   start_weights, time_trans_mats, combined_trans_mats,
+                   combined_trans_mats_drate, new_F, new_deriv);
 
     if (new_F > prev_F) {
-      improvement += new_F - prev_F;
-      cerr << "[update_rate: delta=" << improvement
-           << ", rate=" << ps.rate0 << ']' << endl;
+      improve += new_F - prev_F;
       prev_F = new_F;
       prev_deriv = new_deriv;
-      prev_ps.rate0 = ps.rate0;
+      prev_params = new_params;
       denom = abs(new_deriv);
+      cerr << "SUCCESS\tImprov=" << improve << "\trate=" << new_params[1] <<endl;
     }
 
     frac = frac/2;
-    if (frac < param_set::tolerance)
+    if (frac < TOL )
       CONVERGE = true;
   }
-  ps.rate0 = prev_ps.rate0;
+  new_rate = prev_params[1];
 }
 
-
-void
+static void
 objective_G(const vector<size_t> &subtree_sizes,
-            const param_set &ps,
-            const vector<triple_state> &triad_weights,
-            const pair_state &root_weights,
-            const vector<triple_state> &GP,
-            const vector<triple_state> &GP_dg0,
-            const vector<triple_state> &GP_dg1,
+            const vector<double> &params,
+            const vector<vector<double> > &triad_weights, // treesizex2x2x2
+            const vector<vector<double> > &root_weights,
+            const vector<vector<vector<vector<double> > > > &combined_trans_mats,
+            const
+            vector<vector<vector<vector<double> > > > &combined_trans_mats_dg0,
+            const
+            vector<vector<vector<vector<double> > > > &combined_trans_mats_dg1,
             double &F, vector<double> &deriv_G){
 
-  const size_t n_nodes = subtree_sizes.size();
+  double g0 = params[2];
+  double g1 = params[3];
+
+  vector<vector<double> > G(2,vector<double>(2, 0.0));
+  G[0][0] = g0;
+  G[0][1] = 1.0 - g0;
+  G[1][0] = 1.0 - g1;
+  G[1][1] = g1;
 
   F = 0.0;
   deriv_G = vector<double>(2, 0.0);
-  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
-
-    for (size_t i = 0; i < 2; ++i)
-      for (size_t j = 0; j < 2; ++j)
-        for (size_t k = 0; k < 2; ++k)
-          F += triad_weights[node_id](i, j, k)*log(GP[node_id](i, j, k));
-
-    for (size_t j = 0; j < 2; ++j)
-      for (size_t k = 0; k < 2; ++k) {
-        deriv_G[0] += triad_weights[node_id](0, j, k)*
-          (GP_dg0[node_id](0, j, k)/GP[node_id](0, j, k));
-        deriv_G[1] += triad_weights[node_id](1, j, k)*
-          (GP_dg1[node_id](1, j, k)/GP[node_id](1, j, k));
+  for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
+    for (size_t i = 0; i < 2; ++i) {
+      for (size_t j = 0; j < 2; ++j) {
+        for (size_t k = 0; k < 2; ++k) {
+          F += triad_weights[node_id][i*4+j*2+k]*
+            log(combined_trans_mats[node_id][i][j][k]);
+        }
       }
+    }
+    for (size_t j = 0; j < 2; ++j) {
+      for (size_t k = 0; k < 2; ++k) {
+        deriv_G[0] += triad_weights[node_id][j*2+k]*
+          (combined_trans_mats_dg0[node_id][0][j][k]/
+           combined_trans_mats[node_id][0][j][k]);
+        deriv_G[1] += triad_weights[node_id][4+j*2+k]*
+          (combined_trans_mats_dg1[node_id][1][j][k]/
+           combined_trans_mats[node_id][1][j][k]);
+      }
+    }
   }
 
-  const pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  for (size_t i = 0; i < 2; ++i) {
+    for (size_t j = 0; j < 2; ++j) {
+      F += root_weights[i][j]*log(G[i][j]);
+    }
+  }
 
-  for (size_t i = 0; i < 2; ++i)
-    for (size_t j = 0; j < 2; ++j)
-      F += root_weights(i, j)*log(G(i, j));
-
-  deriv_G[0] += root_weights(0, 0)/G(0, 0) - root_weights(0, 1)/G(0, 1);
-  deriv_G[1] += -1.0*root_weights(1, 0)/G(1, 0) + root_weights(1, 1)/G(1, 1);
+  deriv_G[0] +=  root_weights[0][0]/G[0][0] - root_weights[0][1]/G[0][1];
+  deriv_G[1] +=  -1.0*root_weights[1][0]/G[1][0] + root_weights[1][1]/G[1][1];
 }
 
+static void
+update_G(const double TOL,
+         const vector<size_t> &subtree_sizes,
+         const vector<double> &params,
+         const vector<vector<double> > &triad_weights, // treesizex2x2x2
+         const vector<vector<double> > &root_weights,
+         double &new_g0, double &new_g1) {
 
-void
-update_G(const bool VERBOSE, const vector<size_t> &subtree_sizes,
-         const param_set &orig_ps, const vector<triple_state> &triad_weights,
-         const pair_state &root_weights, param_set &ps) {
+  const double rate0 = params[1];
+  const double g0 = params[2];
+  const double g1 = params[3];
+  const vector<double> Ts(params.begin()+4, params.end());
 
-  vector<pair_state> P;
-  vector<triple_state> GP, GP_drate, GP_dg0, GP_dg1, GP_dT;
-  get_transition_matrices_deriv(orig_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
-  param_set prev_ps(orig_ps);
-  ps = orig_ps;
+  vector<vector<vector<double> > > time_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_drate;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg0;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dg1;
+  vector<vector<vector<vector<double> > > > combined_trans_mats_dT;
+  collect_transition_matrices_deriv(rate0, g0, g1, Ts, time_trans_mats,
+                                    combined_trans_mats,
+                                    combined_trans_mats_drate,
+                                    combined_trans_mats_dg0,
+                                    combined_trans_mats_dg1,
+                                    combined_trans_mats_dT);
+  vector<double> prev_params = params;
+  vector<double> new_params = params;
 
-  double prev_F = 0.0, new_F = 0.0; // ADS: naming is bad (never use "new")
+  double prev_F =0.0;
+  double new_F = 0.0;
   vector<double> prev_deriv, new_deriv;
 
-  objective_G(subtree_sizes, prev_ps, triad_weights, root_weights,
-              GP, GP_dg0, GP_dg1, prev_F, prev_deriv);
+  objective_G(subtree_sizes, prev_params, triad_weights,
+              root_weights, combined_trans_mats, combined_trans_mats_dg0,
+              combined_trans_mats_dg1, prev_F, prev_deriv);
 
   double denom = abs(prev_deriv[0]) + abs(prev_deriv[1]);
   double frac = 1.0;
-  bool converged = false;
-  double improvement = 0.0;
-  while (!converged) {
-    while (frac >  param_set::tolerance &&
-           !(btwn_01_inclusive(frac*(prev_deriv[0]/denom) + prev_ps.g0,
-                               param_set::tolerance) &&
-             btwn_01_inclusive(frac*(prev_deriv[1]/denom) + prev_ps.g1,
-                               param_set::tolerance))) {
+  bool CONVERGE = false;
+  double improve = 0.0;
+  while (!CONVERGE) {
+    while (frac > TOL &&
+           (frac*(prev_deriv[0]/denom) + prev_params[2] > 1 - TOL ||
+            frac*(prev_deriv[0]/denom) + prev_params[2] < TOL ||
+            frac*(prev_deriv[1]/denom) + prev_params[3] > 1 - TOL ||
+            frac*(prev_deriv[1]/denom) + prev_params[3] < TOL )) {
       frac = frac/2;
     }
-    ps.g0 = prev_ps.g0 + frac*(prev_deriv[0]/denom); //g0
-    ps.g1 = prev_ps.g1 + frac*(prev_deriv[1]/denom); //g1
-
-    get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
-    objective_G(subtree_sizes, ps, triad_weights, root_weights,
-                GP, GP_dg0, GP_dg1, new_F, new_deriv);
+    new_params[2] = prev_params[2] + frac*(prev_deriv[0]/denom); //g0
+    new_params[3] = prev_params[3] + frac*(prev_deriv[1]/denom); //g1
+    collect_transition_matrices_deriv(rate0, new_params[2], new_params[3], Ts,
+                                      time_trans_mats, combined_trans_mats,
+                                      combined_trans_mats_drate,
+                                      combined_trans_mats_dg0,
+                                      combined_trans_mats_dg1,
+                                      combined_trans_mats_dT);
+    objective_G(subtree_sizes, new_params, triad_weights, root_weights,
+                combined_trans_mats, combined_trans_mats_dg0,
+                combined_trans_mats_dg1, new_F, new_deriv);
 
     if (new_F > prev_F) {
-      improvement += new_F - prev_F;
-      if (VERBOSE)
-        cerr << "[update_G: delta=" << improvement
-             << ", G=(" << ps.g0 << ", " << ps.g1 << ")]" << endl;
+      improve += new_F - prev_F;
       prev_F = new_F;
       prev_deriv = new_deriv;
-      prev_ps.g0 = ps.g0;
-      prev_ps.g1 = ps.g1;
+      prev_params = new_params;
       denom = abs(new_deriv[0]) + abs(new_deriv[1]);
+
+      cerr << "SUCCESS\tImprov=" << improve << "\tG=("
+           << new_params[2] << ", " << new_params[3] << ")" << endl;
     }
     frac = frac/2;
-    if (frac < param_set::tolerance)
-      converged = true;
+    if (frac < TOL)
+      CONVERGE = true;
   }
-  ps.g0 = prev_ps.g0;
-  ps.g1 = prev_ps.g1;
+  new_g0 = prev_params[2];
+  new_g1 = prev_params[3];
 }
+
+static void
+update_pi0(const vector<vector<vector<double> > > &start_weights,
+           double &pi0){
+  double num = start_weights[1][0][1] +  start_weights[1][0][0];
+  double denom = num + start_weights[1][1][1] +  start_weights[1][1][0];
+  pi0 = num/denom;
+}
+
 
 
 static void
-update_pi0(const bool VERBOSE,
-           const vector<pair_state> &start_weights, param_set &ps) {
-  const double num = start_weights[1](0, 0) +  start_weights[1](0, 1);
-  const double denom = num + start_weights[1](1, 0) +  start_weights[1](1, 1) ;
-  ps.pi0 = num/denom;
-  if (VERBOSE)
-    cerr << "[update_pi0: pi0=" << ps.pi0 << ']' << endl;
-}
-
-
-void
-optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
+optimize_params(const vector<size_t> &subtree_sizes,
                 const vector<size_t> &reset_points,
-                const pair_state &root_weights,
-                const vector<pair_state> &start_weights,
-                const vector<triple_state> &triad_weights, param_set &ps) {
+                const vector<double> &params,
+                const vector<vector<double> > &root_weights,
+                const vector<vector<vector<double> > > &start_weights,
+                const vector<vector<double> > &triad_weights,
+                vector<double> &newparams){
 
-  // ADS: not clear why to keep these two variables below
-  param_set cur_ps(ps);
+  newparams = params;
+  double TOL = 1e-4;
 
   // update branches
-  for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-    update_branch(VERBOSE, subtree_sizes, cur_ps, node_id,
-                  triad_weights, start_weights, ps);
-    cur_ps.T[node_id] = ps.T[node_id];
+  double T = 0.0;
+  for (size_t node_id = 1; node_id < subtree_sizes.size(); ++ node_id) {
+    update_branch(TOL, subtree_sizes, newparams, node_id,
+                  triad_weights, start_weights, T);
+    newparams[4+node_id] = T;
   }
-
   // update rate0
-  update_rate(VERBOSE, subtree_sizes, cur_ps, triad_weights, start_weights, ps);
-  cur_ps.rate0 = ps.rate0;
+  double new_rate;
+  update_rate(TOL, subtree_sizes, newparams,
+              triad_weights, start_weights, new_rate);
+  newparams[1] = new_rate;
 
   //update pi0
-  update_pi0(VERBOSE, start_weights, ps);
-  cur_ps.pi0 = ps.pi0;
+  double new_pi0;
+  update_pi0(start_weights, new_pi0);
+  newparams[0] = new_pi0;
 
   //update G
-  update_G(VERBOSE, subtree_sizes, cur_ps, triad_weights, root_weights, ps);
+  double new_g0;
+  double new_g1;
+  update_G(TOL, subtree_sizes, newparams, triad_weights, root_weights,
+           new_g0, new_g1);
+  newparams[2] = new_g0;
+  newparams[3] = new_g1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-///////////////// OPTIMIZING PARAMETERS ABOVE //////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-static void
+void
 local_parsimony(const vector<size_t> &subtree_sizes,
                 const vector<size_t> &parent_ids,
-                const size_t node_id, string &state) {
-  if (!is_leaf(subtree_sizes[node_id])) {
+                const size_t node_id,
+                string &state) {
+  if (subtree_sizes[node_id] == 1)
+    return;
 
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      size_t child_id = node_id + count;
-      local_parsimony(subtree_sizes, parent_ids, child_id, state);
-      count += subtree_sizes[child_id];
-    }
+  size_t count = 1;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count;
+    local_parsimony(subtree_sizes, parent_ids, child_id, state);
+    count += subtree_sizes[child_id];
+  }
 
-    char s = state[node_id + 1];
-    bool SAME = true;
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      size_t child_id = node_id + count;
-      if (state[child_id] != s) {
-        SAME = false;
-        break;
-      }
-      count += subtree_sizes[child_id];
+  count = 1;
+  char s = state[node_id+1];
+  bool SAME = true;
+  while (count < subtree_sizes[node_id]) {
+    size_t child_id = node_id + count;
+    if (state[child_id] != s) {
+      SAME= false;
+      break;
     }
-    if (SAME) {
+    count += subtree_sizes[child_id];
+  }
+  if (SAME) {
     state[node_id] = s;
-    } else {
-      s = state[parent_ids[node_id]];
-      state[node_id] = s;
-    }
+  } else {
+    s = state[parent_ids[node_id]];
+    state[node_id] = s;
   }
 }
-
 
 static void
 tree_prob_to_states(const vector<size_t> &subtree_sizes,
                     const vector<size_t> &parent_ids,
                     const vector<vector<double> > &tree_prob_table,
                     const double cutoff, vector<string> &states) {
-
   const size_t n_nodes = tree_prob_table[0].size();
   const size_t n_sites= tree_prob_table.size();
-
   for (size_t i = 0; i < n_sites; ++i) {
     string state;
-    for (size_t j = 0; j < n_nodes; ++j)
+    for (size_t j = 0; j < n_nodes; ++j ) {
       state += ((tree_prob_table[i][j] <= cutoff) ? '1' : '0' );
-
+    }
     states.push_back(state);
   }
-
-  for (size_t i = 0; i < n_sites; ++i)
+  for (size_t i = 0; i < n_sites; ++i) {
     local_parsimony(subtree_sizes, parent_ids, 0, states[i]);
+  }
 }
 
 static void
@@ -2098,7 +2255,6 @@ write_treeprob_states(const vector<size_t> &subtree_sizes,
                       const vector<Site> &sites,
                       const vector<vector<double> > &tree_prob_table,
                       std::ofstream &out) {
-
   const size_t n_nodes = subtree_sizes.size();
   for (size_t i = 0; i < sites.size(); ++i) {
     string state;
@@ -2120,23 +2276,28 @@ write_treeprob_states(const vector<size_t> &subtree_sizes,
 
 
 static void
-build_domain(const size_t minCpG, const size_t desert_size,
-             const vector<Site> &sites, const vector<string> &states,
+build_domain(const size_t minCpG,
+             const size_t desert_size,
+             const vector<Site> &sites,
+             const vector<string> &states,
              vector<GenomicRegion> &domains) {
-
   // first round collapsing
-  GenomicRegion cpg(sites[0].chrom, sites[0].pos, sites[0].pos + 1,
-                    states[0], 1.0, '+');
+  GenomicRegion cpg;
+  cpg.set_chrom(sites[0].chrom);
+  cpg.set_start(sites[0].pos);
+  cpg.set_end(sites[0].pos+1);
+  cpg.set_name(states[0]);
+  cpg.set_score(1.0);
   for (size_t i = 1; i < sites.size(); ++i) {
-    const size_t d = Site::distance(sites[i], sites[i - 1]);
-    if (d < desert_size && states[i] == states[i - 1]) {
-      cpg.set_score(1.0 + cpg.get_score());
-      cpg.set_end(sites[i].pos + 1); // ADS: why is this not "pos + 1"?
+    size_t d = distance_between_sites(sites[i], sites[i-1]);
+    if (d < desert_size && states[i] == states[i-1]) {
+      cpg.set_score(1.0+ cpg.get_score());
+      cpg.set_end(sites[i].pos);
     } else {
       domains.push_back(cpg);
       cpg.set_chrom(sites[i].chrom);
       cpg.set_start(sites[i].pos);
-      cpg.set_end(sites[i].pos + 1);
+      cpg.set_end(sites[i].pos+1);
       cpg.set_name(states[i]);
       cpg.set_score(1.0);
     }
@@ -2153,7 +2314,7 @@ build_domain(const size_t minCpG, const size_t desert_size,
       } else {
         if (merging_domains.size() > 0 &&
             domains[j].get_name() == merging_domains.back().get_name() &&
-            domains[j].distance(merging_domains.back()) < desert_size) {
+            domains[j].distance(merging_domains.back()) < desert_size ) {
           merging_domains.back().set_score(merging_domains.back().get_score() +
                                            domains[j].get_score() + skip);
           merging_domains.back().set_end(domains[j].get_end());
@@ -2165,121 +2326,6 @@ build_domain(const size_t minCpG, const size_t desert_size,
       }
     }
     domains.swap(merging_domains);
-  }
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-/////////////// EXPECTATION MAXIMIZATION ///////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-static void
-maximization_step(const bool VERBOSE, const size_t MAXITER,
-                  const vector<size_t> &subtree_sizes,
-                  const vector<size_t> &reset_points,
-                  const pair_state &root_weights,
-                  const vector<pair_state> &start_weights,
-                  const vector<triple_state> &triad_weights,
-                  param_set &ps, PhyloTreePreorder &t) {
-
-  // one M-step: optimize parameters
-  double diff = std::numeric_limits<double>::max();
-  for (size_t iter = 0; iter < MAXITER && diff >  param_set::tolerance; ++iter) {
-    if (VERBOSE)
-      cerr << "[iteration=" << iter << "]\n" << ps << endl;
-
-    param_set prev_ps(ps);
-    optimize_params(VERBOSE, subtree_sizes, reset_points,
-                    root_weights, start_weights, triad_weights, ps);
-    diff = param_set::absolute_difference(ps, prev_ps);
-  }
-}
-
-
-static void
-to_discrete_table(const vector<vector<double> > &tree_prob_table,
-                  vector<vector<size_t> > &tree_prob_table_discrete) {
-  for (size_t i = 0; i < tree_prob_table.size(); ++i)
-    for (size_t j = 0; j < tree_prob_table[0].size(); ++j) {
-      // 0 means hypo state; 1 means methylated state (opposite of the hypoprob)
-      tree_prob_table_discrete[i][j] = (tree_prob_table[i][j] > 0.5)? 0: 1;
-    }
-}
-
-static void
-expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
-                 const size_t max_app_iter,
-                 const vector<size_t> &subtree_sizes,
-                 const vector<size_t> &parent_ids,
-                 const vector<size_t> &reset_points,
-                 const param_set &ps,
-                 pair_state &root_weights,
-                 vector<pair_state> &start_weights,
-                 vector<triple_state> &triad_weights,
-                 vector<vector<double> > &tree_prob_table,
-                 vector<vector<size_t> > &sampled_states) {
-
-  const size_t n_nodes = subtree_sizes.size();
-  const size_t n_sites = tree_prob_table.size();
-
-  /*********** starting point of chain *************************************/
-  // first obtain approximate posteriors
-  if (VERBOSE)
-    cerr << "[inside expectation: approx_posterior]" << endl;
-  approx_posterior(subtree_sizes, ps, reset_points, POST_CONV_TOL,
-                   max_app_iter, tree_prob_table);
-  // then "sample" states from the posterior
-  sampled_states = vector<vector<size_t> >(n_sites, vector<size_t>(n_nodes));
-  to_discrete_table(tree_prob_table, sampled_states);
-
-  triad_weights = vector<triple_state>(n_nodes);
-  start_weights = vector<pair_state>(n_nodes);
-  vector<triple_state> triad_weights_prev(n_nodes);
-
-  bool converged = false;
-  size_t mh_iter = 0;
-  for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
-    if (VERBOSE)
-      cerr << "[inside expectation: M-H (iter=" << mh_iter << ")]" << endl;
-
-    pair_state root_weights_samp;
-    vector<pair_state> start_weights_samp(n_nodes);
-    vector<triple_state> triad_weights_samp(n_nodes);
-    count_triads(subtree_sizes, parent_ids, sampled_states, reset_points,
-                 triad_weights_samp, start_weights_samp, root_weights_samp);
-
-    for (size_t i = 0; i < triad_weights.size(); ++i) {
-      triad_weights[i] = triad_weights[i] + triad_weights_samp[i];
-      start_weights[i] = start_weights[i] + start_weights_samp[i];
-    }
-    root_weights = root_weights + root_weights_samp;
-
-    vector<double> divergence;
-    kl_divergence(triad_weights_prev, triad_weights, divergence);
-
-    converged = *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
-
-    if (!converged) { // take next sample (all sites)
-      /* "tree_prob_table" determines how leaf states are updated */
-      MH_update(subtree_sizes, parent_ids, ps, reset_points,
-                tree_prob_table, sampled_states);
-    }
-    triad_weights_prev = triad_weights;
-  }
-
-  root_weights.div(mh_iter);
-  for (size_t i = 0; i < triad_weights.size(); ++i) {
-    start_weights[i].div(mh_iter);
-    triad_weights[i].div(mh_iter);
-  }
-  if (VERBOSE) {
-    cerr << "[MH iterations=" << mh_iter << ']' << endl
-         << "triad_weights:" << endl;
-    copy(triad_weights.begin(), triad_weights.end(),
-         ostream_iterator<triple_state>(cerr, "\n"));
-    // ADS: should we print more summary statistics here?
   }
 }
 
@@ -2295,6 +2341,7 @@ main(int argc, const char **argv) {
     size_t desert_size = 1000;
     size_t minCpG = 10;
     size_t minfragcpg = 5;
+    double tolerance = 1e-4; //parameter convergence tolerance
     size_t MAXITER = 10; // iterations inside the M-step
     size_t EMMAXITER = 30; //rounds of EM iterations
 
@@ -2347,35 +2394,27 @@ main(int argc, const char **argv) {
     }
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
-    /********************* END COMMAND LINE OPTIONS ***************************/
-
-    const gsl_rng_type * T;
-    T = gsl_rng_default;
-    rng = gsl_rng_alloc(T);
-    gsl_rng_set(rng, 0); //time(NULL));
 
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
     if (!tree_in)
       throw SMITHLABException("cannot read: " + tree_file);
-    // ADS: is there a need to check if the tree is consistent with
-    // the one given in the params file (assuming params file
-    // specified)?
     PhyloTreePreorder t;
     tree_in >> t;
 
+    if (VERBOSE)
+      cerr <<  t.tostring() << endl;
 
-
-    vector<size_t> subtree_sizes, node_degrees;
+    vector<size_t> subtree_sizes;
+    vector<size_t> node_degrees;
     vector<string> nodenames;
     vector<double> branches;
     t.get_subtree_sizes(subtree_sizes);
     t.get_branch_lengths(branches);
     get_degrees(subtree_sizes, node_degrees);
-
     if (!is_semi_binary(node_degrees))
       throw SMITHLABException("invalid tree structure");
-    const size_t n_leaves =  count_leaves(subtree_sizes);
+    const size_t n_leaves =  leafsize(subtree_sizes);
 
     vector<size_t> parent_ids;
     get_parent_id(subtree_sizes, parent_ids);
@@ -2383,76 +2422,104 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "loaded tree (leaves=" << n_leaves << ")" << endl;
 
+    /**************************************************************************/
     /******************** INITIALIZE PARAMETERS *******************************/
-    double pi0 = 0.48; // MAGIC
-    double rate0 = 0.4;// MAGIC
-    double g0 = 0.9;   // MAGIC
-    double g1 = 0.95;  // MAGIC
+    double pi0 = 0.48;
+    double rate0 = 0.4;
+    double g0 = 0.9;
+    double g1 = 0.95;
 
-    param_set init_ps(pi0, rate0, g0, g1);
-
+    bool PARAMFIX = false;
     if (!paramfile.empty()) {
-      init_ps.read(paramfile, t);
-      if (VERBOSE)
-        cerr << "[tree:]\n" << t.tostring() << endl
-             << "[given params:]\n" << init_ps << endl;
-    } else {
-      // if parameters must be optimized, tree still needed from its own file
-      vector<double> branches;
+      read_params(paramfile, pi0, rate0, g0, g1, t);
+      if (VERBOSE) {
+        cerr << "Read in tree branch lengths:" << t.tostring() << endl
+             << "Root_unmeth_prob=" << pi0 << "\trate=" <<  rate0
+             << "\tg0=" << g0 << "\tg1" << g1 << endl;
+      }
+      PARAMFIX = true;
+      branches.clear();
       t.get_branch_lengths(branches);
-      for (size_t i = 0; i < branches.size(); ++i)
-        init_ps.T.push_back(1.0 - 1.0/exp(branches[i]));
-      if (VERBOSE)
-        cerr << "[tree:]\n" << t.tostring() << endl
-             << "[starting_params={"  << init_ps << "}]" << endl;
+    }
+    vector<double> Ts;
+    for (size_t i = 0; i < branches.size(); ++i) {
+      Ts.push_back(1.0 - 1.0/exp(branches[i]));
     }
 
     const size_t n_nodes = subtree_sizes.size();
+    vector<double> start_param(n_nodes+4, 0.0);
+    start_param[0] = pi0; start_param[1] = rate0;
+    start_param[2] = g0; start_param[3] = g1;
+    for (size_t i = 1; i < n_nodes; ++i) {
+      start_param[4+i] = Ts[i];
+    }
 
+    /**************************************************************************/
     /******************** LOAD METHYLATION DATA *******************************/
     vector<Site> sites;
     vector<size_t> reset_points;
     vector<vector<double> > tree_prob_table;
-    vector<vector<double> > tree_state_table;
 
     if (COMPLETE) {
-      /********************** COMPLETE MODE ***********************************/
       if (VERBOSE)
         cerr << "============ COMPLETE MODE =============" << endl
              << "[Loading full table]" << endl;
 
       load_full_states_as_prob(meth_table_file, n_nodes, sites, tree_prob_table);
+      if (VERBOSE) cerr << "[Separating deserts]" << endl;
+      separate_regions(desert_size, tree_prob_table, sites, reset_points);
 
-      if (VERBOSE)
-        cerr << "[Separating deserts]" << endl;
-      separate_regions(desert_size, sites, reset_points);
+
       const size_t n_sites = tree_prob_table.size();
 
       // true weights
-      pair_state root_weights;
-      vector<pair_state> start_weights;
-      vector<triple_state> triad_weights;
+      vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+      vector<vector<double> > root_weights = mat2x2;
+      vector<vector<vector<double> > > start_weights(n_nodes, mat2x2);
+      vector<vector<double> > triad_weights(n_nodes, vector<double>(8, 0.0));
 
       vector<vector<size_t> > tree_state_table(n_sites,
                                                vector<size_t>(n_nodes, 0));
       to_discrete_table(tree_prob_table, tree_state_table);
-      count_triads(subtree_sizes, parent_ids, tree_state_table, reset_points,
-                   triad_weights, start_weights, root_weights);
+      state_to_counts(subtree_sizes, parent_ids, tree_state_table, reset_points,
+                      triad_weights, start_weights, root_weights);
 
       if (VERBOSE) {
         cerr << "-----triad_weights_true------" << endl;
-        for (size_t i = 0; i < triad_weights.size(); ++i)
-          cerr << triad_weights[i];
+        print_table(triad_weights);
       }
 
       // One M-step: optimize parameters
-      /*M-step: optimize parameters */
-      maximization_step(VERBOSE, MAXITER, subtree_sizes, reset_points,
-                        root_weights, start_weights, triad_weights, init_ps, t);
+      double diff = std::numeric_limits<double>::max();
+      size_t iter = 0;
+      while (iter < MAXITER && diff > tolerance) {
+        if (VERBOSE) {
+          cerr << "Iteration " << iter << "\t";
+          for (size_t i = 0; i < start_param.size(); ++i)
+            cerr << start_param[i] << "\t";
+          cerr << endl;
+        }
+        vector<double> newparams(n_nodes+4, 0.0);
+        optimize_params(subtree_sizes, reset_points, start_param, root_weights,
+                        start_weights, triad_weights, newparams);
+        diff = 0.0;
+        for (size_t i = 0; i < newparams.size(); ++i) {
+          diff += abs(newparams[i]-start_param[i]);
+        }
+        start_param = newparams;
+
+        for (size_t i = 5; i < start_param.size(); ++i) {
+          branches[i-4] = -log(1.0 - start_param[i]);
+        }
+        t.set_branch_lengths(branches);
+
+        ++iter;
+      }
 
     } else {
+
       if (VERBOSE)
-        cerr << "========= LEAF (INCOMPLETE DATA) MODE =========" << endl
+        cerr << "============ LEAF MODE =============" << endl
              << "[Loading LEAF table]" << endl;
 
       vector<string> meth_table_species;
@@ -2464,20 +2531,25 @@ main(int argc, const char **argv) {
         cerr << "loaded meth table (species="
              << meth_table_species.size() << ")" << endl;
 
-      // make sure meth data and tree info is in sync
-      if (meth_table_species.size() != n_leaves ||
-          !has_same_species_order(t, meth_table_species))
-        throw SMITHLABException("inconsistent species counts, names or order");
+      /**** MAKE SURE METH DATA AND TREE INFO IS IN SYNC *****/
+      if (meth_table_species.size() != n_leaves)
+        throw SMITHLABException("inconsistent species counts");
+      if (!has_same_species_order(t, meth_table_species))
+        throw SMITHLABException("inconsistent species names or order");
 
       if (VERBOSE) {
         vector<size_t> species_in_order;
         subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
-        for (size_t i = 0; i < species_in_order.size(); ++i)
+        for (size_t i = 0; i < species_in_order.size(); ++i) {
           cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
-        cerr << "[total_sites=" << sites.size() << "]" << endl;
+        }
       }
 
-      // separate by deserts
+      /**** SEPARATE BY DESERTS ******/
+      if (VERBOSE)
+        cerr << "Read in total " << sites.size() << " sites" << endl
+             << "Separating sites" << endl;
+
       vector<vector<double> > meth_prob_full_table;
       vector<size_t> reset_points;
       double g0_est, g1_est, pi0_est;
@@ -2488,15 +2560,15 @@ main(int argc, const char **argv) {
 
       const size_t n_sites = sites.size();
 
-      if (VERBOSE)
-        cerr << "[post-filter=" << n_sites << "; blocks="
-             << reset_points.size() - 1 << "]" << endl;
+      if (VERBOSE) {
+        cerr << "After filtering: " << n_sites
+             << " in " << reset_points.size() -1 << "blocks" << endl;
+      }
 
-      /* heuristic estimates for a few parameters*/
-      if (paramfile.empty()) {
-        init_ps.pi0 = pi0_est;
-        init_ps.g0 = g0_est;
-        init_ps.g1 = g1_est;
+      if (!PARAMFIX) {
+        start_param[0] = pi0_est;
+        start_param[2] = g0_est;
+        start_param[3] = g1_est;
       }
 
       /* meth_prob_table and tree_prob_table have missing data assigned to -1 */
@@ -2507,71 +2579,145 @@ main(int argc, const char **argv) {
       /* tree_prob_table_full have missing data filled*/
       vector<vector<double> > tree_prob_table_full(sites.size(),
                                                    vector<double>(n_nodes, -1.0));
-      leaf_to_tree_prob(subtree_sizes, meth_prob_full_table, tree_prob_table_full);
+      leaf_to_tree_prob(subtree_sizes,
+                        meth_prob_full_table, tree_prob_table_full);
 
-      pair_state root_weights;
-      vector<pair_state> start_weights;
-      vector<triple_state> triad_weights;
+      vector<vector<double> > mat2x2(2,vector<double>(2,0.0));
+      vector<vector<double> > root_weights_all = mat2x2;
+      vector<vector<vector<double> > > start_weights_all(n_nodes, mat2x2);
+      vector<vector<double> > triad_weights_all(n_nodes,
+                                                vector<double>(8, 0.0));
 
-      bool em_converged = !paramfile.empty(); // params fixed => converged
-      const size_t max_app_iter = 100;        //MAGIC
-      const size_t mh_max_iterations = 500;   //MAGIC
+      vector<vector<double> > root_weights_mix(mat2x2);
+      vector<vector<vector<double> > > start_weights_mix(n_nodes, mat2x2);
+      vector<vector<double> > triad_weights_mix(n_nodes,
+                                                vector<double>(8, 0.0));
 
-      vector<vector<double> > tree_prob_table(tree_prob_table_full);
-      vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes, 0));
+      vector<vector<size_t> > empty_state_table(n_sites,
+                                                vector<size_t>(n_nodes, 0));
 
-      param_set curr_ps(init_ps);
-      for (size_t iter = 0; iter < EMMAXITER && !em_converged; ++iter) {
+      bool CONVERGE = false;
+      if (PARAMFIX) CONVERGE = true;
+      size_t ITER = 0;
+      const double tol = 1e-6;
+      const size_t max_app_iter = 100;
+      const size_t MHmaxiter = 500;
+
+      vector<vector<double> > tree_prob_table_mix = tree_prob_table_full;
+      vector<vector<size_t> > tree_state_table_all = empty_state_table;
+      vector<vector<size_t> > tree_state_table_mix = empty_state_table;
+
+      while (ITER < EMMAXITER && !CONVERGE){
+        ++ITER;
+        vector<double> prev_param = start_param;
+
+        /* only leaves are known
+           initialize MCMC start points (assignment of discrete states)
+        */
+        tree_prob_table_mix = tree_prob_table_full;
+        tree_state_table_all = empty_state_table;
+        tree_state_table_mix = empty_state_table;
+        for (size_t pos = 0; pos < n_sites; ++ pos) {
+          for (size_t node_id = 0; node_id < n_nodes; ++ node_id) {
+            if (subtree_sizes[node_id] > 1) {
+              tree_state_table_all[pos][node_id] = 1;
+            } else {
+              /* 0 means hypo state; 1 means hyper state
+                 (opposite to the hypoprobs) */
+              const size_t s = (tree_prob_table_mix[pos][node_id] > 0.5) ? 0 : 1;
+              tree_state_table_all[pos][node_id] = s;
+            }
+          }
+        }
+
+        approx_posterior(subtree_sizes, start_param, reset_points, tol,
+                         max_app_iter, tree_prob_table_mix);
+        to_discrete_table(tree_prob_table_mix, tree_state_table_mix);
+
+        /************ E-step: MCMC *********************/
+        size_t MHiter = 0;
+        while (MHiter < MHmaxiter) {
+          ++MHiter;
+          /* measure KL divergence of weights from two chains */
+          state_to_counts(subtree_sizes, parent_ids,
+                          tree_state_table_all, reset_points,
+                          triad_weights_all, start_weights_all, root_weights_all);
+          const double all_llk = weights_to_llk(subtree_sizes, start_param,
+                                                triad_weights_all,
+                                                start_weights_all,
+                                                root_weights_all);
+          state_to_counts(subtree_sizes, parent_ids,
+                          tree_state_table_mix, reset_points,
+                          triad_weights_mix, start_weights_mix, root_weights_mix);
+          const double mix_llk = weights_to_llk(subtree_sizes, start_param,
+                                                triad_weights_mix,
+                                                start_weights_mix,
+                                                root_weights_mix);
+
+          vector<double> KL_mix_all;
+          KLdistvec(triad_weights_mix, triad_weights_all, KL_mix_all);
+
+          if (VERBOSE) {
+            print_vec(KL_mix_all, "KL_mix_vs_all");
+            cerr << "mix_llk= " << mix_llk << "\tall_llk= " << all_llk << endl;
+          }
+
+          bool MHCONVERGE = true;
+          for (size_t i = 1; i < n_nodes; ++i) {
+            MHCONVERGE = MHCONVERGE && KL_mix_all[i] < 1e-4; // MAGIC
+          }
+
+          if (MHCONVERGE) {
+            break;
+          } else {
+            /* Next round of MH sampling */
+            /* tree_prob_table is used to determine how leafs should be updated */
+            MH_update(subtree_sizes, parent_ids, start_param, reset_points,
+                      tree_prob_table, tree_state_table_all);
+            MH_update(subtree_sizes, parent_ids, start_param, reset_points,
+                      tree_prob_table, tree_state_table_mix);
+          }
+        }
 
         if (VERBOSE)
-          cerr << endl << "====================[EM ITERATION=" << iter
-               << "]=======================" << endl;
+          print_table(triad_weights_mix);
 
-        const param_set prev_ps(curr_ps);
-        // next line is optional, just for consistency with older version.
-        tree_prob_table = tree_prob_table_full;
-        expectation_step(VERBOSE, mh_max_iterations, max_app_iter,
-                         subtree_sizes, parent_ids, reset_points, curr_ps,
-                         root_weights, start_weights, triad_weights,
-                         tree_prob_table, tree_state_table);
+        /*************** M-step: optimize parameters *****************/
+        double diff = std::numeric_limits<double>::max();
+        size_t iter = 0;
+        while (iter < MAXITER && diff > tolerance) {
+          cerr << "Iteration " << iter << "\t";
+          for (size_t i = 0; i < start_param.size(); ++i)
+            cerr << start_param[i] << "\t";
+          cerr << endl;
+          vector<double> newparams(n_nodes+4, 0.0);
 
-        if (VERBOSE) {
-          cerr << "[E-step iter=" << iter << "]\ntriad weights:\n" << endl;
-          for (size_t i = 0; i < triad_weights.size(); ++i)
-            cerr << triad_weights[i] << "\tnode=" << i << endl;
+          optimize_params(subtree_sizes, reset_points,
+                          start_param, root_weights_mix,
+                          start_weights_mix, triad_weights_mix, newparams);
+          diff = 0.0;
+          for (size_t i = 0; i < newparams.size(); ++i) {
+            diff += abs(newparams[i]-start_param[i]);
+          }
+          start_param = newparams;
+
+          for (size_t i = 5; i < start_param.size(); ++i) {
+            branches[i-4] = -log(1.0 - start_param[i]);
+          }
+          t.set_branch_lengths(branches);
+
+          ++iter;
         }
 
-        /****************** M-step: optimize parameters ************************/
-        maximization_step(VERBOSE, MAXITER, subtree_sizes, reset_points,
-                          root_weights, start_weights, triad_weights, curr_ps, t);
-        const double diff = param_set::absolute_difference(prev_ps, curr_ps);
-
-        em_converged = (diff < param_set::tolerance*curr_ps.T.size());
-
-        if (VERBOSE) {
-          cerr << "[M-step iter=" << iter << ", params:" << endl
-               << curr_ps << endl;
-          cerr << "[EM iter=" << iter << ", delta=" << diff
-               << ", conv=" << em_converged << ']' << endl;
-        }
-      } // end E-M iterations
-
-      /* final parameters */
-      init_ps = curr_ps;
-
-      /* update phylotree with branch lenghts */
-      vector<double> branches(init_ps.T.size());
-      for (size_t i = 0; i < init_ps.T.size(); ++i)
-        branches[i] = -log(1.0 - init_ps.T[i]);
-      t.set_branch_lengths(branches);
+        if (L1dist(start_param, prev_param) < tolerance*prev_param.size())
+          CONVERGE = true;
+      }
 
       /* get posterior one last time*/
-      if (VERBOSE)
-        cerr << "[last round of posterior estimation]" << endl;
-      approx_posterior(subtree_sizes, init_ps, reset_points,
-                       POST_CONV_TOL, max_app_iter, tree_prob_table);
+      if (VERBOSE) cerr << "Last round of posterior estimation" << endl;
+      approx_posterior(subtree_sizes, start_param, reset_points, tol,
+                       max_app_iter, tree_prob_table_mix);
 
-      /************************** Output states ********************************/
       if (!outfile.empty()) {
         std::ofstream out(outfile.c_str());
         if (!out)
@@ -2581,22 +2727,27 @@ main(int argc, const char **argv) {
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5;
-        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table,
+        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table_mix,
                             cutoff, states);
         build_domain(minfragcpg, desert_size, sites, states, domains);
         if (VERBOSE)
           cerr << "Built total " << domains.size() << " domains" << endl;
 
-        copy(domains.begin(), domains.end(),
-             ostream_iterator<GenomicRegion>(out, "\n"));
+        /* wirte out domain */
+        out << "#" << t.Newick_format()
+            << "\tpi0=" << start_param[0] << "\tRate=" << start_param[1]
+            << "\tg0=" << start_param[2] << "\tg1=" << start_param[3] << endl;
+        for (size_t i = 0; i < domains.size(); ++i) {
+          out << domains[i] << '\n';
+        }
 
-        /* output individual sites */
+        /* write out single sites */
         if (SINGLE) {
-          const string outssfile(outfile + "_bysite");
+          string outssfile = outfile + "_bysite";
           std::ofstream outss(outssfile.c_str());
           if (!outss)
-            throw std::runtime_error("bad output file: " + outssfile);
-          write_treeprob_states(subtree_sizes, sites, tree_prob_table, outss);
+            throw SMITHLABException("bad output file: " + outssfile);
+          write_treeprob_states(subtree_sizes, sites, tree_prob_table_mix, outss);
         }
       }
     }
@@ -2604,11 +2755,12 @@ main(int argc, const char **argv) {
     if (!outparamfile.empty()) {
       std::ofstream out(outparamfile.c_str());
       if (!out)
-        throw std::runtime_error("bad output file: " + outparamfile);
-      // ADS: check that the tree always has correct branch lengths at
-      // this point, even if they are not used
-      out << t.Newick_format() << endl << init_ps << endl;
+        throw SMITHLABException("bad output file: " + outparamfile);
+      out << t.Newick_format() << endl;
+      out << start_param[0] << "\t" << start_param[1] << endl;
+      out << start_param[2] << "\t" << start_param[3] << endl;
     }
+
   } catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
     return EXIT_FAILURE;
