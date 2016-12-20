@@ -31,8 +31,7 @@
 #include <limits>     //std::numeric_limits
 #include <iterator>   //std::distance
 #include <unistd.h>
-
-#include <gsl/gsl_rng.h>
+#include <random>
 
 /* from smithlab_cpp */
 #include "OptionParser.hpp"
@@ -74,7 +73,9 @@ static const double PROBABILITY_GUARD = 1e-10;
 static const double POST_CONV_TOL = 1e-6;  //MAGIC
 static const double KL_CONV_TOL = 1e-8;    //MAGIC
 
-gsl_rng * rng; // ADS: this should not be global...
+std::random_device rd; //seed generator
+//std::mt19937_64 gen(rd()); //generator initialized with seed from rd
+std::mt19937_64 gen(0); //generator initialized with seed from rd
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -1641,7 +1642,8 @@ template <class T> static void
 accept_or_reject_proposal(const double log_ratio, T &state) {
   const T tmp_state = state;
   const double ratio = (state == 0) ? exp(-log_ratio) : exp(log_ratio);
-  if (ratio >= 1.0 || gsl_rng_uniform(rng) < ratio)
+  std::uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
+  if (dis(gen) < ratio)
     state = 1 - tmp_state;
 }
 
@@ -1658,10 +1660,10 @@ MH_update_site_middle(const vector<size_t> &subtree_sizes,
                       const size_t node_id) {
 
   /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0.0)
-    states_curr[node_id] = gsl_rng_uniform(rng) < probs_table[node_id] ? 0 : 1;
-
-  else {
+  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0.0) {
+    std::uniform_real_distribution<> dis(0, 1);
+    states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
+  } else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       MH_update_site_middle(subtree_sizes, parent_ids, logG, logGP,
@@ -1689,10 +1691,10 @@ MH_update_site_end(const vector<size_t> &subtree_sizes,
                    const size_t node_id) {
 
   /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0)
-    states_curr[node_id] = gsl_rng_uniform(rng) < probs_table[node_id] ? 0 : 1;
-
-  else {
+  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
+    std::uniform_real_distribution<> dis(0, 1);
+    states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
+  } else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       MH_update_site_end(subtree_sizes, parent_ids, logG, logGP,
@@ -1720,10 +1722,10 @@ MH_update_site_start(const vector<size_t> &subtree_sizes,
                      const size_t node_id) {
 
   /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0)
-    states_curr[node_id] = gsl_rng_uniform(rng) < probs_table[node_id] ? 0 : 1;
-
-  else {
+  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
+    std::uniform_real_distribution<> dis(0, 1);
+    states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
+  } else {
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       MH_update_site_start(subtree_sizes, parent_ids, pi0, logG, logP, logGP,
@@ -2480,12 +2482,6 @@ main(int argc, const char **argv) {
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
     /********************* END COMMAND LINE OPTIONS ***************************/
-
-    const gsl_rng_type * T;
-    T = gsl_rng_default;
-    rng = gsl_rng_alloc(T);
-    gsl_rng_set(rng, 0); //time(NULL));
-
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
     if (!tree_in)
