@@ -2194,12 +2194,18 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
 static void
 to_discrete_table(const vector<vector<double> > &tree_prob_table,
                   vector<vector<size_t> > &tree_prob_table_discrete) {
+  const bool randomize = true;
   for (size_t i = 0; i < tree_prob_table.size(); ++i)
-    for (size_t j = 0; j < tree_prob_table[i].size(); ++j)
-      // 0==hypo state; 1==methylated state (opposite of the hypo prob)
-      tree_prob_table_discrete[i][j] = (tree_prob_table[i][j] > 0.5)? 0: 1;
+    for (size_t j = 0; j < tree_prob_table[i].size(); ++j) {
+      if (randomize) {
+        std::uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
+        tree_prob_table_discrete[i][j] = (dis(gen) < tree_prob_table[i][j]) ? 0: 1;
+      } else {
+        // 0==hypo state; 1==methylated state (opposite of the hypo prob)
+        tree_prob_table_discrete[i][j] = (tree_prob_table[i][j] > 0.5)? 0: 1;
+      }
+    }
 }
-
 
 static void
 expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
@@ -2217,14 +2223,14 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
   const size_t n_nodes = subtree_sizes.size();
   const size_t n_sites = tree_prob_table.size();
 
-  // first obtain approximate posteriors
-  if (VERBOSE)
-    cerr << "[inside expectation: approx_posterior]" << endl;
-  approx_posterior(subtree_sizes, ps, reset_points, POST_CONV_TOL,
-                   max_app_iter, tree_prob_table);
-  // then "sample" states from the posterior
-  sampled_states = vector<vector<size_t> >(n_sites, vector<size_t>(n_nodes));
-  to_discrete_table(tree_prob_table, sampled_states);
+  // // first obtain approximate posteriors
+  // if (VERBOSE)
+  //   cerr << "[inside expectation: approx_posterior]" << endl;
+  // approx_posterior(subtree_sizes, ps, reset_points, POST_CONV_TOL,
+  //                  max_app_iter, tree_prob_table);
+  // // then "sample" states from the posterior
+  // sampled_states = vector<vector<size_t> >(n_sites, vector<size_t>(n_nodes));
+  // to_discrete_table(tree_prob_table, sampled_states);
 
   triad_weights = vector<triple_state>(n_nodes);
   start_weights = vector<pair_state>(n_nodes);
@@ -2491,8 +2497,6 @@ main(int argc, const char **argv) {
     // specified)?
     PhyloTreePreorder t;
     tree_in >> t;
-    // ADS: the output below is redundant with what is printed later
-    // if (VERBOSE) cerr << t.tostring() << endl;
 
     vector<size_t> subtree_sizes, node_degrees;
     vector<string> nodenames;
@@ -2648,7 +2652,10 @@ main(int argc, const char **argv) {
       const size_t mh_max_iterations = 500;   //MAGIC
 
       vector<vector<double> > tree_prob_table(tree_prob_table_full);
-      vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes, 0));
+      vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes));
+
+      // Initialize "sample" states from the heuristic probabilities
+      to_discrete_table(tree_prob_table, tree_state_table);
 
       param_set curr_ps(init_ps);
       for (size_t iter = 0; iter < EMMAXITER && !em_converged; ++iter) {
