@@ -850,42 +850,6 @@ kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
   }
 }
 
-
-// compute the derivative of the transition matrix, passing values
-// back through parameters [T=1-exp(-branch)]
-// for a single branch
-static void
-trans_deriv(const pair_state &Q, const pair_state &G, const double T,
-            const size_t prev, const size_t par, const size_t cur,
-            const pair_state &GP_denom, const pair_state &P,
-            double &d_rate0, double &d_g0, double &d_g1, double &d_T) {
-  // ADS: this function has a non-informative name
-
-  const double denom = GP_denom(prev, par);
-
-  // ADS: the "term" variable seems difficult to interpret
-  double term = kronecker_delta(cur, 1ul)*2 - 1.0 - P(par, cur)*(G(prev, 1) -
-                                                                 G(prev, 0))/denom;
-  d_rate0 = T*G(prev, cur)/denom*term;
-
-  if (prev == 0) {
-    d_g1 = 0;
-    term = kronecker_delta(cur, 0ul)*2 - 1.0 - G(prev, cur)*(P(par, 0) -
-                                                             P(par, 1))/denom;
-    d_g0 = P(par, cur)/denom*term;
-  }
-  else {
-    d_g0 = 0;
-    term = kronecker_delta(cur, 1ul)*2 - 1.0 - G(prev, cur)*(P(par, 1) -
-                                                             P(par, 0))/denom;
-    d_g1 = P(par, cur)/denom*term;
-  }
-  term = Q(par, cur) - P(par, cur)*(G(prev, 0)*Q(par, 0) +
-                                    G(prev, 1)*Q(par, 1))/denom;
-  d_T = G(prev, cur)/denom*term;
-}
-
-
 // For individual branch: T=1-exp(-branch)
 static void
 combine_horiz_and_vert_deriv(const param_set &ps, const size_t &node_id,
@@ -907,12 +871,34 @@ combine_horiz_and_vert_deriv(const param_set &ps, const size_t &node_id,
       for (size_t cur = 0; cur < 2; ++cur)
         GP(prev, anc, cur) = G(prev, cur)*P(anc, cur)/GP_denom(prev, anc);
 
+  pair_state dPdrate0(-ps.T[node_id], ps.T[node_id], -ps.T[node_id], ps.T[node_id]);
+  pair_state dPdT(-ps.rate0, ps.rate0, 1.0 - ps.rate0, ps.rate0 - 1.0);
+  pair_state dGdg0(1.0, -1.0, 0.0, 0.0);
+  pair_state dGdg1(0.0, 0.0, -1.0, 1.0);
+
   for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      for (size_t cur = 0; cur < 2; ++cur)
-        trans_deriv(Q, G, ps.T[node_id], prev, anc, cur, GP_denom, P,
-                    GP_drate(prev, anc, cur), GP_dg0(prev, anc, cur),
-                    GP_dg1(prev, anc, cur), GP_dT(prev, anc, cur));
+    for (size_t anc = 0; anc < 2; ++anc) {
+      const double denom = GP_denom(prev, anc);
+      for (size_t cur = 0; cur < 2; ++cur) {
+        GP_drate(prev, anc, cur) =
+          G(prev, cur)/denom*(dPdrate0(anc, cur) - P(anc, cur)/denom*
+                              (G(prev, 0)*dPdrate0(anc, 0) +
+                               G(prev, 1)*dPdrate0(anc, 1)));
+        GP_dT(prev, anc, cur) =
+          G(prev, cur)/denom*(dPdT(anc, cur) - P(anc, cur)/denom*
+                              (G(prev, 0)*dPdT(anc, 0) +
+                               G(prev, 1)*dPdT(anc, 1)));
+        GP_dg0(prev, anc, cur) =
+          (prev == 1) ? 0.0: (dGdg0(prev, cur) - G(prev, cur)/denom*
+                              (dGdg0(prev, 0)*P(anc, 0) +
+                               dGdg0(prev, 1)*P(anc, 1)))*P(anc, cur)/denom;
+        GP_dg1(prev, anc, cur) =
+          (prev == 0) ? 0.0: (dGdg1(prev, cur) - G(prev, cur)/denom*
+                              (dGdg1(prev, 0)*P(anc, 0) +
+                               dGdg1(prev, 1)*P(anc, 1)))*P(anc, cur)/denom;
+
+      }
+    }
 }
 
 
