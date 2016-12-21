@@ -63,4 +63,44 @@ private:
                      vector<double> &branch_lengths);
 };
 
+
+void
+get_parent_id(const std::vector<size_t> &subtree_sizes,
+              std::vector<size_t> &parent_id);
+
+bool
+has_same_species_order(const PhyloTreePreorder &the_tree,
+                       const std::vector<std::string> &species_names);
+
+
+inline bool
+is_root(const size_t node_id) {return node_id == 0;}
+
+inline bool
+is_leaf(const size_t subtree_size) {return subtree_size == 1;}
+
+inline bool
+is_binary(const vector<size_t> &subtree_sizes) {
+  // ADS: this function seems not to be used
+  return (subtree_sizes[0] == 1 + subtree_sizes[1] +
+          subtree_sizes[subtree_sizes[1] + 1]);
+}
+
+void
+subtree_sizes_to_leaves_preorder(const std::vector<size_t> &subtree_sizes,
+                                 std::vector<size_t> &leaves_preorder);
+
+void
+get_degrees(const std::vector<size_t> &subtree_sizes, std::vector<size_t> &degrees);
+
+bool
+is_semi_binary(const std::vector<size_t> &degrees);
+
+size_t
+count_leaves(const std::vector<size_t> &subtree_sizes);
+
+void
+get_children(const size_t node_id, const std::vector<size_t> &subtree_sizes,
+             std::vector<size_t> &children);
+
 #endif
