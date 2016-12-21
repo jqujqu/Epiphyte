@@ -39,7 +39,6 @@
 #include "smithlab_os.hpp"
 #include "GenomicRegion.hpp"
 
-
 /* from methpipe */
 #include "MethpipeFiles.hpp"
 
@@ -80,6 +79,38 @@ static const double KL_CONV_TOL = 1e-8;    //MAGIC
 std::random_device rd; //seed generator
 //std::mt19937_64 gen(rd()); //generator initialized with seed from rd
 std::mt19937_64 gen(0); //generator initialized with seed from rd
+
+// putting this function here because it is related to the parameters
+static double
+estimate_pi0(const vector<vector<double> > &meth) {
+  double sum = 0.0;
+  size_t N = 0;
+  for (auto i(meth.begin()); i != meth.end(); ++i)
+    for (auto j(i->begin()); j != i->end(); ++j)
+      if (!missing_meth_value(*j)) {
+        sum += *j;
+        ++N;
+      }
+  return sum/N;
+}
+
+static void
+estimate_g0_g1(const vector<vector<double> > &meth,
+               double &g0_est, double &g1_est) {
+  const size_t n_leaves = meth[0].size();
+  double g00 = 0.0, g01 = 0.0, g10 = 0.0, g11 = 0.0;
+  for (size_t i = 0; i < n_leaves; ++i)
+    for (size_t j = 0; j < meth.size() - 1; ++j)
+      if (!missing_meth_value(meth[j][i]) && !missing_meth_value(meth[j + 1][i])) {
+        g00 += meth[j][i]*meth[j + 1][i];
+        g01 += meth[j][i]*(1.0 - meth[j + 1][i]);
+        g10 += (1.0 - meth[j][i])*meth[j + 1][i];
+        g11 += (1.0 - meth[j][i])*(1.0 - meth[j + 1][i]);
+      }
+
+  g0_est = (g00 + 1.0)/(g01 + g00 + 1.0); // ADS: should denom be + 2?
+  g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -253,22 +284,20 @@ has_same_species_order(const PhyloTreePreorder &the_tree,
 static void
 fill_leaf_prob(const bool VERBOSE,
                const vector<Site> &sites, const size_t desert_size,
-               vector<vector<double> > &hypo_prob_table, double &pi0_est) {
+               vector<vector<double> > &hypo_prob_table) {
 
   const size_t n_sites = hypo_prob_table.size();
   const size_t n_leaf = hypo_prob_table[0].size();
 
-  pi0_est = 0.0;
   for (size_t i = 0; i < n_leaf; ++i) {
     double mean_hypo_prob = 0.0;
     size_t n_obs = 0;
     for (size_t j = 0; j < n_sites; ++j)
-      if (hypo_prob_table[j][i] >= 0.0) {
+      if (!missing_meth_value(hypo_prob_table[j][i])) {
         mean_hypo_prob += hypo_prob_table[j][i];
         ++n_obs;
       }
     mean_hypo_prob = mean_hypo_prob/n_obs;
-    pi0_est += mean_hypo_prob;
 
     if (VERBOSE)
       cerr << "[mean_hypo_prob: " << mean_hypo_prob << "]" << endl;
@@ -276,44 +305,46 @@ fill_leaf_prob(const bool VERBOSE,
     // ADS: not clear on what is the purpose of the loop below
     size_t prev = 0;
     size_t next = 0;
-    size_t count = 0;
+    size_t count_missing_states = 0;
     for (size_t j = 0; j < n_sites; ++j) {
-      if (hypo_prob_table[j][i] >= 0) {
+      if (!missing_meth_value(hypo_prob_table[j][i])) {
         prev = j;
         next = j;
-      } else {
-        if (j >= next) {
-          next = j + 1;
-          while (next < n_sites && hypo_prob_table[next][i] < 0.0)
-            ++next;
-        }
-        const size_t d1 = Site::distance(sites[j], sites[prev]);
+      }
+      else {
+        if (next <= j)
+          // look for the "next" non-missing site
+          for (next = j + 1; next < n_sites &&
+                 missing_meth_value(hypo_prob_table[next][i]); ++next);
+
+        const size_t d1 = Site::distance(sites[prev], sites[j]);
         const size_t d2 = (next < n_sites) ?
           Site::distance(sites[j], sites[next]) : desert_size;
 
+        // ADS: in what cases can the (prev < j && j < next) fail?
         if (prev < j && j < next && d1 < desert_size && d2 < desert_size) {
           const double w1 = static_cast<double>(d2)/(d1 + d2);
           hypo_prob_table[j][i] = (hypo_prob_table[prev][i]*w1 +
                                    hypo_prob_table[next][i]*(1.0 - w1));
-        } else if (prev < j && d1 < desert_size) {
+        }
+        else if (prev < j && d1 < desert_size) {
           const double w1 = d1/desert_size;
           hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
                                    hypo_prob_table[prev][i]*(1.0 - w1));
-        } else if (d2 < desert_size) {
+        }
+        else if (d2 < desert_size) {
           const double w1 = d2/desert_size;
           hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
                                    hypo_prob_table[next][i]*(1.0 - w1));
-        } else {
-          hypo_prob_table[j][i] = mean_hypo_prob;
         }
-        ++count;
+        else hypo_prob_table[j][i] = mean_hypo_prob;
+        ++count_missing_states;
       }
     }
     if (VERBOSE)
-      cerr << "[filled " << count << " "
+      cerr << "[filled " << count_missing_states << " "
            << "missing sites in leaf: " << i << "]" << endl;
   }
-  pi0_est = pi0_est/n_leaf;
 }
 
 
@@ -423,7 +454,9 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
   const size_t n_sites = sites.size();
 
   vector<vector<double> > meth_aug = meth;
-  fill_leaf_prob(VERBOSE, sites, desert_size, meth_aug, pi0_est);
+  fill_leaf_prob(VERBOSE, sites, desert_size, meth_aug);
+
+    pi0_est = estimate_pi0(meth);
 
   //scan desert
   //uncovered site has prob value set to -1.0
@@ -432,19 +465,19 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
     if (VERBOSE)
       cerr << "[processing sample: " << i;
     size_t j = 0;
-    while (j < n_sites && meth[j][i] == -1.0) ++j;
+    while (j < n_sites && missing_meth_value(meth[j][i])) ++j;
 
     if (j == n_sites)
       throw SMITHLABException("No valid observation.");
 
-    if (Site::distance(sites[0], sites[j]) > desert_size )
+    if (Site::distance(sites[0], sites[j]) > desert_size)
       for (size_t w = 0; w < j; ++w)
         is_desert[w] = true;
 
     Site prev_obs = sites[j];
     for (size_t k = j+1; k < n_sites; ++k) {
 
-      while (k < n_sites && meth[k][i] == -1.0) ++k;
+      while (k < n_sites && missing_meth_value(meth[k][i])) ++k;
 
       if (k < n_sites) {
         if (Site::distance(prev_obs, sites[k]) > desert_size)
@@ -452,10 +485,10 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
             is_desert[w] = true;
         j = k;
         prev_obs = sites[j];
-      } else {
+      }
+      else
         for (size_t w = j + 1; w < n_sites; ++w)
           is_desert[w] = true;
-      }
     }
     if (VERBOSE)
       cerr << " done]" << endl;
@@ -483,9 +516,10 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
 
       ++last_block_size;
       // Maintain blocks
-      if (sites_copy.size() == 1) {
+      if (sites_copy.size() == 1)
         reset_points.push_back(0);
-      } else if (Site::distance(last_site, sites[i]) > desert_size) {
+
+      else if (Site::distance(last_site, sites[i]) > desert_size) {
         if (last_block_size < min_sites_per_block) { //remove small blocks
           const size_t start = reset_points.back();
           sites_copy.erase(sites_copy.begin() + start, sites_copy.end());
@@ -494,7 +528,8 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
           reset_points.pop_back();
           last_block_size =
             reset_points.empty() ? 0 : meth_copy.size() - reset_points.back();
-        } else { //end block, and start new block
+        }
+        else { //end block, and start new block
           reset_points.push_back(sites_copy.size() - 1);
           last_block_size = 1;
         }
@@ -512,26 +547,13 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
     reset_points.pop_back();
     last_block_size =
       reset_points.empty() ? 0 : meth_copy.size() - reset_points.back();
-  } else {
-    reset_points.push_back(sites_copy.size());
   }
+  else reset_points.push_back(sites_copy.size());
 
   meth.swap(meth_copy);
   sites.swap(sites_copy);
 
-  // ADS: not sure why this code is in this function
-  double g00 = 0.0, g01 = 0.0, g10 = 0.0, g11 = 0.0;
-  for (size_t i = 0; i < n_leaves; ++i)
-    for (size_t j = 0; j < meth.size() - 1; ++j)
-      if (meth[j][i] >= 0 && meth[j + 1][i] >= 0) {
-        g00 += meth[j][i]*meth[j + 1][i];
-        g01 += meth[j][i]*(1.0 - meth[j + 1][i]);
-        g10 += (1.0 - meth[j][i])*meth[j + 1][i];
-        g11 += (1.0 - meth[j][i])*(1.0 - meth[j + 1][i]);
-      }
-
-  g0_est = (g00 + 1.0)/(g01 + g00 + 1.0);
-  g1_est = (g11 + 1.0)/(g11 + g10 + 1.0);
+  estimate_g0_g1(meth, g0_est, g1_est);
 }
 
 
@@ -587,23 +609,23 @@ init_internal_prob(const vector<size_t> &subtree_sizes, const size_t node_id,
   double sum_desc_leaf_prob = 0;
   for (size_t count = 1; count < subtree_sizes[node_id]; ) {
     const size_t child_id = node_id + count;
-    if (node_probs[child_id] < 0) // ADS: is this for missing value? [missing_meth_value(const double x)]
+    if (missing_meth_value(node_probs[child_id]))
       init_internal_prob(subtree_sizes, child_id, node_probs);
     count += subtree_sizes[child_id];
   }
 
   double direction = 0.0;
   for (size_t i = 1; i < subtree_sizes[node_id]; ++i) {
-    if (subtree_sizes[i + node_id]==1) {
+    if (is_leaf(subtree_sizes[i + node_id])) {
       ++n_desc_leaf;
       sum_desc_leaf_prob += node_probs[i + node_id];
       direction += (node_probs[i + node_id] > 0.5) ? 1.0 : -1.0;
     }
   }
 
-  if (node_id != 0 && abs(direction) < n_desc_leaf) {
+  if (!is_root(node_id) && abs(direction) < n_desc_leaf) {
     double sum_extra_leaf_hypo_prob = 0.0;
-    size_t n_extra_leaves = 0;
+    size_t n_extra_leaves = 0; // ADS: what is an "extra" leaf?
     // children disagree, find majority state of leaf species outside this subtree
     for (size_t i = 0; i < subtree_sizes.size(); ++i)
       if (is_leaf(subtree_sizes[i]) &&
@@ -619,7 +641,7 @@ init_internal_prob(const vector<size_t> &subtree_sizes, const size_t node_id,
   }
 
   node_probs[node_id] = away_from_extremes(sum_desc_leaf_prob/n_desc_leaf,
-                                            PROBABILITY_GUARD);
+                                           PROBABILITY_GUARD);
 }
 
 static void
@@ -634,8 +656,7 @@ copy_leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
     for (size_t j = 0; j < n_leaves; ++j)
       if (valid_probability(meth_prob_table[i][j]))
         tree_prob_table[i][leaves_preorder[j]] =
-          away_from_extremes(meth_prob_table[i][j],
-                             PROBABILITY_GUARD);
+          away_from_extremes(meth_prob_table[i][j], PROBABILITY_GUARD);
 }
 
 static void
@@ -1118,6 +1139,7 @@ MB_middle_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent
                const vector<size_t> &meth_prev,
                const vector<size_t> &meth_curr,
                const vector<size_t> &meth_next, const size_t node_id) {
+
   const size_t parent = parent_ids[node_id];
   double lp0 = 0.0, lp1 = 0.0;
 
@@ -1163,13 +1185,15 @@ MB_end_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_id
             const pair_state &logG, const vector<triple_state> &logGP,
             const vector<size_t> &meth_prev, const vector<size_t> &meth_curr,
             const size_t node_id) {
+
   double lp0 = 0.0, lp1 = 0.0;
   // parents
   if (is_root(node_id)) { // is_root(node_id)
     const size_t prev_state = meth_prev[node_id];
     lp0 += logG(prev_state, 0);
     lp1 += logG(prev_state, 1);
-  } else { // (node_id > 0)
+  }
+  else { // (node_id > 0)
     const size_t parent_state = meth_curr[parent_ids[node_id]];
     const size_t prev_state = meth_prev[node_id];
     lp0 += logGP[node_id](prev_state, parent_state, 0);
@@ -1185,7 +1209,6 @@ MB_end_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_id
     lp1 += logGP[child_id](prev_child_state, 1, curr_child_state);
     count += subtree_sizes[child_id];
   }
-  // ADS: what happens for leaf nodes?
 
   return lp0 - lp1;
 }
@@ -1201,7 +1224,7 @@ MB_start_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_
   double lp0 = 0.0, lp1 = 0.0;
   const size_t parent = parent_ids[node_id];
   // transition from parents (or root distribution)
-  if (is_root(node_id)) { // is_root(node_id)
+  if (is_root(node_id)) {
     lp0 += log(pi0);
     lp1 += log(1.0 - pi0);
   } else { // (node_id > 0)
@@ -1257,9 +1280,10 @@ MH_update_site_middle(const vector<size_t> &subtree_sizes,
 
   /* if leaf observed, sample from the observed probability*/
   if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0.0) {
-    std::uniform_real_distribution<> dis(0, 1);
+    std::uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
     states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
-  } else {
+  }
+  else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       MH_update_site_middle(subtree_sizes, parent_ids, logG, logGP,
@@ -1288,9 +1312,10 @@ MH_update_site_end(const vector<size_t> &subtree_sizes,
 
   /* if leaf observed, sample from the observed probability*/
   if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
-    std::uniform_real_distribution<> dis(0, 1);
+    std::uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
     states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
-  } else {
+  }
+  else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       MH_update_site_end(subtree_sizes, parent_ids, logG, logGP,
@@ -1319,9 +1344,10 @@ MH_update_site_start(const vector<size_t> &subtree_sizes,
 
   /* if leaf observed, sample from the observed probability*/
   if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
-    std::uniform_real_distribution<> dis(0, 1);
+    std::uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
     states_curr[node_id] = dis(gen) < probs_table[node_id] ? 0 : 1;
-  } else {
+  }
+  else {
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       MH_update_site_start(subtree_sizes, parent_ids, pi0, logG, logP, logGP,
@@ -1585,9 +1611,9 @@ update_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
 
   double denom = abs(prev_deriv);
   double frac = 1.0;
-  bool CONVERGE = false;
+  bool converged = false;
   double improvement = 0.0;
-  while (!CONVERGE) {
+  while (!converged) {
     while (frac > param_set::tolerance &&
            !btwn_01_inclusive(frac*sign(prev_deriv) +
                               prev_ps.rate0, param_set::tolerance)) {
@@ -1611,7 +1637,7 @@ update_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
 
     frac = frac/2;
     if (frac < param_set::tolerance)
-      CONVERGE = true;
+      converged = true;
   }
   ps.rate0 = prev_ps.rate0;
 }
@@ -1636,7 +1662,6 @@ objective_G(const vector<size_t> &subtree_sizes, const param_set &ps,
       for (size_t j = 0; j < 2; ++j)
         for (size_t k = 0; k < 2; ++k)
           F += triad_weights[node_id](i, j, k)*log(GP[node_id](i, j, k));
-
 
     for (size_t j = 0; j < 2; ++j)
       for (size_t k = 0; k < 2; ++k) {
@@ -1782,14 +1807,8 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
     param_set prev_ps(ps);
     optimize_params(VERBOSE, subtree_sizes, reset_points,
                     root_weights, start_weights, triad_weights, ps);
-    diff = param_set::absolute_difference(ps, prev_ps);
+    diff = param_set::absolute_difference(ps, prev_ps); // ADS: convergence criteria
   }
-
-  double llk = log_likelihood(subtree_sizes, ps, triad_weights,
-                              start_weights, root_weights);
-  if (VERBOSE)
-    cerr << "log-likelihood=" << llk << endl;
-
 }
 
 
@@ -1799,7 +1818,7 @@ to_discrete_table(const vector<vector<double> > &tree_prob_table,
   const bool randomize = true;
   for (size_t i = 0; i < tree_prob_table.size(); ++i)
     for (size_t j = 0; j < tree_prob_table[i].size(); ++j) {
-      if (randomize) {
+      if (randomize) { // ADS: separate functionality and keep dis object
         std::uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
         tree_prob_table_discrete[i][j] = (dis(gen) < tree_prob_table[i][j]) ? 0: 1;
       } else {
@@ -1849,14 +1868,17 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
     vector<double> divergence;
     kl_divergence(triad_weights_prev, triad_weights, divergence);
 
+    // only the triad_weights are used for convergence testing; the
+    // start and root weights do not contribute enough to check
     converged =
       *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
-    if (!converged) { // take next sample (all sites)
+
+    triad_weights_prev = triad_weights; // ADS: should this be a swap?
+
+    if (!converged) // take next sample (all sites)
       /* "tree_prob_table" determines how leaf states are updated */
       MH_update(subtree_sizes, parent_ids, ps, reset_points,
                 tree_prob_table, sampled_states);
-    }
-    triad_weights_prev = triad_weights;
   }
 
   root_weights.div(mh_iter);
@@ -1871,6 +1893,61 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
          ostream_iterator<triple_state>(cerr, "\n"));
     // ADS: should we print more summary statistics here?
   }
+}
+
+
+static void
+mcmc_estimate_posterior(const bool VERBOSE, const size_t mh_max_iterations,
+                        const vector<size_t> &subtree_sizes,
+                        const vector<size_t> &parent_ids,
+                        const vector<size_t> &reset_points,
+                        const param_set &ps,
+                        vector<vector<size_t> > &sampled_states,
+                        vector<vector<double> > &probs_table) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_sites = sampled_states.size();
+
+  pair_state logG(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  logG.make_logs();
+
+  vector<pair_state> logP;
+  vector<triple_state> logGP;
+  get_transition_matrices(ps, logP, logGP);
+  for (size_t i = 0; i < logP.size(); ++i) {
+    logP[i].make_logs();
+    logGP[i].make_logs();
+  }
+
+  for (size_t mh_iter = 0; mh_iter < mh_max_iterations; ++mh_iter) {
+    if (VERBOSE)
+      cerr << "[inside mxmx_estimate_posterior (iter=" << mh_iter << ")]" << endl;
+
+    for (size_t i = 0; i < reset_points.size() - 1; ++i) {
+      const size_t start = reset_points[i];
+      const size_t end = reset_points[i + 1] - 1; // !!!!
+      if (start < end) {
+        MH_update_site_start(subtree_sizes, parent_ids, ps.pi0, logG, logP, logGP,
+                             probs_table[start], sampled_states[start],
+                             sampled_states[start + 1], 0);
+        for (size_t pos = start + 1; pos < end; ++pos)
+          MH_update_site_middle(subtree_sizes, parent_ids, logG, logGP,
+                                probs_table[pos], sampled_states[pos - 1],
+                                sampled_states[pos], sampled_states[pos + 1], 0);
+        MH_update_site_end(subtree_sizes, parent_ids, logG, logGP, probs_table[end],
+                           sampled_states[end - 1], sampled_states[end], 0);
+      }
+    }
+    for (size_t i = 0; i < sampled_states.size(); ++i)
+      for (size_t j = 0; j < sampled_states[i].size(); ++j)
+        if (!missing_meth_value(probs_table[i][j]))
+          sampled_states[i][j] += sampled_states[i][j];
+  }
+
+  for (size_t i = 0; i < sampled_states.size(); ++i)
+    for (size_t j = 0; j < sampled_states[i].size(); ++j)
+      if (!missing_meth_value(probs_table[i][j]))
+        sampled_states[i][j] /= mh_max_iterations;
 }
 
 
@@ -1899,7 +1976,7 @@ local_parsimony(const vector<size_t> &subtree_sizes,
       const size_t child_id = node_id + count;
       if (state[child_id] != s) {
         SAME = false;
-        break;
+        break; // ADS: "break" should never be used
       }
       count += subtree_sizes[child_id];
     }
@@ -1925,7 +2002,6 @@ tree_prob_to_states(const vector<size_t> &subtree_sizes,
     string state;
     for (size_t j = 0; j < n_nodes; ++j)
       state += (tree_prob_table[i][j] <= cutoff ? '1' : '0');
-
     states.push_back(state);
   }
 
@@ -2019,7 +2095,12 @@ build_domain(const size_t minCpG, const size_t desert_size,
 
 int
 main(int argc, const char **argv) {
-  try{
+
+  try {
+
+    static const size_t max_app_iter = 100;        //MAGIC
+    static const size_t mh_max_iterations = 500;   //MAGIC
+
     size_t desert_size = 1000;
     size_t minCpG = 10;
     size_t min_sites_per_frag = 5; // ADS: probably should be a post-filter step
@@ -2077,6 +2158,7 @@ main(int argc, const char **argv) {
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
     /********************* END COMMAND LINE OPTIONS ***************************/
+
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
     if (!tree_in)
@@ -2117,7 +2199,8 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "[tree:]\n" << t.tostring() << endl
              << "[given params:]\n" << init_ps << endl;
-    } else {
+    }
+    else {
       // if optimizing params, tree still needed from its own file
       vector<double> branches;
       t.get_branch_lengths(branches);
@@ -2171,10 +2254,8 @@ main(int argc, const char **argv) {
       /*M-step: optimize parameters */
       maximization_step(VERBOSE, MAXITER, subtree_sizes, reset_points,
                         root_weights, start_weights, triad_weights, init_ps, t);
-
-
-
-    } else {
+    }
+    else {
       if (VERBOSE)
         cerr << endl << "========= LEAF (INCOMPLETE DATA) MODE =========" << endl
              << "[Loading LEAF table]" << endl;
@@ -2237,8 +2318,6 @@ main(int argc, const char **argv) {
       vector<triple_state> triad_weights;
 
       bool em_converged = !paramfile.empty(); // params fixed => converged
-      const size_t max_app_iter = 100;        //MAGIC
-      const size_t mh_max_iterations = 500;   //MAGIC
 
       // Initialize "sample" states from the heuristic probabilities
       vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes));
@@ -2270,13 +2349,23 @@ main(int argc, const char **argv) {
                           root_weights, start_weights, triad_weights, curr_ps, t);
         const double diff = param_set::absolute_difference(prev_ps, curr_ps);
 
+        const double llk = log_likelihood(subtree_sizes, curr_ps, triad_weights,
+                                          start_weights, root_weights);
+
         em_converged = (diff < param_set::tolerance*curr_ps.T.size());
+
+                if (VERBOSE)
+          cerr << "log-likelihood=" << llk << endl;
+
+
 
         if (VERBOSE) {
           cerr << "[M-step iter=" << iter << ", params:" << endl
                << curr_ps << endl;
-          cerr << "[EM iter=" << iter << ", delta=" << diff
-               << ", conv=" << em_converged << ']' << endl;
+          cerr << "[EM iter=" << iter << ", "
+               << "log_lik=" << llk << ", "
+               << "delta=" << diff << ", "
+               << "conv=" << em_converged << ']' << endl;
         }
       } // end E-M iterations
 
