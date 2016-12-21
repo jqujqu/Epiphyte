@@ -29,7 +29,7 @@ PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte epiphy
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
-OPTFLAGS = -O2 -funroll-loops
+OPTFLAGS = -O2 
 DEBUGFLAGS = -g
 LIBS = -lgsl -lgslcblas
 
@@ -62,7 +62,11 @@ simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-epiphyte epiphy: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
+epiphy: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o param_set.o \
+	PhyloTreePreorder.o sufficient_statistics_helpers.o ) \
+        $(addprefix $(TREETOOL)/, PhyloTree.o )
+
+epiphyte: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o )
 
 indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o) 

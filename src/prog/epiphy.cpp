@@ -39,12 +39,16 @@
 #include "smithlab_os.hpp"
 #include "GenomicRegion.hpp"
 
+
 /* from methpipe */
 #include "MethpipeFiles.hpp"
 
 /* headers for epigenomic evolution */
 #include "PhyloTreePreorder.hpp"
 #include "PhyloTree.hpp"
+#include "param_set.hpp"
+#include "epiphy_utils.hpp"
+#include "sufficient_statistics_helpers.hpp"
 
 using std::string;
 using std::vector;
@@ -76,165 +80,6 @@ static const double KL_CONV_TOL = 1e-8;    //MAGIC
 std::random_device rd; //seed generator
 //std::mt19937_64 gen(rd()); //generator initialized with seed from rd
 std::mt19937_64 gen(0); //generator initialized with seed from rd
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////        UTILITIES         //////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-template <class T> double
-log_sum_log(const T p, const T q) {
-
-  if (p == 0) return q;
-  if (q == 0) return p;
-
-  const T larger = max(p, q);
-  return larger + log(1.0 + exp(min(p, q) - larger));
-}
-
-template <class T> double
-kronecker_delta(const T &a, const T &b) {
-  return (a == b) ? 1.0 : 0.0;
-}
-
-static double
-sign(const double val) {
-  return (val == 0.0) ? 0.0 : (val > 0.0 ? 1.0 : -1.0);
-}
-
-static double
-kl_divergence(const vector<double> &P, const vector<double> &Q) {
-  assert(P.size()==Q.size());
-  const double psum = std::accumulate(P.begin(), P.end(), 0.0);
-  const double qsum = std::accumulate(Q.begin(), Q.end(), 0.0);
-  const double norm = log(psum) - log(qsum);
-
-  double d = 0.0;
-  for (size_t i = 0; i < P.size(); ++i)
-    d += P[i]/psum*(log(P[i]) - log(Q[i]) - norm);
-  return d;
-}
-
-// ADS: temporary debug function; remember to remove; not even used?
-template <class T> void
-print_vec(std::ostream &out,
-          const vector<T> &dat, const string &s, string delim = "\t") {
-  out << s << '\n';
-  copy(dat.begin(), dat.end(), ostream_iterator<T>(out, delim.c_str()));
-  out << endl;
-}
-
-inline static bool
-missing_meth_value(const double x) {return x == -1.0;}
-
-inline static bool
-valid_probability(const double x) {return x >= 0.0 && x <= 1.0;}
-
-inline static bool
-valid_meth_value(const double x) {
-  return valid_probability(x) || missing_meth_value(x);
-}
-
-static double
-away_from_extremes(const double x) {
-  return min(max(PROBABILITY_GUARD, x), 1.0 - PROBABILITY_GUARD);
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-//////////////////// FOR HOLDING PARAMETER SETS ////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-struct param_set {
-
-  static double tolerance; // tolerance for parameter estimate precision
-
-  double pi0;
-  double rate0;
-  double g0;
-  double g1;
-  vector<double> T;
-
-  param_set() {}
-  param_set(double _pi0, double _rate0,
-            double _g0, double _g1, const vector<double> &_T) :
-    pi0(_pi0), rate0(_rate0), g0(_g0), g1(_g1), T(_T) {}
-  param_set(double _pi0, double _rate0, double _g0, double _g1) :
-    pi0(_pi0), rate0(_rate0), g0(_g0), g1(_g1) {}
-
-  void assign_branches(const vector<double> &_T) {T = _T;}
-
-  static double
-  absolute_difference(const param_set &a, const param_set &b) {
-    assert(a.T.size() == b.T.size());
-    double d = (abs(a.g0 - b.g0) + abs(a.g1 - b.g1) +
-                abs(a.pi0 - b.pi0) + abs(a.rate0 - b.rate0));
-    for (size_t i = 0; i < a.T.size(); ++i)
-      d += abs(a.T[i] - b.T[i]);
-    return d;
-  }
-
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "pi0=" << pi0 << ", "
-        << "rate0=" << rate0 << ", "
-        << "g0=" << g0 << ", "
-        << "g1=" << g1 << ", "
-        << "T=(";
-    // ADS: is the approach below safe to use? What about |T|=0?
-    copy(T.begin(), T.end() - 1, ostream_iterator<double>(oss, ","));
-    oss << T.back() << ')';
-    return oss.str();
-  }
-
-  void read(const string &paramfile, PhyloTreePreorder &t);
-  bool is_valid() const { // strict inequalities to avoid invalid log value
-    return (pi0 < 1.0 && pi0 > 0.0 && rate0 < 1.0 && rate0 > 0.0 &&
-            g0 < 1.0 &&  g0 > 0.0 &&    g1 < 1.0 &&    g1 > 0.0);
-  }
-};
-double param_set::tolerance = 1e-4; // tolerance for parameter estimate precision
-
-
-std::ostream &
-operator<<(std::ostream &out, const param_set &ps) {
-  return out << ps.tostring();
-}
-
-
-void
-param_set::read(const string &paramfile, PhyloTreePreorder &t) {
-
-  std::ifstream in(paramfile.c_str());
-  if (!in)
-    throw std::runtime_error("cannot read: " + paramfile);
-
-  // First read in the tree (Newick format). The reason this is done
-  // here is to ensure the format of the file is correct. When
-  // parameters are provided and not learned, the tree will be read as
-  // usual, from the tree file, but also replicated here
-  in >> t;
-  in >> pi0;
-  in >> rate0;
-  in >> g0;
-  in >> g1;
-
-  // sync the transformed values for brances in parameter set
-  vector<double> branches;
-  t.get_branch_lengths(branches);
-  T.clear();
-  T.resize(branches.size(), 0.0);
-  for (size_t i = 1; i < branches.size(); ++i)
-    // ADS: need some way to check that this transformation has
-    // happened and has been reversed when appropriate.
-    T[i] = 1.0 - 1.0/exp(branches[i]);
-
-  assert(is_valid());
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -287,7 +132,7 @@ parse_table_line(istringstream &iss, vector<vector<double> > &meth) {
       throw SMITHLABException("bad probability value: [" + iss.str() + "]");
     if (!missing_meth_value(val)) {
       ++observed;
-      val = away_from_extremes(val);
+      val = away_from_extremes(val, PROBABILITY_GUARD);
     }
     meth_fields.push_back(val);
   }
@@ -369,7 +214,8 @@ load_full_states_as_prob(const string filename, const size_t n_nodes,
         throw SMITHLABException("inconsistent state length: " + line);
 
       for (size_t i = 0; i < n_nodes; ++i)
-        probs.push_back(away_from_extremes(state[i] == '0' ? 1.0 : 0.0));
+        probs.push_back(away_from_extremes(state[i] == '0' ? 1.0 : 0.0,
+                                           PROBABILITY_GUARD));
 
       tree_prob_table.push_back(probs);
     }
@@ -435,8 +281,7 @@ fill_leaf_prob(const bool VERBOSE,
       if (hypo_prob_table[j][i] >= 0) {
         prev = j;
         next = j;
-      }
-      else {
+      } else {
         if (j >= next) {
           next = j + 1;
           while (next < n_sites && hypo_prob_table[next][i] < 0.0)
@@ -450,18 +295,17 @@ fill_leaf_prob(const bool VERBOSE,
           const double w1 = static_cast<double>(d2)/(d1 + d2);
           hypo_prob_table[j][i] = (hypo_prob_table[prev][i]*w1 +
                                    hypo_prob_table[next][i]*(1.0 - w1));
-        }
-        else if (prev < j && d1 < desert_size) {
+        } else if (prev < j && d1 < desert_size) {
           const double w1 = d1/desert_size;
           hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
                                    hypo_prob_table[prev][i]*(1.0 - w1));
-        }
-        else if (d2 < desert_size) {
+        } else if (d2 < desert_size) {
           const double w1 = d2/desert_size;
           hypo_prob_table[j][i] = (mean_hypo_prob*w1 +
                                    hypo_prob_table[next][i]*(1.0 - w1));
+        } else {
+          hypo_prob_table[j][i] = mean_hypo_prob;
         }
-        else hypo_prob_table[j][i] = mean_hypo_prob;
         ++count;
       }
     }
@@ -504,8 +348,7 @@ get_node_degrees(const vector<size_t> &subtree_sizes,
 
   if (subtree_sizes[tree_start] == 1) {
     degrees[tree_start] = 1;
-  }
-  else {
+  } else {
     if (tree_start > 0)
       degrees[tree_start] = 1;
 
@@ -609,10 +452,10 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
             is_desert[w] = true;
         j = k;
         prev_obs = sites[j];
-      }
-      else
+      } else {
         for (size_t w = j + 1; w < n_sites; ++w)
           is_desert[w] = true;
+      }
     }
     if (VERBOSE)
       cerr << " done]" << endl;
@@ -640,10 +483,9 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
 
       ++last_block_size;
       // Maintain blocks
-      if (sites_copy.size() == 1)
+      if (sites_copy.size() == 1) {
         reset_points.push_back(0);
-
-      else if (Site::distance(last_site, sites[i]) > desert_size) {
+      } else if (Site::distance(last_site, sites[i]) > desert_size) {
         if (last_block_size < min_sites_per_block) { //remove small blocks
           const size_t start = reset_points.back();
           sites_copy.erase(sites_copy.begin() + start, sites_copy.end());
@@ -652,8 +494,7 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
           reset_points.pop_back();
           last_block_size =
             reset_points.empty() ? 0 : meth_copy.size() - reset_points.back();
-        }
-        else { //end block, and start new block
+        } else { //end block, and start new block
           reset_points.push_back(sites_copy.size() - 1);
           last_block_size = 1;
         }
@@ -671,8 +512,9 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
     reset_points.pop_back();
     last_block_size =
       reset_points.empty() ? 0 : meth_copy.size() - reset_points.back();
+  } else {
+    reset_points.push_back(sites_copy.size());
   }
-  else reset_points.push_back(sites_copy.size());
 
   meth.swap(meth_copy);
   sites.swap(sites_copy);
@@ -707,128 +549,6 @@ separate_regions(const size_t desert_size,
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-/////////////  STRUCTS FOR HOLDING PAIRS AND TRIPLES OF STATES  ////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-struct pair_state {
-  double uu, um; // think 2x2 matrix
-  double mu, mm;
-
-  pair_state(double _uu, double _um, double _mu, double _mm) :
-    uu(_uu), um(_um), mu(_mu), mm(_mm) {}
-  pair_state() : uu(0.0), um(0.0), mu(0.0), mm(0.0) {}
-
-  // WARNING: no range checking (for i,j > 1)
-  double operator()(int i, int j) const { // version for l-values
-    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
-  }
-  double & operator()(int i, int j) { // version for r-values
-    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
-  }
-  pair_state operator+(const pair_state &other) const {
-    return pair_state(uu + other.uu, um + other.um,
-                      mu + other.mu, mm + other.mm);
-  }
-  void div(const double x) {
-    uu /= x; um /= x;
-    mu /= x; mm /= x;
-  }
-  void make_logs() {
-    uu = log(uu); um = log(um);
-    mu = log(mu); mm = log(mm);
-  }
-  void flatten(vector<double> &p) const {
-    p.clear();
-    p.push_back(uu); p.push_back(um);
-    p.push_back(mu); p.push_back(mm);
-  }
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "[" << uu << ", " << um << "]\n"
-        << "[" << mu << ", " << mm << "]";
-    return oss.str();
-  }
-};
-
-std::ostream &
-operator<<(std::ostream &out, const pair_state &ps) {
-  return out << ps.tostring();
-}
-
-
-struct triple_state {
-  double uuu, uum; // think: a 2x2 matrix
-  double umu, umm;
-
-  double muu, mum; // think: another 2x2 matrix
-  double mmu, mmm;
-
-  triple_state() : uuu(0.0), uum(0.0), umu(0.0), umm(0.0),
-                   muu(0.0), mum(0.0), mmu(0.0), mmm(0.0) {};
-  triple_state(double _uuu, double _uum, double _umu, double _umm,
-               double _muu, double _mum, double _mmu, double _mmm) :
-    uuu(_uuu), uum(_uum), umu(_umu), umm(_umm),
-    muu(_muu), mum(_mum), mmu(_mmu), mmm(_mmm) {};
-
-  // WARNING: no range checking
-  double operator()(int i, int j, int k) const { // version for r-value (rhs)
-    return  i == 0 ?
-      (j == 0 ? (k == 0 ? uuu : uum) : (k == 0 ? umu : umm)) :
-      (j == 0 ? (k == 0 ? muu : mum) : (k == 0 ? mmu : mmm));
-  }
-  double & operator()(int i, int j, int k) { // version for l-value (lhs)
-    return  i == 0 ?
-      (j == 0 ? (k == 0 ? uuu : uum) : (k == 0 ? umu : umm)) :
-      (j == 0 ? (k == 0 ? muu : mum) : (k == 0 ? mmu : mmm));
-  }
-
-  triple_state operator+(const triple_state &other) const {
-    return triple_state(uuu + other.uuu, uum + other.uum,
-                        umu + other.umu, umm + other.umm,
-                        muu + other.muu, mum + other.mum,
-                        mmu + other.mmu, mmm + other.mmm);
-  }
-  void div(const double x) {
-    uuu /= x; uum /= x;
-    umu /= x; umm /= x;
-
-    muu /= x; mum /= x;
-    mmu /= x; mmm /= x;
-  }
-  void make_logs() {
-    uuu = log(uuu); uum = log(uum);
-    umu = log(umu); umm = log(umm);
-
-    muu = log(muu); mum = log(mum);
-    mmu = log(mmu); mmm = log(mmm);
-  }
-  void flatten(vector<double> &p) const {
-    p.clear();
-    p.push_back(uuu); p.push_back(uum);
-    p.push_back(umu); p.push_back(umm);
-    p.push_back(muu); p.push_back(mum);
-    p.push_back(mmu); p.push_back(mmm);
-  }
-
-  string tostring() const {
-    std::ostringstream oss;
-    oss << "u [" << uuu << ", " << uum << "]\n"
-        << "  [" << umu << ", " << umm << "]\n"
-        << "m [" << muu << ", " << mum << "]\n"
-        << "  [" << mmu << ", " << mmm << "]";
-    return oss.str();
-  }
-};
-
-std::ostream &
-operator<<(std::ostream &out, const triple_state &ts) {
-  return out << ts.tostring();
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 //////////////////////       Units grouped       ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -848,127 +568,6 @@ kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
     transform(q.begin(), q.end(), q.begin(),
               bind(plus<double>(), _1, PROBABILITY_GUARD));
     kld[i] = kl_divergence(p, q);
-  }
-}
-
-// For individual branch: T=1-exp(-branch)
-static void
-combine_horiz_and_vert_deriv(const param_set &ps, const size_t &node_id,
-                             const pair_state &P,
-                             triple_state &GP, // dim: [prev x parent x current]
-                             triple_state &GP_drate, triple_state &GP_dg0,
-                             triple_state &GP_dg1, triple_state &GP_dT) {
-  // deriv for: (rate0, g0, g1, T)
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-  pair_state Q(-ps.rate0, ps.rate0, 1.0 - ps.rate0, ps.rate0 - 1.0);
-
-  pair_state GP_denom;
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      GP_denom(prev, anc) = G(prev, 0)*P(anc, 0) + G(prev, 1)*P(anc, 1);
-
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc)
-      for (size_t cur = 0; cur < 2; ++cur)
-        GP(prev, anc, cur) = G(prev, cur)*P(anc, cur)/GP_denom(prev, anc);
-
-  pair_state dPdrate0(-ps.T[node_id], ps.T[node_id], -ps.T[node_id], ps.T[node_id]);
-  pair_state dPdT(-ps.rate0, ps.rate0, 1.0 - ps.rate0, ps.rate0 - 1.0);
-  pair_state dGdg0(1.0, -1.0, 0.0, 0.0);
-  pair_state dGdg1(0.0, 0.0, -1.0, 1.0);
-
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t anc = 0; anc < 2; ++anc) {
-      const double denom = GP_denom(prev, anc);
-      for (size_t cur = 0; cur < 2; ++cur) {
-        GP_drate(prev, anc, cur) =
-          G(prev, cur)/denom*(dPdrate0(anc, cur) - P(anc, cur)/denom*
-                              (G(prev, 0)*dPdrate0(anc, 0) +
-                               G(prev, 1)*dPdrate0(anc, 1)));
-        GP_dT(prev, anc, cur) =
-          G(prev, cur)/denom*(dPdT(anc, cur) - P(anc, cur)/denom*
-                              (G(prev, 0)*dPdT(anc, 0) +
-                               G(prev, 1)*dPdT(anc, 1)));
-        GP_dg0(prev, anc, cur) =
-          (prev == 1) ? 0.0: (dGdg0(prev, cur) - G(prev, cur)/denom*
-                              (dGdg0(prev, 0)*P(anc, 0) +
-                               dGdg0(prev, 1)*P(anc, 1)))*P(anc, cur)/denom;
-        GP_dg1(prev, anc, cur) =
-          (prev == 0) ? 0.0: (dGdg1(prev, cur) - G(prev, cur)/denom*
-                              (dGdg1(prev, 0)*P(anc, 0) +
-                               dGdg1(prev, 1)*P(anc, 1)))*P(anc, cur)/denom;
-
-      }
-    }
-}
-
-
-// P(T)[0,0]: hypo -> hypo prob
-// P(T)[1,1]: hyper -> hyper prob
-static void
-make_vertical_matrix(const double T, const double rate0, pair_state &P) {
-  assert(rate0 > 0.0 && rate0 < 1.0 && T < 1.0 && T > 0.0);
-  P = pair_state(1.0 - rate0*T,   rate0*T,
-                 (1.0 - rate0)*T, 1.0 - (1.0 - rate0)*T);
-}
-
-
-static void
-get_transition_matrices_deriv(const param_set &ps,
-                              vector<pair_state> &P,
-                              vector<triple_state> &GP,
-                              vector<triple_state> &GP_drate,
-                              vector<triple_state> &GP_dg0,
-                              vector<triple_state> &GP_dg1,
-                              vector<triple_state> &GP_dT) {
-
-  const size_t n_nodes = ps.T.size();
-  P = vector<pair_state>(n_nodes);
-
-  GP = vector<triple_state>(n_nodes); // dim: n_nodes x [prev x par x cur]
-  GP_drate = vector<triple_state>(n_nodes);
-  GP_dg0 = vector<triple_state>(n_nodes);
-  GP_dg1 = vector<triple_state>(n_nodes);
-  GP_dT = vector<triple_state>(n_nodes);
-
-  for (size_t i = 1; i < n_nodes; ++i) {
-    make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
-    combine_horiz_and_vert_deriv(ps, i, P[i], GP[i], GP_drate[i],
-                                 GP_dg0[i], GP_dg1[i], GP_dT[i]);
-  }
-}
-
-
-static void
-combine_horiz_and_vert(const pair_state &G, const pair_state &P,
-                       triple_state &GP) {
-  // normalization denominators
-  pair_state GP_denom;
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t par = 0; par < 2; ++par)
-      GP_denom(prev, par) = G(prev, 0)*P(par, 0) + G(prev, 1)*P(par, 1);
-
-  // collecting the combined probabilities
-  for (size_t prev = 0; prev < 2; ++prev)
-    for (size_t par = 0; par < 2; ++par)
-      for (size_t cur = 0; cur < 2; ++cur)
-        GP(prev, par, cur) = G(prev, cur)*P(par, cur)/GP_denom(prev, par);
-}
-
-
-static void
-get_transition_matrices(const param_set &ps,
-                        vector<pair_state> &P, vector<triple_state> &GP) {
-  assert(ps.is_valid());
-
-  const size_t n_nodes = ps.T.size();
-  P = vector<pair_state>(n_nodes);
-  GP = vector<triple_state>(n_nodes);
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-
-  for (size_t i = 1; i < n_nodes; ++i) {
-    make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
-    combine_horiz_and_vert(G, P[i], GP[i]);
   }
 }
 
@@ -1019,7 +618,8 @@ init_internal_prob(const vector<size_t> &subtree_sizes, const size_t node_id,
     ++n_desc_leaf;
   }
 
-  node_probs[node_id] = away_from_extremes(sum_desc_leaf_prob/n_desc_leaf);
+  node_probs[node_id] = away_from_extremes(sum_desc_leaf_prob/n_desc_leaf,
+                                            PROBABILITY_GUARD);
 }
 
 static void
@@ -1034,7 +634,8 @@ copy_leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
     for (size_t j = 0; j < n_leaves; ++j)
       if (valid_probability(meth_prob_table[i][j]))
         tree_prob_table[i][leaves_preorder[j]] =
-          away_from_extremes(meth_prob_table[i][j]);
+          away_from_extremes(meth_prob_table[i][j],
+                             PROBABILITY_GUARD);
 }
 
 static void
@@ -1074,11 +675,11 @@ posterior_start(const bool update_leaves,
                 const vector<size_t> &subtree_sizes, const pair_state &G,
                 const vector<pair_state> &P, const vector<triple_state > &GP,
                 const size_t pos, const size_t node_id, const size_t parent_id,
+                const vector<double> &obs_meth_curr,
                 vector<double> &meth_curr, vector<double> &meth_next,
                 double &diff) {
-
   if (is_leaf(subtree_sizes[node_id])) { //leaf
-    if (update_leaves) {
+    if (update_leaves && missing_meth_value(obs_meth_curr[node_id])) {
       const double p_par_next_orig = meth_next[parent_id];
       const double p_par_orig = meth_curr[parent_id];
       const double p_next_orig = meth_next[node_id];
@@ -1103,14 +704,14 @@ posterior_start(const bool update_leaves,
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
     }
-  }
-  else { // current node is internal
+  } else { // current node is internal
     vector<size_t> children;
     get_children(node_id, subtree_sizes, children);
 
     for (size_t i = 0; i < children.size(); ++i)
       posterior_start(update_leaves, subtree_sizes, G, P, GP, pos,
-                      children[i], node_id, meth_curr, meth_next, diff);
+                      children[i], node_id, obs_meth_curr,
+                      meth_curr, meth_next, diff);
 
     if (node_id == 0) { //root node  //root has 3 children!
       const double p_next_orig = meth_next[node_id];
@@ -1141,8 +742,7 @@ posterior_start(const bool update_leaves,
       }
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
-    }
-    else { // internal node // two children
+    } else { // internal node // two children
       const double p_c0_orig = meth_curr[children[0]];
       const double p_c1_orig = meth_curr[children[1]];
       const double p_next_orig = meth_next[node_id];
@@ -1187,12 +787,13 @@ posterior_middle(const bool update_leaves,
                  const vector<size_t> &subtree_sizes, const pair_state &G,
                  const vector<pair_state> &P, const vector<triple_state> &GP,
                  const size_t pos, const size_t node_id, const size_t parent_id,
+                 const vector<double> &obs_meth_curr,
                  vector<double> &meth_prev, vector<double> &meth_curr,
                  vector<double> &meth_next, double &diff) {
 
   double p_cur = 0.0;
   if (is_leaf(subtree_sizes[node_id])) { // leaf
-    if (update_leaves) {
+    if (update_leaves && missing_meth_value(obs_meth_curr[node_id])) {
       const double p_prev_orig = meth_prev[node_id];
       const double p_next_orig = meth_next[node_id];
       const double p_par_orig = meth_curr[parent_id];
@@ -1220,15 +821,14 @@ posterior_middle(const bool update_leaves,
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
     }
-  }
-  else {
-
+  } else {
     // get children and recurse
     vector<size_t> children;
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       posterior_middle(update_leaves, subtree_sizes, G, P, GP, pos, child_id,
-                       node_id, meth_prev, meth_curr, meth_next, diff);
+                       node_id, obs_meth_curr,
+                       meth_prev, meth_curr, meth_next, diff);
       children.push_back(child_id);
       count += subtree_sizes[child_id];
     }
@@ -1280,8 +880,7 @@ posterior_middle(const bool update_leaves,
       }
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
-    }
-    else { // internal node // two children
+    } else { // internal node // two children
       const double p_prev_c0_orig = meth_prev[children[0]];
       const double p_prev_c1_orig = meth_prev[children[1]];
       const double p_prev_orig = meth_prev[node_id];
@@ -1339,11 +938,12 @@ posterior_end(const bool update_leaves,
               const vector<size_t> &subtree_sizes, const pair_state &G,
               const vector<pair_state> &P, const vector<triple_state> &GP,
               const size_t pos, const size_t node_id, const size_t parent_id,
+              const vector<double> &obs_meth_curr,
               vector<double> &meth_prev, vector<double> &meth_curr,
               double &diff) {
 
   if (is_leaf(subtree_sizes[node_id])) { //leaf
-    if (update_leaves) {
+    if (update_leaves && missing_meth_value(obs_meth_curr[node_id])) {
       const double p_par_orig = meth_curr[parent_id];
       const double p_prev_orig = meth_prev[node_id];
 
@@ -1362,13 +962,13 @@ posterior_end(const bool update_leaves,
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
     }
-  }
-  else {
+  } else {
     vector<size_t> children;
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       posterior_end(update_leaves, subtree_sizes, G, P, GP, pos,
-                    child_id, node_id, meth_prev, meth_curr, diff);
+                    child_id, node_id, obs_meth_curr,
+                    meth_prev, meth_curr, diff);
       children.push_back(child_id);
       count += subtree_sizes[child_id];
     }
@@ -1416,8 +1016,7 @@ posterior_end(const bool update_leaves,
       }
       diff += abs(meth_curr[node_id] - p_cur);
       meth_curr[node_id] = p_cur;
-    }
-    else { // internal node: has two children
+    } else { // internal node: has two children
       const double p_c0_orig = meth_curr[children[0]];
       const double p_c1_orig = meth_curr[children[1]];
       const double p_prev_c0_orig = meth_prev[children[0]];
@@ -1466,9 +1065,11 @@ approx_posterior(const vector<size_t> &subtree_sizes,
                  const vector<size_t> &reset_points,
                  const double tolerance,
                  const size_t MAXITER,
+                 const vector<vector<double> > &obs_hypo_prob_table,
                  vector<vector<double> > &hypo_prob_table) {
 
-  static const bool update_leaves = false; // recursion never starts at leaf
+  // whether to update posterior at leaves with missing observation
+  static const bool update_leaves = false;
 
   // collect probabilities and derivatives by branch
   pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
@@ -1482,7 +1083,6 @@ approx_posterior(const vector<size_t> &subtree_sizes,
     const size_t start = reset_points[i];
     const size_t end = reset_points[i + 1] - 1;
     if (start < end) {
-
       const double tol = (update_leaves ? // ADS: is it possible for this to be true?
                           tolerance*n_nodes*(end - start) :
                           tolerance*n_nodes*(end - start)/2);
@@ -1491,12 +1091,15 @@ approx_posterior(const vector<size_t> &subtree_sizes,
       for (size_t iter = 0; iter < MAXITER && diff > tol; ++iter) {
         diff = 0.0; // ADS: why set this value here??
         posterior_start(update_leaves, subtree_sizes, G, P, GP, start, 0, 0,
+                        obs_hypo_prob_table[start],
                         hypo_prob_table[start], hypo_prob_table[start + 1], diff);
         for (size_t j = start + 1; j < end; ++j)
           posterior_middle(update_leaves, subtree_sizes, G, P, GP, j, 0, 0,
+                           obs_hypo_prob_table[j],
                            hypo_prob_table[j - 1], hypo_prob_table[j],
                            hypo_prob_table[j + 1], diff);
         posterior_end(update_leaves, subtree_sizes, G, P, GP, end, 0, 0,
+                      obs_hypo_prob_table[end],
                       hypo_prob_table[end - 1], hypo_prob_table[end], diff);
       }
     }
@@ -1515,7 +1118,6 @@ MB_middle_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent
                const vector<size_t> &meth_prev,
                const vector<size_t> &meth_curr,
                const vector<size_t> &meth_next, const size_t node_id) {
-
   const size_t parent = parent_ids[node_id];
   double lp0 = 0.0, lp1 = 0.0;
 
@@ -1524,8 +1126,7 @@ MB_middle_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent
     const size_t prev_state = meth_prev[node_id];
     lp0 += logG(prev_state, 0);
     lp1 += logG(prev_state, 1);
-  }
-  else { // (node_id > 0)
+  } else { // (node_id > 0)
     const size_t parent_state = meth_curr[parent];
     const size_t prev_state = meth_prev[node_id];
     lp0 += logGP[node_id](prev_state, parent_state, 0);
@@ -1546,8 +1147,7 @@ MB_middle_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent
     const size_t current_state = meth_next[node_id];
     lp0 += logG(0, current_state);
     lp1 += logG(1, current_state);
-  }
-  else { // (node_id > 0)
+  } else { // (node_id > 0)
     const size_t parent_state = meth_next[parent];
     const size_t current_state = meth_next[node_id];
     lp0 += logGP[node_id](0, parent_state, current_state);
@@ -1563,15 +1163,13 @@ MB_end_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_id
             const pair_state &logG, const vector<triple_state> &logGP,
             const vector<size_t> &meth_prev, const vector<size_t> &meth_curr,
             const size_t node_id) {
-
   double lp0 = 0.0, lp1 = 0.0;
   // parents
   if (is_root(node_id)) { // is_root(node_id)
     const size_t prev_state = meth_prev[node_id];
     lp0 += logG(prev_state, 0);
     lp1 += logG(prev_state, 1);
-  }
-  else { // (node_id > 0)
+  } else { // (node_id > 0)
     const size_t parent_state = meth_curr[parent_ids[node_id]];
     const size_t prev_state = meth_prev[node_id];
     lp0 += logGP[node_id](prev_state, parent_state, 0);
@@ -1606,8 +1204,7 @@ MB_start_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_
   if (is_root(node_id)) { // is_root(node_id)
     lp0 += log(pi0);
     lp1 += log(1.0 - pi0);
-  }
-  else { // (node_id > 0)
+  } else { // (node_id > 0)
     const size_t parent_state = meth_curr[parent];
     lp0 += logP[node_id](parent_state, 0);
     lp1 += logP[node_id](parent_state, 1);
@@ -1627,8 +1224,7 @@ MB_start_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_
     const size_t next_state = meth_next[node_id];
     lp0 += logG(0, next_state);
     lp1 += logG(1, next_state);
-  }
-  else { // non-root node
+  } else { // non-root node
     const size_t parent_state = meth_next[parent];
     const size_t current_state = meth_next[node_id];
     lp0 += logGP[node_id](0, parent_state, current_state);
@@ -1840,7 +1436,7 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
       for (size_t k = 0; k < 2; ++k) {
         llk += start_weights[node](j, k)*log(P[node](j, k));
         for (size_t i = 0; i < 2; ++i)
-          llk += (triad_weights[node](i, j, k)*log(GP[node](i, j, k)));
+          llk += triad_weights[node](i, j, k)*log(GP[node](i, j, k));
       }
 
   return llk;
@@ -2188,6 +1784,12 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
                     root_weights, start_weights, triad_weights, ps);
     diff = param_set::absolute_difference(ps, prev_ps);
   }
+
+  double llk = log_likelihood(subtree_sizes, ps, triad_weights,
+                              start_weights, root_weights);
+  if (VERBOSE)
+    cerr << "log-likelihood=" << llk << endl;
+
 }
 
 
@@ -2221,16 +1823,6 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
                  vector<vector<size_t> > &sampled_states) {
 
   const size_t n_nodes = subtree_sizes.size();
-  const size_t n_sites = tree_prob_table.size();
-
-  // // first obtain approximate posteriors
-  // if (VERBOSE)
-  //   cerr << "[inside expectation: approx_posterior]" << endl;
-  // approx_posterior(subtree_sizes, ps, reset_points, POST_CONV_TOL,
-  //                  max_app_iter, tree_prob_table);
-  // // then "sample" states from the posterior
-  // sampled_states = vector<vector<size_t> >(n_sites, vector<size_t>(n_nodes));
-  // to_discrete_table(tree_prob_table, sampled_states);
 
   triad_weights = vector<triple_state>(n_nodes);
   start_weights = vector<pair_state>(n_nodes);
@@ -2313,8 +1905,7 @@ local_parsimony(const vector<size_t> &subtree_sizes,
     }
     if (SAME) {
       state[node_id] = s;
-    }
-    else {
+    } else {
       s = state[parent_ids[node_id]];
       state[node_id] = s;
     }
@@ -2383,8 +1974,7 @@ build_domain(const size_t minCpG, const size_t desert_size,
     if (d < desert_size && states[i] == states[i - 1]) {
       cpg.set_score(1.0 + cpg.get_score());
       cpg.set_end(sites[i].pos + 1);
-    }
-    else {
+    } else {
       domains.push_back(cpg);
       cpg.set_chrom(sites[i].chrom);
       cpg.set_start(sites[i].pos);
@@ -2400,9 +1990,9 @@ build_domain(const size_t minCpG, const size_t desert_size,
     vector<GenomicRegion> merging_domains;
     size_t skip = 0;
     for (size_t j = 0; j < domains.size(); ++j) {
-      if (domains[j].get_score() <= i)
+      if (domains[j].get_score() <= i) {
         skip += domains[j].get_score();
-      else {
+      } else {
         if (merging_domains.size() > 0 &&
             domains[j].get_name() == merging_domains.back().get_name() &&
             domains[j].distance(merging_domains.back()) < desert_size) {
@@ -2410,8 +2000,7 @@ build_domain(const size_t minCpG, const size_t desert_size,
                                            domains[j].get_score() + skip);
           merging_domains.back().set_end(domains[j].get_end());
           skip = 0;
-        }
-        else {
+        } else {
           merging_domains.push_back(domains[j]);
           skip = 0;
         }
@@ -2528,8 +2117,7 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "[tree:]\n" << t.tostring() << endl
              << "[given params:]\n" << init_ps << endl;
-    }
-    else {
+    } else {
       // if optimizing params, tree still needed from its own file
       vector<double> branches;
       t.get_branch_lengths(branches);
@@ -2584,8 +2172,9 @@ main(int argc, const char **argv) {
       maximization_step(VERBOSE, MAXITER, subtree_sizes, reset_points,
                         root_weights, start_weights, triad_weights, init_ps, t);
 
-    }
-    else {
+
+
+    } else {
       if (VERBOSE)
         cerr << endl << "========= LEAF (INCOMPLETE DATA) MODE =========" << endl
              << "[Loading LEAF table]" << endl;
@@ -2651,11 +2240,9 @@ main(int argc, const char **argv) {
       const size_t max_app_iter = 100;        //MAGIC
       const size_t mh_max_iterations = 500;   //MAGIC
 
-      vector<vector<double> > tree_prob_table(tree_prob_table_full);
-      vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes));
-
       // Initialize "sample" states from the heuristic probabilities
-      to_discrete_table(tree_prob_table, tree_state_table);
+      vector<vector<size_t> > tree_state_table(n_sites, vector<size_t>(n_nodes));
+      to_discrete_table(tree_prob_table_full, tree_state_table);
 
       param_set curr_ps(init_ps);
       for (size_t iter = 0; iter < EMMAXITER && !em_converged; ++iter) {
@@ -2666,11 +2253,11 @@ main(int argc, const char **argv) {
 
         const param_set prev_ps(curr_ps);
         // next line is optional, just for consistency with older version.
-        tree_prob_table = tree_prob_table_full;
+        // tree_prob_table = tree_prob_table_full;
         expectation_step(VERBOSE, mh_max_iterations, max_app_iter,
                          subtree_sizes, parent_ids, reset_points, curr_ps,
                          root_weights, start_weights, triad_weights,
-                         tree_prob_table, tree_state_table);
+                         tree_prob_table_full, tree_state_table);
 
         if (VERBOSE) {
           cerr << "[E-step iter=" << iter << "]\ntriad weights:\n" << endl;
@@ -2705,8 +2292,8 @@ main(int argc, const char **argv) {
       /* get posterior one last time*/
       if (VERBOSE)
         cerr << "[last round of posterior estimation]" << endl;
-      approx_posterior(subtree_sizes, init_ps, reset_points,
-                       POST_CONV_TOL, max_app_iter, tree_prob_table);
+      approx_posterior(subtree_sizes, init_ps, reset_points, POST_CONV_TOL,
+                       max_app_iter, tree_prob_table, tree_prob_table_full);
 
       /************************** Output states ********************************/
       if (!outfile.empty()) {
@@ -2718,7 +2305,7 @@ main(int argc, const char **argv) {
         vector<string> states;
         vector<GenomicRegion> domains;
         double cutoff = 0.5; // MAGIC
-        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table,
+        tree_prob_to_states(subtree_sizes, parent_ids, tree_prob_table_full,
                             cutoff, states);
         build_domain(min_sites_per_frag, desert_size, sites, states, domains);
         if (VERBOSE)
@@ -2733,7 +2320,7 @@ main(int argc, const char **argv) {
           std::ofstream outss(outssfile.c_str());
           if (!outss)
             throw std::runtime_error("bad output file: " + outssfile);
-          write_treeprob_states(subtree_sizes, sites, tree_prob_table, outss);
+          write_treeprob_states(subtree_sizes, sites, tree_prob_table_full, outss);
         }
       }
     }
