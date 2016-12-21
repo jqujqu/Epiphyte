@@ -32,37 +32,35 @@ class PhyloTreePreorder : public PhyloTree {
 public:
   void
   get_subtree_sizes(vector<size_t> &subtree_sizes) const {
-    get_subtree_sizes_implementation(root, subtree_sizes);
+    get_subtree_sizes(root, subtree_sizes);
   }
   void
   get_branch_lengths(vector<double> &branch_lengths) const {
-    get_branch_lengths_implementation(root, branch_lengths);
+    get_branch_lengths(root, branch_lengths);
   }
   void
   get_leaf_names(vector<string> &names) const {
-    get_leaf_names_implementation(root, names);
+    get_leaf_names(root, names);
   };
 
   void
   set_branch_lengths(vector<double> branch_lengths) {
-    set_branch_lengths_implementation(root, branch_lengths);
+    set_branch_lengths(root, branch_lengths);
   }
 
 private:
   void
-  get_subtree_sizes_implementation(const PhyloTree::PTNode &node,
-                                   vector<size_t> &subtree_sizes) const;
+  get_subtree_sizes(const PhyloTree::PTNode &node,
+                    vector<size_t> &subtree_sizes) const;
   void
-  get_branch_lengths_implementation(const PhyloTree::PTNode &node,
-                                    vector<double> &branch_lengths) const;
+  get_branch_lengths(const PhyloTree::PTNode &node,
+                     vector<double> &branch_lengths) const;
   void
-  get_leaf_names_implementation(const PhyloTree::PTNode &node,
-                                vector<string> &names) const;
+  get_leaf_names(const PhyloTree::PTNode &node,
+                 vector<string> &names) const;
   void
-  set_branch_lengths_implementation(PhyloTree::PTNode &node,
-                                    vector<double> &branch_lengths);
+  set_branch_lengths(PhyloTree::PTNode &node,
+                     vector<double> &branch_lengths);
 };
 
 #endif
-
-

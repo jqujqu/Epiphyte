@@ -31,14 +31,14 @@ using std::vector;
 
 
 void
-PhyloTreePreorder::get_subtree_sizes_implementation(const PhyloTree::PTNode &node,
-                                                    vector<size_t> &subtree_sizes) const {
+PhyloTreePreorder::get_subtree_sizes(const PhyloTree::PTNode &node,
+                                     vector<size_t> &subtree_sizes) const {
   subtree_sizes.push_back(1);
 
   if (node.has_children()) {
     for (size_t i = 0; i < node.child.size(); ++i) {
       vector<size_t> child_subtree_sizes;
-      get_subtree_sizes_implementation(node.child[i], child_subtree_sizes);
+      get_subtree_sizes(node.child[i], child_subtree_sizes);
       subtree_sizes.front() += child_subtree_sizes.size();
       copy(child_subtree_sizes.begin(), child_subtree_sizes.end(),
            back_inserter(subtree_sizes));
@@ -48,30 +48,30 @@ PhyloTreePreorder::get_subtree_sizes_implementation(const PhyloTree::PTNode &nod
 
 
 void
-PhyloTreePreorder::get_branch_lengths_implementation(const PhyloTree::PTNode &node,
-                                                     vector<double> &branch_lengths) const {
+PhyloTreePreorder::get_branch_lengths(const PhyloTree::PTNode &node,
+                                      vector<double> &branch_lengths) const {
   branch_lengths.push_back(node.branch_length);
   for (size_t i = 0; i < node.child.size(); ++i)
-    get_branch_lengths_implementation(node.child[i], branch_lengths);
+    get_branch_lengths(node.child[i], branch_lengths);
 }
 
 
 void
-PhyloTreePreorder::get_leaf_names_implementation(const PhyloTree::PTNode &node,
-                                                 vector<string> &leafnames) const {
+PhyloTreePreorder::get_leaf_names(const PhyloTree::PTNode &node,
+                                  vector<string> &leafnames) const {
   if (node.child.size()==0) {
     leafnames.push_back(node.name);
   } else {
     for (size_t i = 0; i < node.child.size(); ++i)
-      get_leaf_names_implementation(node.child[i], leafnames);
+      get_leaf_names(node.child[i], leafnames);
   }
 }
 
 void
-PhyloTreePreorder::set_branch_lengths_implementation(PhyloTree::PTNode &node,
-                                                     vector<double> &branch_lengths) {
+PhyloTreePreorder::set_branch_lengths(PhyloTree::PTNode &node,
+                                      vector<double> &branch_lengths) {
   node.branch_length = branch_lengths[0];
   branch_lengths.erase(branch_lengths.begin());
   for (size_t i = 0; i < node.child.size(); ++i)
-    set_branch_lengths_implementation(node.child[i], branch_lengths);
+    set_branch_lengths(node.child[i], branch_lengths);
 }
