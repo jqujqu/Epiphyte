@@ -72,9 +72,10 @@ struct param_set {
         << "g0=" << g0 << ", "
         << "g1=" << g1 << ", "
         << "T=(";
-    // ADS: is the approach below safe to use? What about |T|=0?
-    copy(T.begin(), T.end() - 1, std::ostream_iterator<double>(oss, ","));
-    oss << T.back() << ')';
+
+    for (size_t i = 0; i < T.size() - 1; ++i)
+      oss << -log(1.0 - T[i]) << ',';
+    oss << -log(1.0 - T.back()) << ')';
     return oss.str();
   }
 
