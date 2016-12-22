@@ -31,7 +31,6 @@
 #include <limits>     //std::numeric_limits
 #include <iterator>   //std::distance
 #include <unistd.h>
-#include <random>
 
 /* from smithlab_cpp */
 #include "OptionParser.hpp"
@@ -348,7 +347,7 @@ separate_regions(const bool VERBOSE, const size_t desert_size,
   vector<vector<double> > meth_aug = meth;
   fill_leaf_prob(VERBOSE, sites, desert_size, meth_aug);
 
-    pi0_est = estimate_pi0(meth);
+  pi0_est = estimate_pi0(meth);
 
   //scan desert
   //uncovered site has prob value set to -1.0
