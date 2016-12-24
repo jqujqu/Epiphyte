@@ -65,21 +65,11 @@ struct param_set {
     return d;
   }
 
-  std::string tostring() const {
-    std::ostringstream oss;
-    oss << "pi0=" << pi0 << ", "
-        << "rate0=" << rate0 << ", "
-        << "g0=" << g0 << ", "
-        << "g1=" << g1 << ", "
-        << "T=(";
-
-    for (size_t i = 0; i < T.size() - 1; ++i)
-      oss << -log(1.0 - T[i]) << ',';
-    oss << -log(1.0 - T.back()) << ')';
-    return oss.str();
-  }
+  std::string tostring() const;
 
   void read(const std::string &paramfile, PhyloTreePreorder &t);
+  void write(const PhyloTreePreorder t, const std::string &paramfile);
+
   bool is_valid() const { // strict inequalities to avoid invalid log value
     return (pi0 < 1.0 && pi0 > 0.0 && rate0 < 1.0 && rate0 > 0.0 &&
             g0 < 1.0 &&  g0 > 0.0 &&    g1 < 1.0 &&    g1 > 0.0);

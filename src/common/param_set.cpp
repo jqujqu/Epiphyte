@@ -64,3 +64,39 @@ param_set::read(const string &paramfile, PhyloTreePreorder &t) {
 
   assert(is_valid());
 }
+
+void
+param_set::write(PhyloTreePreorder t, const string &paramfile) {
+
+  std::ofstream out(paramfile.c_str());
+  if (!out)
+    throw std::runtime_error("cannot write: " + paramfile);
+
+  // first set the tree branches
+  vector<double> branches(T.size(), 0.0);
+  for (size_t i = 1; i < T.size(); ++i)
+    branches[i] = -log(1.0 - T[i]);
+  t.set_branch_lengths(branches);
+
+  out << t << std::endl;
+  out << pi0 << std::endl;
+  out << rate0 << std::endl;
+  out << g0 << std::endl;
+  out << g1 << std::endl;
+
+}
+
+string
+param_set::tostring() const {
+  std::ostringstream oss;
+  oss << "pi0=" << pi0 << ", "
+      << "rate0=" << rate0 << ", "
+      << "g0=" << g0 << ", "
+      << "g1=" << g1 << ", "
+      << "T=(";
+
+  for (size_t i = 0; i < T.size() - 1; ++i)
+    oss << -log(1.0 - T[i]) << ',';
+  oss << -log(1.0 - T.back()) << ')';
+  return oss.str();
+}
