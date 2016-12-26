@@ -585,7 +585,7 @@ val_or_flip(const double val, int flip) {
 static void
 posterior_start(const bool update_leaves,
                 const vector<size_t> &subtree_sizes, const pair_state &G,
-                const vector<pair_state> &P, const vector<triple_state > &GP,
+                const vector<pair_state> &P, const vector<triple_state> &GP,
                 const size_t pos, const size_t node_id, const size_t parent_id,
                 const vector<double> &obs_meth_curr,
                 vector<double> &meth_curr, vector<double> &meth_next,
@@ -1795,9 +1795,6 @@ mcmc_estimate_posterior(const bool VERBOSE, const size_t mh_max_iterations,
                         const param_set &ps,
                         vector<vector<size_t> > &sampled_states,
                         vector<vector<double> > &probs_table) {
-
-  const size_t n_nodes = subtree_sizes.size();
-  const size_t n_sites = sampled_states.size();
 
   pair_state logG(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
   logG.make_logs();

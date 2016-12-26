@@ -249,15 +249,6 @@ meth_to_posterior(const vector<vector<double> > &meth_table,
   }
 }
 
-
-static bool
-has_same_species_order(const PhyloTreePreorder &the_tree,
-                       const vector<string> &meth_table_species) {
-  vector<string> leaf_names;
-  the_tree.get_leaf_names(leaf_names);
-  return leaf_names == meth_table_species;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 /////////////  !!! ADS: CODE ABOVE IS TEMPORARY ////////////////////////////////
@@ -1265,80 +1256,6 @@ write_patterns(std::ostream &out,
         << patterns[i] << endl;
   }
 }
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////// PHYLOTREEPREORDER HELPERS ///////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-static void
-subtree_sizes_to_leaves_preorder(const vector<size_t> &subtree_sizes,
-                                 vector<size_t> &leaves_preorder) {
-  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
-    if (subtree_sizes[i] == 1) {
-      leaves_preorder.push_back(i);
-    }
-  }
-}
-
-
-bool
-is_binary(const vector<size_t> &subtree_sizes) {
-  return (subtree_sizes[0] ==
-          1 + subtree_sizes[1] + subtree_sizes[subtree_sizes[1]+1]);
-}
-
-
-static void
-get_node_degrees(const vector<size_t> &subtree_sizes,
-                 const size_t tree_start,
-                 vector<size_t> &degrees) {
-  if (subtree_sizes[tree_start] == 1) {
-    degrees[tree_start] = 1;
-  } else {
-    size_t count = 1;
-    if (tree_start > 0)
-      degrees[tree_start] = 1;
-    while (count < subtree_sizes[tree_start]) {
-      size_t next_child = tree_start + count;
-      get_node_degrees(subtree_sizes, next_child, degrees);
-      count += subtree_sizes[next_child];
-      degrees[tree_start] += 1;
-    }
-    assert (count == subtree_sizes[tree_start]);
-  }
-}
-
-
-static void
-get_degrees(const vector<size_t> &subtree_sizes,
-            vector<size_t> &degrees) {
-  degrees = vector<size_t>(subtree_sizes.size(), 0);
-  get_node_degrees(subtree_sizes, 0, degrees);
-}
-
-
-bool
-is_semi_binary(const vector<size_t> &degrees) {
-  bool semi_binary = (degrees[0] ==2 || degrees[0] == 3);
-  size_t i = 1;
-  while (semi_binary && i < degrees.size()) {
-    semi_binary = (degrees[i] ==1 || degrees[i] ==3);
-    ++i;
-  }
-  return semi_binary;
-}
-
-size_t
-leafsize(const vector<size_t> &subtree_sizes) {
-  size_t n_leaf = 0;
-  for (size_t i = 0; i < subtree_sizes.size(); ++i) {
-    if (subtree_sizes[i] == 1)
-      ++n_leaf;
-  }
-  return n_leaf;
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
