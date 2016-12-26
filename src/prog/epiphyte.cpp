@@ -1893,7 +1893,7 @@ update_rate(const double TOL,
                           frac*sign(prev_deriv) + prev_params[1] < TOL)) {
       frac = frac/2;
     }
-    new_params[1] = prev_params[1] + frac*(prev_deriv/denom); //rate0
+    new_params[1] = prev_params[1] + frac*sign(prev_deriv); //rate0
     collect_transition_matrices_deriv(new_params[1], g0, g1, Ts,
                                       time_trans_mats, combined_trans_mats,
                                       combined_trans_mats_drate,
