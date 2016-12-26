@@ -1510,7 +1510,7 @@ update_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                               prev_ps.rate0, param_set::tolerance)) {
       frac = frac/2;
     }
-    ps.rate0 = prev_ps.rate0 + frac*(prev_deriv/denom);
+    ps.rate0 = prev_ps.rate0 + frac*sign(prev_deriv);
     get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
 
     objective_rate(subtree_sizes, ps, triad_weights, start_weights,
