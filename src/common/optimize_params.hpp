@@ -28,27 +28,27 @@ class pair_state;
 
 double
 log_likelihood(const std::vector<size_t> &subtree_sizes, const param_set &ps,
-               const pair_state &root_weights,
-               const std::vector<pair_state > &start_weights,// treesize x 2 x 2
-               const std::vector<triple_state> &triad_weights); // treesize x 2 x 2 x 2
+               const std::pair<double, double> &root_start_counts,
+               const pair_state &root_counts,
+               const std::vector<pair_state > &start_counts,// treesize x 2 x 2
+               const std::vector<triple_state> &triad_counts); // treesize x 2 x 2 x 2
 
 void
 optimize_params(const bool VERBOSE, const std::vector<size_t> &subtree_sizes,
-                const std::vector<size_t> &reset_points,
-                const std::pair<double, double> &root_start_weights,
-                const pair_state &root_weights,
-                const std::vector<pair_state> &start_weights,
-                const std::vector<triple_state> &triad_weights, param_set &ps);
+                const std::pair<double, double> &root_start_counts,
+                const pair_state &root_counts,
+                const std::vector<pair_state> &start_counts,
+                const std::vector<triple_state> &triad_counts, param_set &ps);
 
 void
 max_likelihood_pi0(const bool VERBOSE,
-                   const std::pair<double, double> &root_weights,
+                   const std::pair<double, double> &root_counts,
                    param_set &ps);
 
 void
 max_likelihood_horiz(const bool VERBOSE, const std::vector<size_t> &subtree_sizes,
-                     const pair_state &root_weights,
-                     const std::vector<triple_state> &triad_weights,
+                     const pair_state &root_counts,
+                     const std::vector<triple_state> &triad_counts,
                      param_set &ps);
 
 void

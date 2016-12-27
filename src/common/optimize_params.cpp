@@ -51,6 +51,8 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
   vector<triple_state> GP;
   get_transition_matrices(ps, P, GP);
 
+  // ADS: need to use the root_start_counts here!!!!!!!!!!!!!
+
   double llk =
     (root_counts(0, 0)*log(ps.g0) + root_counts(0, 1)*log(1.0 - ps.g0) +
      root_counts(1, 0)*log(1.0 - ps.g1) + root_counts(1, 1)*log(ps.g1));
@@ -366,6 +368,7 @@ max_likelihood_pi0(const bool VERBOSE,
                    param_set &ps) {
   ps.pi0 = root_start_counts.first/(root_start_counts.first +
                                     root_start_counts.second);
+  // ADS: needs to be improved to use more information
   if (VERBOSE)
     cerr << "[max_likelihood_pi0: pi0=" << ps.pi0 << ']' << endl;
 }
@@ -373,7 +376,6 @@ max_likelihood_pi0(const bool VERBOSE,
 
 void
 optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
-                const vector<size_t> &reset_points,
                 const pair<double, double> &root_start_counts,
                 const pair_state &root_counts,
                 const vector<pair_state> &start_counts,
