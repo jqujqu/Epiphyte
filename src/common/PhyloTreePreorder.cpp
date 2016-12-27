@@ -69,6 +69,23 @@ PhyloTreePreorder::get_leaf_names(const PhyloTree::PTNode &node,
 }
 
 void
+PhyloTreePreorder::get_node_names(const PhyloTree::PTNode &node,
+                                  vector<string> &node_names) const {
+  node_names.push_back(node.name);
+  for (size_t i = 0; i < node.child.size(); ++i)
+    get_node_names(node.child[i], node_names);
+}
+
+void
+PhyloTreePreorder::assign_missing_node_names(PhyloTree::PTNode &node,
+                                             size_t count) {
+  if (node.name.empty())
+    node.name = "node_" + std::to_string(count++);
+  for (size_t i = 0; i < node.child.size(); ++i)
+    assign_missing_node_names(node.child[i], count);
+}
+
+void
 PhyloTreePreorder::set_branch_lengths(PhyloTree::PTNode &node,
                                       vector<double> &branch_lengths) {
   node.branch_length = branch_lengths[0];

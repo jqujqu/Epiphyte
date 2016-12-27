@@ -42,7 +42,15 @@ public:
   get_leaf_names(vector<string> &names) const {
     get_leaf_names(root, names);
   };
+  void
+  get_node_names(vector<string> &names) const {
+    get_node_names(root, names);
+  };
 
+  void
+  assign_missing_node_names() {
+    assign_missing_node_names(root, 0);
+  }
   void
   set_branch_lengths(vector<double> branch_lengths) {
     set_branch_lengths(root, branch_lengths);
@@ -59,10 +67,15 @@ private:
   get_leaf_names(const PhyloTree::PTNode &node,
                  vector<string> &names) const;
   void
+  get_node_names(const PhyloTree::PTNode &node,
+                 vector<string> &names) const;
+  void
   set_branch_lengths(PhyloTree::PTNode &node,
                      vector<double> &branch_lengths);
+  void
+  assign_missing_node_names(PhyloTree::PTNode &node,
+                            size_t count);
 };
-
 
 void
 get_parent_id(const std::vector<size_t> &subtree_sizes,
@@ -71,7 +84,6 @@ get_parent_id(const std::vector<size_t> &subtree_sizes,
 bool
 has_same_species_order(const PhyloTreePreorder &the_tree,
                        const std::vector<std::string> &species_names);
-
 
 inline bool
 is_root(const size_t node_id) {return node_id == 0;}
