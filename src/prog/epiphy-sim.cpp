@@ -46,9 +46,11 @@ using std::string;
 using std::vector;
 using std::endl;
 using std::cerr;
+using std::ostream_iterator;
 
 using std::max;
 using std::min;
+using std::pair;
 
 
 static size_t
@@ -75,25 +77,26 @@ public:
     dis = std::uniform_real_distribution<>(0, 1);
     std::random_device rd;
     gen = std::mt19937_64(rd());
-    u_gvn_parent_u = P(0, 0)/max(1.0, P(0, 0) + P(0, 1));
-    u_gvn_parent_m = P(1, 0)/max(1.0, P(1, 0) + P(1, 1));
+    m_gvn_parent_u = P(0, 1)/max(1.0, P(0, 0) + P(0, 1));
+    m_gvn_parent_m = P(1, 1)/max(1.0, P(1, 0) + P(1, 1));
   }
-  bool operator()(const bool parent_is_u) const {
-    return dis(gen) < (parent_is_u ? u_gvn_parent_u : u_gvn_parent_m);
+  bool operator()(const bool parent_is_m) const {
+    return dis(gen) < (parent_is_m ? m_gvn_parent_m : m_gvn_parent_u);
   }
   string tostring() const {
     std::ostringstream oss;
     oss << std::setprecision(3);
+    // organized set to show the "G=(g0, g1)" order
     oss << '['
-        << u_gvn_parent_u << ',' << 1.0 - u_gvn_parent_u << "]["
-        << u_gvn_parent_m << ',' << 1.0 - u_gvn_parent_m << ']';
+        << 1.0 - m_gvn_parent_u << ',' << m_gvn_parent_u << "]["
+        << 1.0 - m_gvn_parent_m << ',' << m_gvn_parent_m << ']';
     return oss.str();
   }
 private:
   mutable std::uniform_real_distribution<> dis;
   mutable std::mt19937_64 gen;
-  double u_gvn_parent_u;
-  double u_gvn_parent_m;
+  double m_gvn_parent_u;
+  double m_gvn_parent_m;
 };
 
 std::ostream&
@@ -109,34 +112,35 @@ public:
     std::random_device rd;
     gen = std::mt19937_64(rd());
 
-    u_gvn_left_u_par_u = GP(0, 0, 0)/max(1.0, GP(0, 0, 0) + GP(0, 0, 1));
-    u_gvn_left_u_par_m = GP(0, 1, 0)/max(1.0, GP(0, 1, 0) + GP(0, 1, 1));
-    u_gvn_left_m_par_u = GP(1, 0, 0)/max(1.0, GP(1, 0, 0) + GP(1, 0, 1));
-    u_gvn_left_m_par_m = GP(1, 1, 0)/max(1.0, GP(1, 1, 0) + GP(1, 1, 1));
+    m_gvn_left_u_par_u = GP(0, 0, 1)/max(1.0, GP(0, 0, 0) + GP(0, 0, 1));
+    m_gvn_left_u_par_m = GP(0, 1, 1)/max(1.0, GP(0, 1, 0) + GP(0, 1, 1));
+    m_gvn_left_m_par_u = GP(1, 0, 1)/max(1.0, GP(1, 0, 0) + GP(1, 0, 1));
+    m_gvn_left_m_par_m = GP(1, 1, 1)/max(1.0, GP(1, 1, 0) + GP(1, 1, 1));
   }
-  bool operator()(const bool left_is_u, const bool par_is_u) const {
-    return dis(gen) < (left_is_u ?
-                       (par_is_u ? u_gvn_left_u_par_u : u_gvn_left_u_par_m) :
-                       (par_is_u ? u_gvn_left_m_par_u : u_gvn_left_m_par_m));
+  bool operator()(const bool left_is_m, const bool par_is_m) const {
+    // the ">" below is because the "true" value is for methylated
+    return dis(gen) < (left_is_m ?
+                       (par_is_m ? m_gvn_left_m_par_m : m_gvn_left_m_par_u) :
+                       (par_is_m ? m_gvn_left_u_par_m : m_gvn_left_u_par_u));
   }
   string tostring() const {
     std::ostringstream oss;
     oss << std::setprecision(3);
     oss << '['
-        << u_gvn_left_u_par_u << ',' << 1.0 - u_gvn_left_u_par_u << "]["
-        << u_gvn_left_u_par_m << ',' << 1.0 - u_gvn_left_u_par_m << "]\n["
-        << u_gvn_left_m_par_u << ',' << 1.0 - u_gvn_left_m_par_u << "]["
-        << u_gvn_left_m_par_m << ',' << 1.0 - u_gvn_left_m_par_m << ']';
+        << 1.0 - m_gvn_left_u_par_u << ',' << m_gvn_left_u_par_u << "]["
+        << 1.0 - m_gvn_left_u_par_m << ',' << m_gvn_left_u_par_m << "]\n["
+        << 1.0 - m_gvn_left_m_par_u << ',' << m_gvn_left_m_par_u << "]["
+        << 1.0 - m_gvn_left_m_par_m << ',' << m_gvn_left_m_par_m << ']';
     return oss.str();
   }
 private:
   mutable std::uniform_real_distribution<> dis;
   mutable std::mt19937_64 gen;
 
-  double u_gvn_left_u_par_u;
-  double u_gvn_left_u_par_m;
-  double u_gvn_left_m_par_u;
-  double u_gvn_left_m_par_m;
+  double m_gvn_left_u_par_u;
+  double m_gvn_left_u_par_m;
+  double m_gvn_left_m_par_u;
+  double m_gvn_left_m_par_m;
 };
 
 std::ostream&
@@ -154,13 +158,15 @@ operator<<(std::ostream &out, const two_edge_sampler &tes) {
 static void
 simulate_site_start(const vector<size_t> &subtree_sizes,
                     const vector<single_edge_sampler> &Psamp,
-                    const size_t node_id, vector<bool> &states) {
+                    const size_t node_id,
+                    vector<pair_state> &start_counts, vector<bool> &states) {
   if (!is_leaf(subtree_sizes[node_id])) {
     const bool current_state = states[node_id];
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       states[child_id] = Psamp[child_id](current_state);
-      simulate_site_start(subtree_sizes, Psamp, child_id, states);
+      start_counts[child_id](current_state, states[child_id])++;
+      simulate_site_start(subtree_sizes, Psamp, child_id, start_counts, states);
       count += subtree_sizes[child_id];
     }
   }
@@ -168,23 +174,29 @@ simulate_site_start(const vector<size_t> &subtree_sizes,
 
 static void
 simulate_site_start(const vector<size_t> &subtree_sizes, const param_set &ps,
-                    const vector<single_edge_sampler> &Psamp, vector<bool> &states) {
+                    const vector<single_edge_sampler> &Psamp,
+                    pair<double, double> &root_start_counts,
+                    vector<pair_state> &start_counts,
+                    vector<bool> &states) {
 
   states.resize(subtree_sizes.size());
 
   // sample root at start position
   std::random_device rd;
   std::mt19937_64 gen(rd());
-  states[0] = std::uniform_real_distribution<>(0, 1)(gen) < ps.pi0;
+  states[0] = std::uniform_real_distribution<>(0, 1)(gen) > ps.pi0; // == [< pi1]
 
-  simulate_site_start(subtree_sizes, Psamp, 0, states);
+  root_start_counts.first += !states[0]; // unmeth state count
+  root_start_counts.second += states[0];
+
+  simulate_site_start(subtree_sizes, Psamp, 0, start_counts, states);
 }
-
 
 static void
 simulate_site(const vector<size_t> &subtree_sizes,
               const vector<two_edge_sampler> &GPsamp,
               const vector<bool> &prev_states, const size_t node_id,
+              vector<triple_state> &triad_counts,
               vector<bool> &states) {
 
   if (!is_leaf(subtree_sizes[node_id])) {
@@ -192,22 +204,32 @@ simulate_site(const vector<size_t> &subtree_sizes,
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       states[child_id] = GPsamp[child_id](prev_states[child_id], current_state);
-      simulate_site(subtree_sizes, GPsamp, prev_states, child_id, states);
+      triad_counts[child_id](prev_states[child_id],
+                             current_state, states[child_id])++;
+      simulate_site(subtree_sizes, GPsamp, prev_states, child_id,
+                    triad_counts, states);
       count += subtree_sizes[child_id];
     }
   }
 }
 
+pair_state root_trans;
+
 static void
 simulate_site(const vector<size_t> &subtree_sizes,
               const single_edge_sampler &Gsamp,
               const vector<two_edge_sampler> &GPsamp,
-              const vector<bool> &prev_states, vector<bool> &states) {
+              const vector<bool> &prev_states,
+              pair_state &root_counts,
+              vector<triple_state> &triad_counts,
+              vector<bool> &states) {
 
   states.resize(subtree_sizes.size());
   states[0] = Gsamp(prev_states[0]); // sample root using state to left
 
-  simulate_site(subtree_sizes, GPsamp, prev_states, 0, states);
+  root_counts(prev_states[0], states[0])++;
+
+  simulate_site(subtree_sizes, GPsamp, prev_states, 0, triad_counts, states);
 }
 
 
@@ -217,6 +239,7 @@ int main(int argc, const char **argv) {
 
     bool VERBOSE = false;
     string outfile;
+    string leaf_only_file;
     size_t desert_size = 1000;
     bool independent_sites = false;
 
@@ -229,6 +252,9 @@ int main(int argc, const char **argv) {
     opt_parse.add_opt("desert", 'd',
                       "desert size (default " + std::to_string(1000) + ")",
                       false, desert_size);
+    opt_parse.add_opt("leaf-file", 'L',
+                      "write leaf-only data to this file",
+                      false, leaf_only_file);
     opt_parse.add_opt("output", 'o', "name of output file "
                       "(default: stdout)", true, outfile);
     opt_parse.add_opt("verbose", 'v', "print more run info",
@@ -270,6 +296,8 @@ int main(int argc, const char **argv) {
     vector<string> leaf_names;
     t.get_leaf_names(leaf_names);
 
+    t.assign_missing_node_names();
+
     const size_t n_nodes = t.get_size();
 
     if (VERBOSE)
@@ -299,7 +327,6 @@ int main(int argc, const char **argv) {
         cerr << GPsamp[i] << endl;
     }
 
-
     if (VERBOSE)
       cerr << "[loading sites]" << endl;
     std::ifstream sites_in(cpgs_file.c_str());
@@ -322,26 +349,70 @@ int main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[simulating]" << endl;
 
+    pair<double, double> root_start_counts;
+    pair_state root_counts;
+    vector<pair_state> start_counts(n_nodes);
+    vector<triple_state> triad_counts(n_nodes);
+
     vector<vector<bool> > states(n_sites);
     for (size_t i = 0; i < reset_points.size() - 1; ++i) {
       const size_t start = reset_points[i];
       const size_t end = reset_points[i + 1]; // !!!!
       assert(start < end);
-      simulate_site_start(subtree_sizes, ps, Psamp, states[start]);
+      simulate_site_start(subtree_sizes, ps, Psamp,
+                          root_start_counts, start_counts, states[start]);
       for (size_t pos = start + 1; pos < end; ++pos)
-        simulate_site(subtree_sizes, Gsamp, GPsamp, states[pos - 1], states[pos]);
+        simulate_site(subtree_sizes, Gsamp, GPsamp, states[pos - 1],
+                      root_counts, triad_counts, states[pos]);
     }
 
     vector<size_t> leaves_preorder;
     subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
     std::ofstream out(outfile.c_str());
+    vector<string> node_names;
+    t.get_node_names(node_names);
+    copy(node_names.begin(), node_names.end(),
+         ostream_iterator<string>(out, "\t"));
+    out << endl;
     for (size_t i = 0; i < states.size(); ++i) {
-      out << sites[i].chrom << ':' << sites[i].pos;
+      out << sites[i].chrom << '\t' << sites[i].pos;
       for (size_t j = 0; j < states[i].size(); ++j)
         out << '\t' << states[i][j];
       out << endl;
     }
+
+    if (VERBOSE) {
+      cerr << "root_start_counts:\n"
+           << root_start_counts.first/(root_start_counts.first +
+                                       root_start_counts.second) << endl
+           << "root_counts:\n" << root_counts << endl
+           << "start_counts:\n";
+      copy(start_counts.begin(), start_counts.end(),
+           ostream_iterator<pair_state>(cerr, "\n"));
+      cerr << "triad_counts:\n";
+      copy(triad_counts.begin(), triad_counts.end(),
+           ostream_iterator<triple_state>(cerr, "\n"));
+    }
+
+    if (!leaf_only_file.empty()) {
+      std::ofstream leaf_out(leaf_only_file.c_str());
+
+      vector<string> leaf_names;
+      t.get_leaf_names(leaf_names);
+      copy(leaf_names.begin(), leaf_names.end(),
+           ostream_iterator<string>(leaf_out, "\t"));
+      leaf_out << endl;
+
+      for (size_t i = 0; i < states.size(); ++i) {
+        leaf_out << sites[i].chrom << '\t' << sites[i].pos;
+        for (size_t j = 0; j < states[i].size(); ++j)
+          if (is_leaf(subtree_sizes[j]))
+            leaf_out << '\t' << states[i][j];
+        leaf_out << endl;
+      }
+    }
+
   }
   catch (const SMITHLABException &e) {
     cerr << e.what() << endl;
