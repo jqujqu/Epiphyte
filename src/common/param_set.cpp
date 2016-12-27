@@ -46,11 +46,12 @@ param_set::read(const string &paramfile, PhyloTreePreorder &t) {
   // here is to ensure the format of the file is correct. When
   // parameters are provided and not learned, the tree will be read as
   // usual, from the tree file, but also replicated here
-  in >> t;
-  in >> pi0;
-  in >> rate0;
-  in >> g0;
-  in >> g1;
+  string dummy_label;
+  in >> dummy_label >> t;
+  in >> dummy_label >> pi0;
+  in >> dummy_label >> rate0;
+  in >> dummy_label >> g0;
+  in >> dummy_label >> g1;
 
   // sync the transformed values for brances in parameter set
   vector<double> branches;
@@ -78,12 +79,11 @@ param_set::write(PhyloTreePreorder t, const string &paramfile) {
     branches[i] = -log(1.0 - T[i]);
   t.set_branch_lengths(branches);
 
-  out << t << std::endl;
-  out << pi0 << std::endl;
-  out << rate0 << std::endl;
-  out << g0 << std::endl;
-  out << g1 << std::endl;
-
+  out << "tree\t" << t << std::endl;
+  out << "pi0\t" << pi0 << std::endl;
+  out << "rate0\t" << rate0 << std::endl;
+  out << "g0\t" << g0 << std::endl;
+  out << "g1\t" << g1 << std::endl;
 }
 
 string
@@ -99,4 +99,13 @@ param_set::tostring() const {
     oss << -log(1.0 - T[i]) << ',';
   oss << -log(1.0 - T.back()) << ')';
   return oss.str();
+}
+
+
+void
+param_set::assign_branches(PhyloTreePreorder &t) const {
+  vector<double> branches(T.size());
+  for (size_t i = 0; i < T.size(); ++i)
+    branches[i] = -log(1.0 - T[i]);
+  t.set_branch_lengths(branches);
 }
