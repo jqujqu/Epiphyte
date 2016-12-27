@@ -27,7 +27,6 @@
 #include <fstream>
 #include <numeric>
 #include <sstream>
-#include <random>
 #include <iomanip>
 
 #include "OptionParser.hpp"
@@ -50,10 +49,12 @@ using std::pair;
 using std::max;
 using std::min;
 
+#include <random>
+using std::uniform_real_distribution;
 
-static bool
+template <class T> bool
 parse_line(const string &line,
-           vector<MSite> &sites, vector<vector<bool> > &states) {
+           vector<MSite> &sites, vector<vector<T> > &states) {
 
   std::istringstream iss(line);
 
@@ -61,25 +62,32 @@ parse_line(const string &line,
   if (!(iss >> sites.back().chrom >> sites.back().pos))
     return false;
 
-  states.push_back(vector<bool>(std::istream_iterator<bool>(iss),
-                                std::istream_iterator<bool>()));
+  states.push_back(vector<T>(std::istream_iterator<T>(iss),
+                             std::istream_iterator<T>()));
 
   return true;
 }
 
-static void
+template <class T> void
 read_meth_table(const string &table_file,
                 vector<MSite> &sites,
-                vector<vector<bool> > &states) {
+                vector<string> &species_names,
+                vector<vector<T> > &states) {
 
   std::ifstream table_in(table_file.c_str());
   if (!table_in)
     throw std::runtime_error("bad table file: " + table_file);
 
   string line;
+  getline(table_in, line);
+  std::istringstream iss(line);
+  copy(std::istream_iterator<string>(iss), std::istream_iterator<string>(),
+       std::back_inserter(species_names));
+
   while (getline(table_in, line))
     if (line[0] != '#')
-      if (!parse_line(line, sites, states))
+      if (!parse_line(line, sites, states) ||
+          states.back().size() != species_names.size())
         throw std::runtime_error("bad table file line: " + line);
 }
 
@@ -91,13 +99,12 @@ distance(const MSite &a, const MSite &b) {
 
 
 static void
-separate_regions(const size_t desert_size,
-                 vector<MSite> &sites, vector<size_t> &reset_points) {
-  reset_points.push_back(0);
-  for (size_t i = 1; i < sites.size(); ++i)
-    if (distance(sites[i - 1], sites[i]) > desert_size)
-      reset_points.push_back(i);
-  reset_points.push_back(sites.size());
+separate_regions(const size_t desert_size, vector<MSite> &sites,
+                 vector<pair<size_t, size_t> > &reset_points) {
+  for (size_t i = 0; i < sites.size(); ++i)
+    if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
+      reset_points.push_back(std::make_pair(i, i));
+    else reset_points.back().second = i;
 }
 
 
@@ -112,7 +119,7 @@ static void
 count_triads(const vector<size_t> &subtree_sizes,
              const vector<size_t> &parent_ids,
              const vector<vector<bool> > &tree_state_table,
-             const vector<size_t> &reset_points,
+             const vector<pair<size_t, size_t> > &reset_points,
              vector<triple_state> &triad_counts,
              vector<pair_state> &start_counts,
              pair_state &root_counts,
@@ -122,10 +129,10 @@ count_triads(const vector<size_t> &subtree_sizes,
   start_counts = vector<pair_state>(subtree_sizes.size());
   root_counts = pair_state();
 
-  for (size_t i = 0; i < reset_points.size() - 1; ++i) {
+  for (size_t i = 0; i < reset_points.size(); ++i) {
 
-    const size_t start = reset_points[i];
-    const size_t end = reset_points[i + 1];
+    const size_t start = reset_points[i].first;
+    const size_t end = reset_points[i].second;
 
     root_start_counts.first += !tree_state_table[start][0];
     root_start_counts.second += tree_state_table[start][0];
@@ -136,7 +143,7 @@ count_triads(const vector<size_t> &subtree_sizes,
       start_counts[node_id](parent, curr) += 1.0;
     }
 
-    for (size_t pos = start + 1; pos < end; ++pos) {
+    for (size_t pos = start + 1; pos <= end; ++pos) {
 
       root_counts(tree_state_table[pos - 1][0], tree_state_table[pos][0])++;
 
@@ -210,14 +217,14 @@ int main(int argc, const char **argv) {
       cerr << "pi0, G, lambda and branch are mutually exclusive" << endl;
       return EXIT_SUCCESS;
     }
-    if (flag_sum + test_branch == 0) {
-      cerr << "select one parameter to test" << endl;
-      return EXIT_SUCCESS;
-    }
+    const bool optimize_all = (flag_sum + test_branch) == 0;
     const string meth_table_file(leftover_args.front());
     const string param_file(leftover_args.back());
     /****************** END COMMAND LINE OPTIONS *****************/
 
+    // initialize the random number generator
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
 
     if (VERBOSE)
       cerr << "[reading parameters]" << endl;
@@ -243,14 +250,15 @@ int main(int argc, const char **argv) {
 
     vector<MSite> sites;
     vector<vector<bool> > states;
-    read_meth_table(meth_table_file, sites, states);
+    vector<string> meth_table_species;
+    read_meth_table(meth_table_file, sites, meth_table_species, states);
 
     if (VERBOSE)
       cerr << "==> n_sites=" << states.size() << endl;
 
     if (VERBOSE)
       cerr << "[separating by deserts]" << endl;
-    vector<size_t> reset_points;
+    vector<pair<size_t, size_t> > reset_points;
     separate_regions(desert_size, sites, reset_points);
     if (VERBOSE)
       cerr << "==> n_resets=" << reset_points.size() << endl;
@@ -280,16 +288,23 @@ int main(int argc, const char **argv) {
     param_set optimized_ps(ps);
 
     if (test_pi0) {
+      // sample arbitrary value
+      optimized_ps.pi0 = std::uniform_real_distribution<>(0.0, 1.0)(gen);
       if (VERBOSE)
-        cerr << "optimizing pi0" << endl;
+        cerr << "optimizing pi0" << endl
+             << "initial params: " << optimized_ps << endl;
       max_likelihood_pi0(VERBOSE, root_start_counts, optimized_ps);
       if (VERBOSE)
         cerr << optimized_ps << endl;
     }
 
     if (test_G) {
+      // sample arbitrary value (but making it > 0.5)
+      optimized_ps.g0 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+      optimized_ps.g1 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
       if (VERBOSE)
-        cerr << "optimizing G" << endl;
+        cerr << "optimizing G" << endl
+             << "initial params: " << optimized_ps << endl;
       max_likelihood_horiz(VERBOSE, subtree_sizes,
                            root_counts, triad_counts, optimized_ps);
       if (VERBOSE)
@@ -297,8 +312,12 @@ int main(int argc, const char **argv) {
     }
 
     if (test_lambda) {
+      // sample arbitrary value
+      // ADS: is this the right way to get a simulated value???
+      optimized_ps.rate0 = std::uniform_real_distribution<>(0.0, 1.0)(gen);
       if (VERBOSE)
-        cerr << "optimizing lambda" << endl;
+        cerr << "optimizing lambda" << endl
+             << "initial params: " << optimized_ps << endl;
       max_likelihood_rate(VERBOSE, subtree_sizes,
                           start_counts, triad_counts, optimized_ps);
       if (VERBOSE)
@@ -306,10 +325,21 @@ int main(int argc, const char **argv) {
     }
 
     if (test_branch > 0) {
+      // ADS: we need a way to sample a random branch
       if (VERBOSE)
         cerr << "optimizing branch: " << test_branch << endl;
       max_likelihood_branch(VERBOSE, subtree_sizes, test_branch,
                             start_counts, triad_counts, optimized_ps);
+    }
+
+    if (optimize_all) {
+      if (VERBOSE)
+        cerr << "optimizing all parameters" << endl;
+      optimize_params(VERBOSE, subtree_sizes,
+                      root_start_counts,
+                      root_counts,
+                      start_counts,
+                      triad_counts, optimized_ps);
     }
 
     optimized_ps.write(t, outfile);
