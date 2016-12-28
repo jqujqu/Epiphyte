@@ -118,13 +118,14 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
 static void
 count_triads(const vector<size_t> &subtree_sizes,
              const vector<size_t> &parent_ids,
-             const vector<vector<bool> > &tree_state_table,
+             const vector<vector<bool> > &tree_states,
              const vector<pair<size_t, size_t> > &reset_points,
-             vector<triple_state> &triad_counts,
-             vector<pair_state> &start_counts,
+             pair<double, double> &root_start_counts,
              pair_state &root_counts,
-             pair<double, double> &root_start_counts) {
+             vector<pair_state> &start_counts,
+             vector<triple_state> &triad_counts) {
 
+  root_start_counts = std::make_pair(0.0, 0.0);
   triad_counts = vector<triple_state>(subtree_sizes.size());
   start_counts = vector<pair_state>(subtree_sizes.size());
   root_counts = pair_state();
@@ -134,23 +135,23 @@ count_triads(const vector<size_t> &subtree_sizes,
     const size_t start = reset_points[i].first;
     const size_t end = reset_points[i].second;
 
-    root_start_counts.first += !tree_state_table[start][0];
-    root_start_counts.second += tree_state_table[start][0];
+    root_start_counts.first += !tree_states[start][0];
+    root_start_counts.second += tree_states[start][0];
 
     for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-      const size_t parent = tree_state_table[start][parent_ids[node_id]];
-      const size_t curr = tree_state_table[start][node_id];
+      const size_t parent = tree_states[start][parent_ids[node_id]];
+      const size_t curr = tree_states[start][node_id];
       start_counts[node_id](parent, curr) += 1.0;
     }
 
     for (size_t pos = start + 1; pos <= end; ++pos) {
 
-      root_counts(tree_state_table[pos - 1][0], tree_state_table[pos][0])++;
+      root_counts(tree_states[pos - 1][0], tree_states[pos][0])++;
 
       for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-        const size_t parent = tree_state_table[pos][parent_ids[node_id]];
-        const size_t prev = tree_state_table[pos - 1][node_id];
-        const size_t curr = tree_state_table[pos][node_id];
+        const size_t parent = tree_states[pos][parent_ids[node_id]];
+        const size_t prev = tree_states[pos - 1][node_id];
+        const size_t curr = tree_states[pos][node_id];
         triad_counts[node_id](prev, parent, curr) += 1.0;
       }
     }
@@ -270,10 +271,10 @@ int main(int argc, const char **argv) {
 
     count_triads(subtree_sizes, parent_ids,
                  states, reset_points,
-                 triad_counts,
-                 start_counts,
+                 root_start_counts,
                  root_counts,
-                 root_start_counts);
+                 start_counts,
+                 triad_counts);
 
     if (VERBOSE) {
       cerr << "root_counts:\n" << root_counts << endl
