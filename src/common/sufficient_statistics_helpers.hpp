@@ -52,9 +52,28 @@ struct pair_state {
     return pair_state(uu + other.uu, um + other.um,
                       mu + other.mu, mm + other.mm);
   }
+  pair_state operator-(const pair_state &other) const {
+    return pair_state(uu - other.uu, um - other.um,
+                      mu - other.mu, mm - other.mm);
+  }
+  pair_state operator*(const pair_state &other) const {
+    return pair_state(uu*other.uu, um*other.um,
+                      mu*other.mu, mm*other.mm);
+  }
+  void operator+=(const pair_state &other) {
+    uu += other.uu; um += other.um;
+    mu += other.mu; mm += other.mm;
+  }
+  void operator/=(const pair_state &other) {
+    uu /= other.uu; um /= other.um;
+    mu /= other.mu; mm /= other.mm;
+  }
   void div(const double x) {
     uu /= x; um /= x;
     mu /= x; mm /= x;
+  }
+  void to_probabilities() {
+    div(uu + um + mu + mm);
   }
   void make_logs() {
     uu = std::log(uu); um = std::log(um);
@@ -106,6 +125,34 @@ struct triple_state {
                         umu + other.umu, umm + other.umm,
                         muu + other.muu, mum + other.mum,
                         mmu + other.mmu, mmm + other.mmm);
+  }
+  triple_state operator-(const triple_state &other) const {
+    return triple_state(uuu - other.uuu, uum - other.uum,
+                        umu - other.umu, umm - other.umm,
+                        muu - other.muu, mum - other.mum,
+                        mmu - other.mmu, mmm - other.mmm);
+  }
+  triple_state operator*(const triple_state &other) const {
+    return triple_state(uuu*other.uuu, uum*other.uum,
+                        umu*other.umu, umm*other.umm,
+                        muu*other.muu, mum*other.mum,
+                        mmu*other.mmu, mmm*other.mmm);
+  }
+  void operator+=(const triple_state &other) {
+    uuu += other.uuu; uum += other.uum;
+    umu += other.umu; umm += other.umm;
+    muu += other.muu; mum += other.mum;
+    mmu += other.mmu; mmm += other.mmm;
+  }
+  void operator/=(const triple_state &other) {
+    uuu /= other.uuu; uum /= other.uum;
+    umu /= other.umu; umm /= other.umm;
+    muu /= other.muu; mum /= other.mum;
+    mmu /= other.mmu; mmm /= other.mmm;
+  }
+  void to_probabilities() {
+    div(uuu + uum + umu + umm +
+        muu + mum + mmu + mmm);
   }
   void div(const double x) {
     uuu /= x; uum /= x;
