@@ -83,7 +83,6 @@ std::random_device rd; //seed generator
 //std::mt19937_64 gen(rd()); //generator initialized with seed from rd
 std::mt19937_64 gen(0); //generator initialized with seed from rd
 
-
 static size_t
 distance(const MSite &a, const MSite &b) {
   return a.chrom == b.chrom ? max(a.pos, b.pos) - min(a.pos, b.pos) :
@@ -116,21 +115,25 @@ estimate_pi0(const vector<vector<double> > &meth) {
 }
 
 static void
-estimate_g0_g1(const vector<vector<double> > &meth,
-               double &g0_est, double &g1_est) {
-  const size_t n_leaves = meth[0].size();
-  double g00 = 0.0, g01 = 0.0, g10 = 0.0, g11 = 0.0;
-  for (size_t i = 0; i < n_leaves; ++i)
-    for (size_t j = 0; j < meth.size() - 1; ++j)
-      if (!missing_meth_value(meth[j][i]) && !missing_meth_value(meth[j + 1][i])) {
-        g00 += (1.0 - meth[j][i])*(1.0 - meth[j + 1][i]);
-        g01 += (1.0 - meth[j][i])*meth[j + 1][i];
-        g10 += meth[j][i]*(1.0 - meth[j + 1][i]);
-        g11 += meth[j][i]*meth[j + 1][i];
-      }
+estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
 
-  g0_est = (g00 + 1.0)/(g01 + g00 + 2.0);
-  g1_est = (g11 + 1.0)/(g11 + g10 + 2.0);
+  static const double pseudo_count = 1.0;
+
+  double g00 = pseudo_count, g01 = pseudo_count;
+  double g10 = pseudo_count, g11 = pseudo_count;
+  for (size_t i = 0; i < meth.size() - 1; ++i)
+    for (size_t j = 0; j < meth[i].size(); ++j) {
+      const double curr = meth[i][j], next = meth[i + 1][j];
+      if (!missing_meth_value(curr) && !missing_meth_value(next)) {
+        g00 += (1.0 - curr)*(1.0 - next);
+        g01 += (1.0 - curr)*next;
+        g10 += curr*(1.0 - next);
+        g11 += curr*next;
+      }
+    }
+
+  g0 = g00/(g01 + g00);
+  g1 = g11/(g11 + g10);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -200,20 +203,23 @@ kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
 
 
 static void
-leaf_to_tree_prob(const vector<size_t> &subtree_sizes,
-                  const vector<vector<double> > &leaf_prob_table,
-                  vector<vector<double> > &tree_prob_table) {
-  // ADS: should the size of
+add_internal_node_probs(const vector<size_t> &subtree_sizes,
+                        vector<vector<double> > &prob_table) {
 
-  // copy leaves first
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_sites = prob_table.size();
+
+  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
+
   vector<size_t> leaves_preorder;
   subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
-  for (size_t i = 0; i < leaf_prob_table.size(); ++i)
-    for (size_t j = 0; j < leaf_prob_table[i].size(); ++j)
-      if (valid_probability(leaf_prob_table[i][j]))
-        tree_prob_table[i][leaves_preorder[j]] =
-          away_from_extremes(leaf_prob_table[i][j], PROBABILITY_GUARD);
+  for (size_t i = 0; i < n_sites; ++i)
+    for (size_t j = 0; j < leaves_preorder.size(); ++j)
+      // ADS: should these be checked for "extremes"???
+      expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
+
+  prob_table.swap(expanded_probs);
 }
 
 
@@ -468,8 +474,8 @@ MH_update_site_start(const vector<size_t> &subtree_sizes,
 
 template <class T> static void
 MH_update(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-          const param_set &ps, const vector<pair<size_t, size_t> > &reset_points,
-          const vector<vector<double> > &probs_table, // only used at leaves
+          const param_set &ps, const vector<vector<double> > &probs_table,
+          const vector<pair<size_t, size_t> > &reset_points,
           vector<vector<T> > &states_table) {
 
   pair_state logG(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
@@ -501,17 +507,18 @@ MH_update(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
 }
 
 
+template <class T>
 static void
 count_triads(const vector<size_t> &subtree_sizes,
              const vector<size_t> &parent_ids,
-             const vector<vector<bool> > &tree_state_table,
+             const vector<vector<T> > &tree_states,
              const vector<pair<size_t, size_t> > &reset_points,
              pair<double, double> &root_start_counts,
              pair_state &root_counts,
              vector<pair_state> &start_counts,
              vector<triple_state> &triad_counts) {
 
-  root_start_counts = make_pair(0.0, 0.0);
+  root_start_counts = std::make_pair(0.0, 0.0);
   triad_counts = vector<triple_state>(subtree_sizes.size());
   start_counts = vector<pair_state>(subtree_sizes.size());
   root_counts = pair_state();
@@ -521,23 +528,23 @@ count_triads(const vector<size_t> &subtree_sizes,
     const size_t start = reset_points[i].first;
     const size_t end = reset_points[i].second;
 
-    root_start_counts.first += !tree_state_table[start][0];
-    root_start_counts.second += tree_state_table[start][0];
+    root_start_counts.first += !tree_states[start][0];
+    root_start_counts.second += tree_states[start][0];
 
     for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-      const size_t parent = tree_state_table[start][parent_ids[node_id]];
-      const size_t curr = tree_state_table[start][node_id];
+      const size_t parent = tree_states[start][parent_ids[node_id]];
+      const size_t curr = tree_states[start][node_id];
       start_counts[node_id](parent, curr) += 1.0;
     }
 
     for (size_t pos = start + 1; pos <= end; ++pos) {
 
-      root_counts(tree_state_table[pos - 1][0], tree_state_table[pos][0])++;
+      root_counts(tree_states[pos - 1][0], tree_states[pos][0])++;
 
       for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-        const size_t parent = tree_state_table[pos][parent_ids[node_id]];
-        const size_t prev = tree_state_table[pos - 1][node_id];
-        const size_t curr = tree_state_table[pos][node_id];
+        const size_t parent = tree_states[pos][parent_ids[node_id]];
+        const size_t prev = tree_states[pos - 1][node_id];
+        const size_t curr = tree_states[pos][node_id];
         triad_counts[node_id](prev, parent, curr) += 1.0;
       }
     }
@@ -557,8 +564,7 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
                   const pair<double, double> &root_start_counts,
                   const pair_state &root_counts,
                   const vector<pair_state> &start_counts,
-                  const vector<triple_state> &triad_counts,
-                  param_set &ps, PhyloTreePreorder &t) {
+                  const vector<triple_state> &triad_counts, param_set &ps) {
 
   // one M-step: optimize parameters
   double diff = std::numeric_limits<double>::max();
@@ -568,8 +574,15 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
            << ps << endl;
 
     param_set prev_ps(ps);
-    optimize_params(VERBOSE, subtree_sizes, root_start_counts,
-                    root_counts, start_counts, triad_counts, ps);
+    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id)
+      max_likelihood_branch(VERBOSE, subtree_sizes, node_id,
+                            start_counts, triad_counts, ps);
+
+    max_likelihood_rate(VERBOSE, subtree_sizes, start_counts, triad_counts, ps);
+
+    max_likelihood_pi0(VERBOSE, root_start_counts, ps);
+
+    max_likelihood_horiz(VERBOSE, subtree_sizes, root_counts, triad_counts, ps);
 
     diff = param_set::absolute_difference(ps, prev_ps); // convergence criteria
   }
@@ -579,16 +592,15 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
 template <class T>
 static void
 expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
-                 const size_t max_app_iter,
                  const vector<size_t> &subtree_sizes,
                  const vector<size_t> &parent_ids,
+                 const vector<vector<double> > &tree_probs,
                  const vector<pair<size_t, size_t> > &reset_points,
                  const param_set &ps,
                  pair<double, double> &root_start_counts,
                  pair_state &root_counts,
                  vector<pair_state> &start_counts,
                  vector<triple_state> &triad_counts,
-                 vector<vector<double> > &tree_prob_table, // only use leaf vals?
                  vector<vector<T> > &sampled_states) {
 
   const size_t n_nodes = subtree_sizes.size();
@@ -596,6 +608,7 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
   root_start_counts = make_pair(0.0, 0.0);
   triad_counts = vector<triple_state>(n_nodes);
   start_counts = vector<pair_state>(n_nodes);
+  root_counts = pair_state();
   vector<triple_state> triad_counts_prev(n_nodes);
 
   bool converged = false;
@@ -615,15 +628,15 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
     // update the counts with current iteration samples
     root_start_counts.first += root_start_counts_samp.first;
     root_start_counts.second += root_start_counts_samp.second;
-    root_counts = root_counts + root_counts_samp;
+    root_counts += root_counts_samp;
     for (size_t i = 0; i < triad_counts.size(); ++i) {
-      triad_counts[i] = triad_counts[i] + triad_counts_samp[i];
-      start_counts[i] = start_counts[i] + start_counts_samp[i];
+      triad_counts[i] += triad_counts_samp[i];
+      start_counts[i] += start_counts_samp[i];
     }
 
-    // check how far the proportions have moved
-    // only the triad_counts are used for convergence testing; the
-    // start and root counts do not contribute enough to check
+    // check how far the proportions have moved; only the triad_counts
+    // used for convergence testing; the start and root counts do not
+    // contribute enough to check
     vector<double> divergence;
     kl_divergence(triad_counts_prev, triad_counts, divergence);
 
@@ -632,9 +645,9 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
       *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
 
     if (!converged) // take next sample (all sites)
-      // tree_prob_table only used at leaf nodes (to sample leaf states)
-      MH_update(subtree_sizes, parent_ids, ps, reset_points,
-                tree_prob_table, sampled_states);
+      // tree_probs only used at leaf nodes (to sample leaf states)
+      MH_update(subtree_sizes, parent_ids, ps, tree_probs, reset_points,
+                sampled_states);
 
     // retain previous values for comparison with next iteration
     triad_counts_prev = triad_counts; // ADS: should this be a swap?
@@ -650,12 +663,68 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
     triad_counts[i].div(mh_iter);
   }
 
-  if (VERBOSE) {
-    cerr << "[MH iterations=" << mh_iter << ']' << endl
-         << "triad_counts:" << endl;
-    copy(triad_counts.begin(), triad_counts.end(),
-         ostream_iterator<triple_state>(cerr, "\n"));
+  if (VERBOSE)
     // ADS: should we print more summary statistics here?
+    cerr << "[MH iterations=" << mh_iter << ']' << endl;
+}
+
+
+template <class T>
+static void
+expectation_maximization(const bool VERBOSE,
+                         const size_t em_max_iterations,
+                         const size_t opt_max_iterations,
+                         const size_t mh_max_iterations,
+                         const vector<size_t> &subtree_sizes,
+                         const vector<size_t> &parent_ids,
+                         const vector<vector<double> > &tree_probs,
+                         const vector<pair<size_t, size_t> > &reset_points,
+                         param_set &params,
+                         pair<double, double> &root_start_counts,
+                         pair_state &root_counts,
+                         vector<pair_state> &start_counts,
+                         vector<triple_state> &triad_counts,
+                         vector<vector<T> > &sampled_states) {
+
+  bool em_converged = false;
+  for (size_t iter = 0; iter < em_max_iterations && !em_converged; ++iter) {
+
+    if (VERBOSE)
+      cerr << endl << "====================[EM ITERATION=" << iter
+           << "]=======================" << endl;
+
+    const param_set prev_ps(params);
+    // next line is optional, just for consistency with older version.
+    expectation_step(VERBOSE, mh_max_iterations, subtree_sizes, parent_ids,
+                     tree_probs, reset_points, params, root_start_counts,
+                     root_counts, start_counts, triad_counts, sampled_states);
+
+    if (VERBOSE) {
+      cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
+      for (size_t i = 0; i < triad_counts.size(); ++i)
+        cerr << triad_counts[i] << "\tnode=" << i << endl;
+    }
+
+    /****************** M-step: optimize parameters ************************/
+    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                      root_start_counts, root_counts, start_counts,
+                      triad_counts, params);
+    if (VERBOSE)
+      cerr << "[M-step iter=" << iter << ", params:" << endl
+           << params << ']' << endl;
+
+    const double diff = param_set::absolute_difference(prev_ps, params);
+
+    const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
+
+    em_converged = (diff < param_set::tolerance*params.T.size());
+
+    if (VERBOSE)
+      cerr << "[EM iter=" << iter << ", "
+           << "log_lik=" << llk << ", "
+           << "delta=" << diff << ", "
+           << "conv=" << em_converged << ']' << endl;
   }
 }
 
@@ -664,23 +733,23 @@ template <class T> static void
 mcmc_estimate_posterior(const bool VERBOSE, const size_t mh_max_iterations,
                         const vector<size_t> &subtree_sizes,
                         const vector<size_t> &parent_ids,
+                        const vector<vector<double> > &tree_probs,
                         const vector<pair<size_t, size_t> > &reset_points,
                         const param_set &ps,
-                        vector<vector<T> > &sampled_states, // has value to start
-                        vector<vector<double> > &probs_table, // ADS: values for each leaf ???????
+                        vector<vector<T> > &sampled_states,
                         vector<vector<double> > &posteriors) {
 
   const size_t n_nodes = subtree_sizes.size();
 
-  posteriors = vector<vector<double> >(probs_table.size(),
+  posteriors = vector<vector<double> >(tree_probs.size(),
                                        vector<double>(n_nodes, 0.0));
 
   for (size_t mh_iter = 0; mh_iter < mh_max_iterations; ++mh_iter) {
     if (VERBOSE)
       cerr << "\r[inside mcmc_estimate_posterior (iter=" << mh_iter << ")]";
 
-    MH_update(subtree_sizes, parent_ids, ps, reset_points,
-              probs_table, sampled_states);
+    MH_update(subtree_sizes, parent_ids, ps, tree_probs, reset_points,
+              sampled_states);
 
     for (size_t i = 0; i < sampled_states.size(); ++i)
       for (size_t j = 0; j < sampled_states[i].size(); ++j)
@@ -706,6 +775,7 @@ static void
 local_parsimony(const vector<size_t> &subtree_sizes,
                 const vector<size_t> &parent_ids,
                 const size_t node_id, string &state) {
+
   if (!is_leaf(subtree_sizes[node_id])) {
 
     for (size_t count = 1; count < subtree_sizes[node_id];) {
@@ -734,26 +804,26 @@ local_parsimony(const vector<size_t> &subtree_sizes,
   }
 }
 
+
 static void
 tree_prob_to_states(const vector<size_t> &subtree_sizes,
                     const vector<size_t> &parent_ids,
-                    const vector<vector<double> > &tree_prob_table,
+                    const vector<vector<double> > &tree_probs,
                     const double cutoff, vector<string> &states) {
 
-  const size_t n_nodes = tree_prob_table[0].size();
-  const size_t n_sites= tree_prob_table.size();
+  const size_t n_nodes = tree_probs[0].size();
+  const size_t n_sites= tree_probs.size();
 
   for (size_t i = 0; i < n_sites; ++i) {
     string state;
     for (size_t j = 0; j < n_nodes; ++j)
-      state += (tree_prob_table[i][j] <= cutoff ? '1' : '0');
+      state += (tree_probs[i][j] <= cutoff ? '1' : '0');
     states.push_back(state);
   }
 
   for (size_t i = 0; i < n_sites; ++i)
     local_parsimony(subtree_sizes, parent_ids, 0, states[i]);
 }
-
 
 
 template <class T> void
@@ -811,9 +881,9 @@ build_domain(const size_t minCpG, const size_t desert_size,
     vector<GenomicRegion> merging_domains;
     size_t skip = 0;
     for (size_t j = 0; j < domains.size(); ++j) {
-      if (domains[j].get_score() <= i) {
+      if (domains[j].get_score() <= i)
         skip += domains[j].get_score();
-      } else {
+      else {
         if (merging_domains.size() > 0 &&
             domains[j].get_name() == merging_domains.back().get_name() &&
             domains[j].distance(merging_domains.back()) < desert_size) {
@@ -821,7 +891,8 @@ build_domain(const size_t minCpG, const size_t desert_size,
                                            domains[j].get_score() + skip);
           merging_domains.back().set_end(domains[j].get_end());
           skip = 0;
-        } else {
+        }
+        else {
           merging_domains.push_back(domains[j]);
           skip = 0;
         }
@@ -864,31 +935,31 @@ main(int argc, const char **argv) {
 
   try {
 
-    static const size_t max_app_iter = 100;        //MAGIC
-    static const size_t mh_max_iterations = 500;   //MAGIC
-
     size_t desert_size = 1000;
     size_t minCpG = 10;                            //MAGIC
     size_t min_sites_per_frag = 5;  // ADS: probably should be a post-filter step
-    size_t MAXITER = 100;           // iterations inside the M-step
-    size_t EMMAXITER = 30;          //rounds of EM iterations
+
+    size_t opt_max_iterations = 100;        // iterations inside the M-step
+    size_t em_max_iterations = 30;          // rounds of EM iterations
+    size_t mh_max_iterations = 2000;         // MAGIC
 
     string outfile;
     string paramfile, outparamfile;
 
     // run mode flags
     bool VERBOSE = false;
-    bool report_posteriors = false;
     bool COMPLETE = false;
 
+    /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "Estimate phylogeny shape "
                            "and methylation state transition rates for "
                            "methylome evolution",
                            "<newick> <hypoprob-tab>");
     opt_parse.add_opt("minCpG", 'm', "minimum observed #CpGs in a block "
                       "(default: " + to_string(minCpG) + ")", false, minCpG);
-    opt_parse.add_opt("maxiter", 'i', "max number of iterations "
-                      "(default: " + to_string(EMMAXITER) + ")", false, EMMAXITER);
+    opt_parse.add_opt("maxiter", 'i', "max EM iterations (default: " +
+                      to_string(em_max_iterations) + ")",
+                      false, em_max_iterations);
     opt_parse.add_opt("complete", 'c', "complete observations",
                       false, COMPLETE);
     opt_parse.add_opt("verbose", 'v', "print more run info "
@@ -899,8 +970,6 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
                       "(default: " + toa(min_sites_per_frag) + ")", false,
                       min_sites_per_frag);
-    opt_parse.add_opt("sites", 's', "write posteriors for each site"
-                      "(when -o is used)", false, report_posteriors);
 
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
@@ -923,7 +992,7 @@ main(int argc, const char **argv) {
     }
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
-    /********************* END COMMAND LINE OPTIONS ***************************/
+    /******************** END COMMAND LINE OPTIONS ********************/
 
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
@@ -935,251 +1004,167 @@ main(int argc, const char **argv) {
     PhyloTreePreorder t;
     tree_in >> t;
 
-    vector<size_t> subtree_sizes, node_degrees;
-    vector<double> branches;
+    vector<size_t> subtree_sizes;
     t.get_subtree_sizes(subtree_sizes);
+    vector<double> branches;
     t.get_branch_lengths(branches);
-    get_degrees(subtree_sizes, node_degrees);
 
-    vector<string> node_names;
     t.assign_missing_node_names();
+    vector<string> node_names;
     t.get_node_names(node_names);
 
-    if (!is_semi_binary(node_degrees))
-      throw SMITHLABException("invalid tree structure");
+    const size_t n_nodes = subtree_sizes.size();
     const size_t n_leaves = count_leaves(subtree_sizes);
 
     vector<size_t> parent_ids;
     get_parent_id(subtree_sizes, parent_ids);
 
     if (VERBOSE)
-      cerr << "loaded tree (leaves=" << n_leaves << ")" << endl;
+      cerr << "[tree:]\n" << t.tostring() << endl;
 
     /******************** INITIALIZE PARAMETERS *******************************/
-    double pi0 = 0.5; // MAGIC
-    double rate0 = 0.5;// MAGIC
-    double g0 = 0.9;   // MAGIC
-    double g1 = 0.9;  // MAGIC
-
-    param_set init_ps(pi0, rate0, g0, g1);
-
+    param_set initial_params;
     if (!paramfile.empty()) {
-      init_ps.read(paramfile, t);
+      initial_params.read(paramfile, t);
       if (VERBOSE)
-        cerr << "[tree:]\n" << t.tostring() << endl
-             << "[given params:]\n" << init_ps << endl;
+        cerr << "[given params={" << initial_params << "}]" << endl;
     }
     else {
-      // if optimizing params, tree still needed from its own file
+      // ADS: must we assume branch lengths are provided here?
       vector<double> branches;
       t.get_branch_lengths(branches);
-      // ADS: transformation below should be done in the same place as
-      // if tree is read from the param file
       for (size_t i = 0; i < branches.size(); ++i)
-        init_ps.T.push_back(1.0 - 1.0/exp(branches[i]));
+        branches[i] = 1.0 - 1.0/exp(branches[i]);
+      const double pi0 = 0.5;   // MAGIC
+      const double rate0 = 0.5; // MAGIC
+      const double g0 = 0.9;    // MAGIC
+      const double g1 = 0.9;    // MAGIC
+      initial_params = param_set(pi0, rate0, g0, g1, branches);
       if (VERBOSE)
-        cerr << "[tree:]\n" << t.tostring() << endl
-             << "[starting_params={" << init_ps << "}]" << endl;
+        cerr << "[starting params={" << initial_params << "}]" << endl;
     }
 
-    const size_t n_nodes = subtree_sizes.size();
+    /******************* READ THE METHYLATION DATA *****************************/
+    if (VERBOSE)
+      cerr << "[reading methylation data (mode="
+           << (COMPLETE ? "complete" : "missing") << ")]" << endl;
+
+    vector<MSite> sites;
+    vector<vector<double> > tree_probs;
+    vector<string> meth_table_species;
+    read_meth_table(meth_table_file, sites, meth_table_species, tree_probs);
+    const size_t n_sites = tree_probs.size();
 
     if (COMPLETE) {
-      if (VERBOSE)
-        cerr << "============ COMPLETE MODE =============" << endl
-             << "[Loading full table]" << endl;
-
-      vector<MSite> sites;
-      vector<string> meth_table_file_species;
-      vector<vector<double> > tree_prob_table;
-      read_meth_table(meth_table_file, sites, meth_table_file_species,
-                      tree_prob_table);
-
-      if (meth_table_file_species.size() != n_nodes) {
+      if (meth_table_species.size() != n_nodes) {
         cerr << "complete data specified but inconsistent tree sizes:" << endl
              << meth_table_file << endl
              << tree_file << endl;
         return EXIT_SUCCESS;
       }
-
-      if (VERBOSE)
-        cerr << "[separating deserts]" << endl;
-      vector<pair<size_t, size_t> > reset_points;
-      separate_regions(desert_size, sites, reset_points);
-      const size_t n_sites = tree_prob_table.size();
-
-      // true counts
-      pair<double, double> root_start_counts;
-      pair_state root_counts;
-      vector<pair_state> start_counts;
-      vector<triple_state> triad_counts;
-
-      vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes, false));
-      sample_initial_states(tree_prob_table, tree_states);
-      count_triads(subtree_sizes, parent_ids, tree_states, reset_points,
-                   root_start_counts, root_counts, start_counts, triad_counts);
-
-
-      if (VERBOSE) {
-        cerr << "-----triad_counts_true------" << endl;
-        for (size_t i = 0; i < triad_counts.size(); ++i)
-          cerr << triad_counts[i];
-      }
-
-      // One M-step: optimize parameters
-      /*M-step: optimize parameters */
-      maximization_step(VERBOSE, MAXITER, subtree_sizes,
-                        root_start_counts, root_counts, start_counts,
-                        triad_counts, init_ps, t);
     }
-    else { /* not complete data */
-      if (VERBOSE)
-        cerr << endl << "========= LEAF (INCOMPLETE DATA) MODE =========" << endl
-             << "[Loading LEAF table]" << endl;
-
-      vector<MSite> sites;
-      vector<vector<double> > leaf_prob_table; // can have missing leaf values
-      vector<string> meth_table_species;
-      read_meth_table(meth_table_file, sites, meth_table_species, leaf_prob_table);
-
-      if (VERBOSE)
-        cerr << "loaded meth table (species="
-             << meth_table_species.size() << ")" << endl;
-
+    else {
       // make sure meth data and tree info is in sync
       if (meth_table_species.size() != n_leaves ||
           !has_same_species_order(t, meth_table_species))
         throw SMITHLABException("inconsistent species counts, names or order");
+      add_internal_node_probs(subtree_sizes, tree_probs);
 
       if (VERBOSE) {
+        cerr << "number of leaf species: " << meth_table_species.size() << endl;
         vector<size_t> species_in_order;
         subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
         for (size_t i = 0; i < species_in_order.size(); ++i)
           cerr << meth_table_species[i] << "\t" << species_in_order[i] << endl;
         cerr << "[total_sites=" << sites.size() << "]" << endl;
       }
+    }
 
-      if (VERBOSE)
-        cerr << "[separating deserts]" << endl;
-      vector<pair<size_t, size_t> > reset_points;
-      separate_regions(desert_size, sites, reset_points);
-      const size_t n_sites = sites.size();
+    if (VERBOSE)
+      cerr << "[separating deserts]" << endl;
+    vector<pair<size_t, size_t> > reset_points;
+    separate_regions(desert_size, sites, reset_points);
+    if (VERBOSE)
+      cerr << "number of blocks: " << reset_points.size() << endl;
 
-      // initialize parameters based on leaf values
-      double g0_est = 0.0, g1_est = 0.0;
-      estimate_g0_g1(leaf_prob_table, g0_est, g1_est);
-      const double pi0_est = estimate_pi0(leaf_prob_table);
+    if (paramfile.empty()) {
+      // heuristic starting points for G and pi
+      estimate_g0_g1(tree_probs, initial_params.g0, initial_params.g1);
+      initial_params.pi0 = estimate_pi0(tree_probs);
+    }
 
-      if (VERBOSE)
-        cerr << "[post-filter=" << n_sites << "; blocks="
-             << reset_points.size() << "]" << endl;
+    // true counts
+    pair<double, double> root_start_counts;
+    pair_state root_counts;
+    vector<pair_state> start_counts;
+    vector<triple_state> triad_counts;
 
-      /* heuristic estimates for a few parameters*/
-      if (paramfile.empty()) {
-        init_ps.pi0 = pi0_est;
-        init_ps.g0 = g0_est;
-        init_ps.g1 = g1_est;
-      }
+    vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes, false));
+    // for complete data, the sampling will have probability 1 or 0
+    sample_initial_states(tree_probs, tree_states);
 
-      /* tree_prob_table_full has missing data filled */
-      vector<vector<double> > tree_probs(sites.size(),
-                                         vector<double>(n_nodes, -1.0));
-      // ADS: this should probably be done as soon as the leaf states
-      // are read.
-      leaf_to_tree_prob(subtree_sizes, leaf_prob_table, tree_probs);
+    param_set params(initial_params);
 
-      // summary statistics
-      pair<double, double> root_start_counts;
-      pair_state root_counts;
-      vector<pair_state> start_counts;
-      vector<triple_state> triad_counts;
-
-      bool em_converged = !paramfile.empty(); // params fixed => converged
-
-      // Initialize "sample" states from the heuristic probabilities
-      vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes));
-      sample_initial_states(tree_probs, tree_states);
-
-      param_set curr_ps(init_ps);
-      for (size_t iter = 0; iter < EMMAXITER && !em_converged; ++iter) {
-
-        if (VERBOSE)
-          cerr << endl << "====================[EM ITERATION=" << iter
-               << "]=======================" << endl;
-
-        const param_set prev_ps(curr_ps);
-        // next line is optional, just for consistency with older version.
-        expectation_step(VERBOSE, mh_max_iterations, max_app_iter,
-                         subtree_sizes, parent_ids, reset_points, curr_ps,
-                         root_start_counts, root_counts,
-                         start_counts, triad_counts,
-                         tree_probs, tree_states);
-
-        if (VERBOSE) {
-          cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
-          for (size_t i = 0; i < triad_counts.size(); ++i)
-            cerr << triad_counts[i] << "\tnode=" << i << endl;
-        }
-
-        /****************** M-step: optimize parameters ************************/
-        maximization_step(VERBOSE, MAXITER, subtree_sizes,
-                          root_start_counts, root_counts, start_counts,
-                          triad_counts, curr_ps, t);
-        if (VERBOSE)
-          cerr << "[M-step iter=" << iter << ", params:" << endl
-               << curr_ps << ']' << endl;
-
-        const double diff = param_set::absolute_difference(prev_ps, curr_ps);
-
-        const double llk = log_likelihood(subtree_sizes, curr_ps, root_start_counts,
-                                          root_counts, start_counts, triad_counts);
-
-        em_converged = (diff < param_set::tolerance*curr_ps.T.size());
-
-        if (VERBOSE)
-          cerr << "[EM iter=" << iter << ", "
-               << "log_lik=" << llk << ", "
-               << "delta=" << diff << ", "
-               << "conv=" << em_converged << ']' << endl;
-      } // end E-M iterations
+    if (COMPLETE) {
+      count_triads(subtree_sizes, parent_ids, tree_states, reset_points,
+                   root_start_counts, root_counts, start_counts, triad_counts);
+      maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                        root_start_counts, root_counts, start_counts,
+                        triad_counts, params);
+    }
+    else {
+      if (paramfile.empty())
+        expectation_maximization(VERBOSE, em_max_iterations, opt_max_iterations,
+                                 mh_max_iterations, subtree_sizes, parent_ids,
+                                 tree_probs, reset_points, params,
+                                 root_start_counts, root_counts,
+                                 start_counts, triad_counts, tree_states);
 
       if (VERBOSE)
         cerr << "[computing posterior probabilities]" << endl;
       vector<vector<double> > posteriors;
       mcmc_estimate_posterior(VERBOSE, mh_max_iterations, subtree_sizes,
-                              parent_ids, reset_points, curr_ps,
-                              tree_states, tree_probs, posteriors);
-
-      init_ps = curr_ps; // final parameters
-
-      // update phylotree with branch lenghts
-      init_ps.assign_branches(t);
+                              parent_ids, tree_probs, reset_points, params,
+                              tree_states, posteriors);
 
       /************************** Output states ********************************/
-      std::ofstream out(outfile.c_str());
-      if (!out) // ADS: crazy to check at end...
-        throw SMITHLABException("bad output file: " + outfile);
-
-      /*build domain*/
+      if (VERBOSE)
+        cerr << "[building domains of contiguous state]" << endl;
       vector<string> states;
       vector<GenomicRegion> domains;
       double cutoff = 0.5; // MAGIC
       tree_prob_to_states(subtree_sizes, parent_ids, tree_probs, cutoff, states);
       build_domain(min_sites_per_frag, desert_size, sites, states, domains);
       if (VERBOSE)
-        cerr << "Built total " << domains.size() << " domains" << endl;
+        cerr << "total domains: " << domains.size() << endl;
 
+      std::ofstream out(outfile.c_str());
+      if (!out)
+        throw SMITHLABException("bad output file: " + outfile);
       copy(domains.begin(), domains.end(),
            ostream_iterator<GenomicRegion>(out, "\n"));
 
       /* output individual sites */
-      if (report_posteriors)
-        write_treeprob_states(subtree_sizes, sites, posteriors,
-                              node_names, outfile);
+      write_treeprob_states(subtree_sizes, sites, posteriors,
+                            node_names, outfile);
+    }
+
+    if (VERBOSE) {
+      cerr << "[sufficient statistics]" << endl;
+      cerr << "root_start_counts:\n"
+           << root_start_counts.first << '\t'
+           << root_start_counts.second << endl
+           << "root_counts:\n" << root_counts << endl
+           << "start_counts:\n";
+      copy(start_counts.begin(), start_counts.end(),
+           ostream_iterator<pair_state>(cerr, "\n"));
+      cerr << "triad_counts:\n";
+      copy(triad_counts.begin(), triad_counts.end(),
+           ostream_iterator<triple_state>(cerr, "\n"));
     }
 
     if (!outparamfile.empty())
-      init_ps.write(t, outparamfile);
+      params.write(t, outparamfile);
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
@@ -1199,18 +1184,6 @@ main(int argc, const char **argv) {
   maximum likelihood calculations. Right now it is only using the
   first site of each block, and at the root.
 
-  (2) Eliminate the optimize_params function from the
-  optimize_params.*pp. This function is actually completely arbitrary,
-  and shouldn't be used, due to the arbitrary order of estimates of
-  parameters. The contents of that function should be in the
-  maximization_step function.
-
-  (3) [DONE] Ensure that the transformation between branch lengths
-  is entirely taken care of inside the param_set class. This should
-  never be seen by readers of this source file. At the same time,
-  likely it should be printed with some notation to remind the user
-  that the verbose output prints transformed values.
-
   (4) Determine whether any states should not have their values
   printed in the final output, due to their distance from any actual
   leaf data making them meaningless.
@@ -1219,12 +1192,12 @@ main(int argc, const char **argv) {
   estimation, as they are so far from any observed data that they just
   waste time.
 
-  (6) Decide whether we need to have the ternary leaf, or if there is
+  (6) Decide whether we need to have the ternary root, or if there is
   enough information to estimate both branches out of it. This would
   mean we have more information than is assumed in the papers that
   show non-identifiability, but I wouldn't be too surprised.
 
-  (7) I'm stull concerned about convergence of the mcmc, and we can
+  (7) I'm still concerned about convergence of the mcmc, and we can
   implement multiple chains without taking too much extra space. We
   can encode many boolean values inside a machine word, and have them
   updated concurrently.
