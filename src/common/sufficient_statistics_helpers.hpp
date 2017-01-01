@@ -73,7 +73,12 @@ struct pair_state {
     mu /= x; mm /= x;
   }
   void to_probabilities() {
-    div(uu + um + mu + mm);
+    const double u_denom = uu + um;
+    uu /= u_denom;
+    um /= u_denom;
+    const double m_denom = mu + mm;
+    mu /= m_denom;
+    mm /= m_denom;
   }
   void make_logs() {
     uu = std::log(uu); um = std::log(um);
@@ -151,8 +156,18 @@ struct triple_state {
     mmu /= other.mmu; mmm /= other.mmm;
   }
   void to_probabilities() {
-    div(uuu + uum + umu + umm +
-        muu + mum + mmu + mmm);
+    const double uu_denom = uuu + uum;
+    uuu /= uu_denom;
+    uum /= uu_denom;
+    const double um_denom = umu + umm;
+    umu /= um_denom;
+    umm /= um_denom;
+    const double mu_denom = muu + mum;
+    muu /= mu_denom;
+    mum /= mu_denom;
+    const double mm_denom = mmu + mmm;
+    mmu /= mm_denom;
+    mmm /= mm_denom;
   }
   void div(const double x) {
     uuu /= x; uum /= x;
@@ -201,6 +216,52 @@ get_transition_matrices_deriv(const param_set &ps,
                               std::vector<triple_state> &GP_dg0,
                               std::vector<triple_state> &GP_dg1,
                               std::vector<triple_state> &GP_dT);
+
+/* The count_triads function resides in the header and not cpp file
+   because it is templated. */
+template <class T>
+static void
+count_triads(const std::vector<size_t> &subtree_sizes,
+             const std::vector<size_t> &parent_ids,
+             const std::vector<std::vector<T> > &tree_states,
+             const std::vector<std::pair<size_t, size_t> > &reset_points,
+             std::pair<double, double> &root_start_counts,
+             pair_state &root_counts,
+             std::vector<pair_state> &start_counts,
+             std::vector<triple_state> &triad_counts) {
+
+  root_start_counts = std::make_pair(0.0, 0.0);
+  triad_counts = std::vector<triple_state>(subtree_sizes.size());
+  start_counts = std::vector<pair_state>(subtree_sizes.size());
+  root_counts = pair_state();
+
+  for (size_t i = 0; i < reset_points.size(); ++i) {
+
+    const size_t start = reset_points[i].first;
+    const size_t end = reset_points[i].second;
+
+    root_start_counts.first += !tree_states[start][0];
+    root_start_counts.second += tree_states[start][0];
+
+    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
+      const size_t parent = tree_states[start][parent_ids[node_id]];
+      const size_t curr = tree_states[start][node_id];
+      start_counts[node_id](parent, curr) += 1.0;
+    }
+
+    for (size_t pos = start + 1; pos <= end; ++pos) {
+
+      root_counts(tree_states[pos - 1][0], tree_states[pos][0])++;
+
+      for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
+        const size_t parent = tree_states[pos][parent_ids[node_id]];
+        const size_t prev = tree_states[pos - 1][node_id];
+        const size_t curr = tree_states[pos][node_id];
+        triad_counts[node_id](prev, parent, curr) += 1.0;
+      }
+    }
+  }
+}
 
 
 #endif
