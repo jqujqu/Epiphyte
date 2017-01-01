@@ -51,9 +51,9 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
   vector<triple_state> GP;
   get_transition_matrices(ps, P, GP);
 
-  // ADS: need to use the root_start_counts here!!!!!!!!!!!!!
-
   double llk =
+    (root_start_counts.first*log(ps.pi0) +
+     root_start_counts.second*log(1.0 - ps.pi0)) + // ADS: is this right?
     (root_counts(0, 0)*log(ps.g0) + root_counts(0, 1)*log(1.0 - ps.g0) +
      root_counts(1, 0)*log(1.0 - ps.g1) + root_counts(1, 1)*log(ps.g1));
 
@@ -66,6 +66,50 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
       }
   return llk;
 }
+
+
+double
+log_likelihood(const vector<size_t> &subtree_sizes,
+               const pair<double, double> &root_start_counts,
+               const pair_state &root_counts,
+               const vector<pair_state> &start_counts, // dim=[treesize x 2 x 2]
+               const vector<triple_state> &triad_counts) { // dim=[treesize x 2 x 2 x 2]
+
+  const double denom = root_start_counts.first + root_start_counts.second;
+  std::pair<double, double> log_pi =
+    std::make_pair(log(root_start_counts.first/denom),
+                   log(root_start_counts.second/denom));
+  pair_state logG(root_counts);
+  logG.to_probabilities();
+  logG.make_logs();
+
+  std::vector<pair_state> logP;
+  std::vector<triple_state> logGP;
+  for (size_t i = 0; i < start_counts.size(); ++i) {
+    logP.push_back(start_counts[i]);
+    logP[i].to_probabilities();
+    logP[i].make_logs();
+    logGP.push_back(triad_counts[i]);
+    logGP[i].to_probabilities();
+    logGP[i].make_logs();
+  }
+
+  double llk =
+    (root_start_counts.first*log_pi.first +
+     root_start_counts.second*log_pi.second) + // ADS: is this right?
+    (root_counts(0, 0)*logG(0, 0) + root_counts(0, 1)*logG(0, 1) +
+     root_counts(1, 0)*logG(1, 0) + root_counts(1, 1)*logG(1, 1));
+
+  for (size_t node = 1; node < subtree_sizes.size(); ++node)
+    for (size_t j = 0; j < 2; ++j)
+      for (size_t k = 0; k < 2; ++k) {
+        llk += start_counts[node](j, k)*logP[node](j, k);
+        for (size_t i = 0; i < 2; ++i)
+          llk += triad_counts[node](i, j, k)*logGP[node](i, j, k);
+      }
+  return llk;
+}
+
 
 static void
 objective_branch(const param_set &ps,
