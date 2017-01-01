@@ -25,11 +25,16 @@ ifndef TREETOOL
 TREETOOL=$(realpath ../adssrc/treetool)
 endif
 
-PROGS = indep-epi-phylo simulation indep-sites-hypo epiphyte epiphy
+ifndef METHPIPE_DIR
+METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
+endif
+
+PROGS = indep-epi-phylo simulation indep-sites-hypo \
+	epiphyte epiphy epiphy-sim epiphy-test
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
-OPTFLAGS = -O2 
+OPTFLAGS = -O2
 DEBUGFLAGS = -g
 LIBS = -lgsl -lgslcblas
 
@@ -42,7 +47,7 @@ CXXFLAGS += $(OPTFLAGS)
 endif
 
 COMMON_DIR = $(realpath ../common)
-INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL}
+INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL} $(METHPIPE_DIR)
 INCLUDEARGS = $(addprefix -I, $(INCLUDEDIRS))
 
 all: $(PROGS)
@@ -54,7 +59,7 @@ all: $(PROGS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(INCLUDEARGS) $(LIBS)
 
 $(PROGS): $(addprefix $(SMITHLAB_CPP)/, GenomicRegion.o smithlab_os.o \
-	smithlab_utils.o OptionParser.o RNG.o)  
+	smithlab_utils.o OptionParser.o)
 
 simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
@@ -63,13 +68,27 @@ indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTree
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
 epiphy: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o param_set.o \
-	PhyloTreePreorder.o sufficient_statistics_helpers.o ) \
-        $(addprefix $(TREETOOL)/, PhyloTree.o )
+	PhyloTreePreorder.o sufficient_statistics_helpers.o optimize_params.o \
+	epiphy_utils.o) \
+	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
+        $(addprefix $(TREETOOL)/, PhyloTree.o)
+
+epiphy-sim: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o \
+	param_set.o PhyloTreePreorder.o sufficient_statistics_helpers.o \
+	optimize_params.o) \
+	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
+        $(addprefix $(TREETOOL)/, PhyloTree.o)
+
+epiphy-test: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o \
+	param_set.o PhyloTreePreorder.o sufficient_statistics_helpers.o \
+	optimize_params.o) \
+	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
+        $(addprefix $(TREETOOL)/, PhyloTree.o)
 
 epiphyte: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o )
 
-indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o) 
+indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o)
 
 install: all
 	@mkdir -p ../../bin
