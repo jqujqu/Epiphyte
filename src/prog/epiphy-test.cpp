@@ -91,12 +91,6 @@ read_meth_table(const string &table_file,
         throw std::runtime_error("bad table file line: " + line);
 }
 
-static size_t
-distance(const MSite &a, const MSite &b) {
-  return a.chrom == b.chrom ? max(a.pos, b.pos) - min(a.pos, b.pos) :
-    std::numeric_limits<size_t>::max();
-}
-
 
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
