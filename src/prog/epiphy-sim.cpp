@@ -41,6 +41,7 @@
 #include "PhyloTreePreorder.hpp"
 #include "param_set.hpp"
 #include "sufficient_statistics_helpers.hpp"
+#include "optimize_params.hpp"
 
 using std::string;
 using std::vector;
@@ -53,21 +54,13 @@ using std::min;
 using std::pair;
 
 
-static size_t
-distance(const MSite &a, const MSite &b) {
-  return a.chrom == b.chrom ? max(a.pos, b.pos) - min(a.pos, b.pos) :
-    std::numeric_limits<size_t>::max();
-}
-
-
 static void
-separate_regions(const size_t desert_size,
-                 vector<MSite> &sites, vector<size_t> &reset_points) {
-  reset_points.push_back(0);
-  for (size_t i = 1; i < sites.size(); ++i)
-    if (distance(sites[i - 1], sites[i]) > desert_size)
-      reset_points.push_back(i);
-  reset_points.push_back(sites.size());
+separate_regions(const size_t desert_size, vector<MSite> &sites,
+                 vector<pair<size_t, size_t> > &reset_points) {
+  for (size_t i = 0; i < sites.size(); ++i)
+    if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
+      reset_points.push_back(std::make_pair(i, i));
+    else reset_points.back().second = i;
 }
 
 
@@ -155,13 +148,14 @@ operator<<(std::ostream &out, const two_edge_sampler &tes) {
 ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
 
+template <class T>
 static void
 simulate_site_start(const vector<size_t> &subtree_sizes,
                     const vector<single_edge_sampler> &Psamp,
                     const size_t node_id,
-                    vector<pair_state> &start_counts, vector<bool> &states) {
+                    vector<pair_state> &start_counts, vector<T> &states) {
   if (!is_leaf(subtree_sizes[node_id])) {
-    const bool current_state = states[node_id];
+    const T current_state = states[node_id];
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       states[child_id] = Psamp[child_id](current_state);
@@ -172,12 +166,13 @@ simulate_site_start(const vector<size_t> &subtree_sizes,
   }
 }
 
+template <class T>
 static void
 simulate_site_start(const vector<size_t> &subtree_sizes, const param_set &ps,
                     const vector<single_edge_sampler> &Psamp,
                     pair<double, double> &root_start_counts,
                     vector<pair_state> &start_counts,
-                    vector<bool> &states) {
+                    vector<T> &states) {
 
   states.resize(subtree_sizes.size());
 
@@ -192,15 +187,16 @@ simulate_site_start(const vector<size_t> &subtree_sizes, const param_set &ps,
   simulate_site_start(subtree_sizes, Psamp, 0, start_counts, states);
 }
 
+template <class T>
 static void
 simulate_site(const vector<size_t> &subtree_sizes,
               const vector<two_edge_sampler> &GPsamp,
               const vector<bool> &prev_states, const size_t node_id,
               vector<triple_state> &triad_counts,
-              vector<bool> &states) {
+              vector<T> &states) {
 
   if (!is_leaf(subtree_sizes[node_id])) {
-    const bool current_state = states[node_id];
+    const T current_state = states[node_id];
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       states[child_id] = GPsamp[child_id](prev_states[child_id], current_state);
@@ -213,8 +209,7 @@ simulate_site(const vector<size_t> &subtree_sizes,
   }
 }
 
-pair_state root_trans;
-
+template <class T>
 static void
 simulate_site(const vector<size_t> &subtree_sizes,
               const single_edge_sampler &Gsamp,
@@ -222,7 +217,7 @@ simulate_site(const vector<size_t> &subtree_sizes,
               const vector<bool> &prev_states,
               pair_state &root_counts,
               vector<triple_state> &triad_counts,
-              vector<bool> &states) {
+              vector<T> &states) {
 
   states.resize(subtree_sizes.size());
   states[0] = Gsamp(prev_states[0]); // sample root using state to left
@@ -341,7 +336,7 @@ int main(int argc, const char **argv) {
 
     if (VERBOSE)
       cerr << "[separating by deserts]" << endl;
-    vector<size_t> reset_points;
+    vector<pair<size_t, size_t> > reset_points;
     separate_regions(desert_size, sites, reset_points);
     if (VERBOSE)
       cerr << "==> n_resets=" << reset_points.size() << endl;
@@ -355,16 +350,20 @@ int main(int argc, const char **argv) {
     vector<triple_state> triad_counts(n_nodes);
 
     vector<vector<bool> > states(n_sites);
-    for (size_t i = 0; i < reset_points.size() - 1; ++i) {
-      const size_t start = reset_points[i];
-      const size_t end = reset_points[i + 1]; // !!!!
-      assert(start < end);
+    for (size_t i = 0; i < reset_points.size(); ++i) {
+
+      const size_t start = reset_points[i].first;
+      const size_t end = reset_points[i].second;
+
       simulate_site_start(subtree_sizes, ps, Psamp,
                           root_start_counts, start_counts, states[start]);
-      for (size_t pos = start + 1; pos < end; ++pos)
+      for (size_t pos = start + 1; pos <= end; ++pos)
         simulate_site(subtree_sizes, Gsamp, GPsamp, states[pos - 1],
                       root_counts, triad_counts, states[pos]);
     }
+
+    const double llk = log_likelihood(subtree_sizes, ps, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
 
     vector<size_t> leaves_preorder;
     subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
@@ -393,6 +392,7 @@ int main(int argc, const char **argv) {
       cerr << "triad_counts:\n";
       copy(triad_counts.begin(), triad_counts.end(),
            ostream_iterator<triple_state>(cerr, "\n"));
+      cerr << "log_likelihood=" << llk << endl;
     }
 
     if (!leaf_only_file.empty()) {
