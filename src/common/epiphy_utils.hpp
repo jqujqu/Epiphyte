@@ -85,4 +85,12 @@ away_from_extremes(const double x, const double epsilon) {
   return std::min(std::max(epsilon, x), 1.0 - epsilon);
 }
 
+class MSite;
+
+void
+read_meth_table(const std::string &table_file,
+                std::vector<MSite> &sites,
+                std::vector<std::string> &species_names,
+                std::vector<std::vector<double> > &states);
+
 #endif
