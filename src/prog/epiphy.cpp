@@ -1,5 +1,5 @@
-/*    Copyright (C) 2015 University of Southern California and
- *                       Andrew D. Smith and Jenny Qu
+/*    Copyright (C) 2015-16 University of Southern California and
+ *                          Andrew D. Smith and Jenny Qu
  *
  *    Authors: Jenny Qu and Andrew Smith
  *
@@ -24,13 +24,12 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <numeric>    //std::accumulate
+#include <numeric>
 #include <random>
 #include <algorithm>  //std::max, min
 #include <cmath>      //std::abs
 #include <limits>     //std::numeric_limits
 #include <iterator>   //std::distance
-#include <unistd.h>
 
 /* from smithlab_cpp */
 #include "OptionParser.hpp"
@@ -39,7 +38,6 @@
 #include "GenomicRegion.hpp"
 
 /* from methpipe */
-#include "MethpipeFiles.hpp"
 #include "MethpipeSite.hpp"
 
 /* headers for epigenomic evolution */
@@ -49,23 +47,19 @@
 #include "epiphy_utils.hpp"
 #include "sufficient_statistics_helpers.hpp"
 #include "optimize_params.hpp"
+#include "epiphy_mcmc.hpp"
 
 using std::string;
 using std::vector;
 using std::endl;
 using std::cerr;
-using std::cout;
 using std::pair;
 using std::make_pair;
-using std::abs;
 using std::numeric_limits;
-using std::accumulate;
-using std::inner_product;
 using std::min;
 using std::max;
 using std::istringstream;
 using std::to_string;
-
 using std::ostream_iterator;
 
 #include <functional>
@@ -74,7 +68,6 @@ using std::bind;
 using std::plus;
 
 static const double PROBABILITY_GUARD = 1e-10;
-static const double POST_CONV_TOL = 1e-6;  //MAGIC
 static const double KL_CONV_TOL = 1e-8;    //MAGIC
 
 #include <random>
@@ -83,20 +76,14 @@ std::random_device rd; //seed generator
 //std::mt19937_64 gen(rd()); //generator initialized with seed from rd
 std::mt19937_64 gen(0); //generator initialized with seed from rd
 
-static size_t
-distance(const MSite &a, const MSite &b) {
-  return a.chrom == b.chrom ? max(a.pos, b.pos) - min(a.pos, b.pos) :
-    std::numeric_limits<size_t>::max();
-}
-
 
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
-                 vector<pair<size_t, size_t> > &reset_points) {
+                 vector<pair<size_t, size_t> > &blocks) {
   for (size_t i = 0; i < sites.size(); ++i)
     if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
-      reset_points.push_back(std::make_pair(i, i));
-    else reset_points.back().second = i;
+      blocks.push_back(std::make_pair(i, i));
+    else blocks.back().second = i;
 }
 
 
@@ -113,6 +100,7 @@ estimate_pi0(const vector<vector<double> > &meth) {
       }
   return (N - total)/N;
 }
+
 
 static void
 estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
@@ -136,53 +124,6 @@ estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
   g1 = g11/(g11 + g10);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-/////////////////////    FOR LOADING DATA     //////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-
-template <class T> bool
-parse_line(const string &line,
-           vector<MSite> &sites, vector<vector<T> > &states) {
-
-  std::istringstream iss(line);
-
-  sites.push_back(MSite());
-  if (!(iss >> sites.back().chrom >> sites.back().pos))
-    return false;
-
-  states.push_back(vector<T>(std::istream_iterator<T>(iss),
-                             std::istream_iterator<T>()));
-
-  return true;
-}
-
-
-static void
-read_meth_table(const string &table_file,
-                vector<MSite> &sites,
-                vector<string> &species_names,
-                vector<vector<double> > &states) {
-
-  std::ifstream table_in(table_file.c_str());
-  if (!table_in)
-    throw std::runtime_error("bad table file: " + table_file);
-
-  string line;
-  getline(table_in, line);
-  std::istringstream iss(line);
-  copy(std::istream_iterator<string>(iss), std::istream_iterator<string>(),
-       std::back_inserter(species_names));
-
-  while (getline(table_in, line))
-    if (line[0] != '#')
-      if (!parse_line(line, sites, states) ||
-          states.back().size() != species_names.size())
-        throw std::runtime_error("bad table file line: " + line);
-}
-
 
 static void
 kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
@@ -193,6 +134,9 @@ kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
     vector<double> p, q;
     P[i].flatten(p);
     Q[i].flatten(q);
+    // ADS: this is not the right transformation to put here; we do
+    // not want to add to these probabilities without ensuring they
+    // sum to not more than 1.0
     transform(p.begin(), p.end(), p.begin(),
               bind(plus<double>(), _1, PROBABILITY_GUARD));
     transform(q.begin(), q.end(), q.begin(),
@@ -220,335 +164,6 @@ add_internal_node_probs(const vector<size_t> &subtree_sizes,
       expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
 
   prob_table.swap(expanded_probs);
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-//////////////////   Markov blanket probabilities    ///////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-template <class T> static double
-MB_middle_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-               const pair_state &logG, const vector<triple_state> &logGP,
-               const vector<T> &meth_prev,
-               const vector<T> &meth_curr,
-               const vector<T> &meth_next, const size_t node_id) {
-
-  const size_t parent = parent_ids[node_id];
-  double lp0 = 0.0, lp1 = 0.0;
-
-  // contribution of parent states in the network
-  if (is_root(node_id)) {
-    const size_t prev_self_state = meth_prev[node_id];
-    lp0 += logG(prev_self_state, 0);
-    lp1 += logG(prev_self_state, 1);
-  }
-  else {
-    const T curr_parent_state = meth_curr[parent];
-    const T prev_self_state = meth_prev[node_id];
-    lp0 += logGP[node_id](prev_self_state, curr_parent_state, 0);
-    lp1 += logGP[node_id](prev_self_state, curr_parent_state, 1);
-  }
-
-  // contribution of states in child species (includes network
-  // children and parents of network children)
-  for (size_t count = 1; count < subtree_sizes[node_id];) {
-    const size_t child_id = node_id + count;
-    const T prev_child_state = meth_prev[child_id];
-    const T curr_child_state = meth_curr[child_id];
-    lp0 += logGP[child_id](prev_child_state, 0, curr_child_state);
-    lp1 += logGP[child_id](prev_child_state, 1, curr_child_state);
-    count += subtree_sizes[child_id];
-  }
-
-  // contribution of states at next site (includes network children
-  // and parents of network children)
-  if (is_root(node_id)) {
-    const T next_curr_state = meth_next[node_id];
-    lp0 += logG(0, next_curr_state);
-    lp1 += logG(1, next_curr_state);
-  }
-  else {
-    const T next_parent_state = meth_next[parent];
-    const T next_curr_state = meth_next[node_id];
-    lp0 += logGP[node_id](0, next_parent_state, next_curr_state);
-    lp1 += logGP[node_id](1, next_parent_state, next_curr_state);
-  }
-  return lp0 - lp1;
-}
-
-
-// ADS: why is pi0 only used for start nodes?
-template <class T> static double
-MB_end_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-            const pair_state &logG, const vector<triple_state> &logGP,
-            const vector<T> &meth_prev,
-            const vector<T> &meth_curr, const size_t node_id) {
-
-  double lp0 = 0.0, lp1 = 0.0;
-  // parents in network
-  if (is_root(node_id)) {
-    const size_t prev_self_state = meth_prev[node_id];
-    lp0 += logG(prev_self_state, 0);
-    lp1 += logG(prev_self_state, 1);
-  }
-  else {
-    const T curr_parent_state = meth_curr[parent_ids[node_id]];
-    const T prev_self_state = meth_prev[node_id];
-    lp0 += logGP[node_id](prev_self_state, curr_parent_state, 0);
-    lp1 += logGP[node_id](prev_self_state, curr_parent_state, 1);
-  }
-
-  // children in network
-  for (size_t count = 1; count < subtree_sizes[node_id];) {
-    const size_t child_id = node_id + count;
-    const T prev_child_state = meth_prev[child_id];
-    const T curr_child_state = meth_curr[child_id];
-    lp0 += logGP[child_id](prev_child_state, 0, curr_child_state);
-    lp1 += logGP[child_id](prev_child_state, 1, curr_child_state);
-    count += subtree_sizes[child_id];
-  }
-
-  return lp0 - lp1;
-}
-
-
-template <class T> static double
-MB_start_site(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-              const double pi0, const pair_state &logG,
-              const vector<pair_state> &logP, const vector<triple_state> &logGP,
-              const vector<T> &meth_curr,
-              const vector<T> &meth_next, const size_t node_id) {
-
-  double lp0 = 0.0, lp1 = 0.0;
-  const size_t parent = parent_ids[node_id];
-  // transition from parents in network [same here as parents in tree]
-  // (or root distribution)
-  if (is_root(node_id)) {
-    lp0 += log(pi0);
-    lp1 += log(1.0 - pi0);
-  }
-  else {
-    const T curr_parent_state = meth_curr[parent];
-    lp0 += logP[node_id](curr_parent_state, 0);
-    lp1 += logP[node_id](curr_parent_state, 1);
-  }
-
-  // children in network (only one parent; current self)
-  for (size_t count = 1; count < subtree_sizes[node_id];) {
-    const size_t child_id = node_id + count;
-    const T curr_child_state = meth_curr[child_id];
-    lp0 += logP[child_id](0, curr_child_state);
-    lp1 += logP[child_id](1, curr_child_state);
-    count += subtree_sizes[child_id];
-  }
-
-  // horizontal children in network and their other parents
-  if (is_root(node_id)) {
-    const T next_self_state = meth_next[node_id];
-    lp0 += logG(0, next_self_state);
-    lp1 += logG(1, next_self_state);
-  }
-  else {
-    const T next_parent_state = meth_next[parent];
-    const T next_curr_state = meth_next[node_id];
-    lp0 += logGP[node_id](0, next_parent_state, next_curr_state);
-    lp1 += logGP[node_id](1, next_parent_state, next_curr_state);
-  }
-  return lp0 - lp1;
-}
-
-
-template <class T>
-static void
-accept_or_reject_proposal(const double log_ratio, const size_t idx,
-                          vector<T> &states) {
-  const T tmp_state = states[idx];
-  const double ratio = (!tmp_state) ? exp(-log_ratio) : exp(log_ratio);
-  uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
-  if (dis(gen) < ratio)
-    states[idx] = !tmp_state; // 1 - tmp_state;
-}
-
-
-template <class T>
-static void
-MH_update_site_middle(const vector<size_t> &subtree_sizes,
-                      const vector<size_t> &parent_ids,
-                      const pair_state &logG,
-                      const vector<triple_state> &logGP,
-                      const vector<double> &probs_table,
-                      const vector<T> &states_prev,
-                      vector<T> &states_curr,
-                      const vector<T> &states_next,
-                      const size_t node_id) {
-
-  /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0.0) {
-    // ADS: fix the way leaf states are updated when their value is
-    // missing
-    uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
-    states_curr[node_id] = dis(gen) > probs_table[node_id] ? 0 : 1;
-  }
-  else {
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      const size_t child_id = node_id + count;
-      MH_update_site_middle(subtree_sizes, parent_ids, logG, logGP, probs_table,
-                            states_prev, states_curr, states_next, child_id);
-      count += subtree_sizes[child_id];
-    }
-    const double log_ratio = MB_middle_site(subtree_sizes, parent_ids, logG, logGP,
-                                            states_prev, states_curr, states_next,
-                                            node_id);
-
-    accept_or_reject_proposal(log_ratio, node_id, states_curr);
-  }
-}
-
-
-template <class T>
-static void
-MH_update_site_end(const vector<size_t> &subtree_sizes,
-                   const vector<size_t> &parent_ids,
-                   const pair_state &logG,
-                   const vector<triple_state> &logGP,
-                   const vector<double> &probs_table,
-                   const vector<T> &states_prev,
-                   vector<T> &states_curr,
-                   const size_t node_id) {
-
-  /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
-    uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
-    states_curr[node_id] = dis(gen) > probs_table[node_id] ? 0 : 1;
-  }
-  else {
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      const size_t child_id = node_id + count;
-      MH_update_site_end(subtree_sizes, parent_ids, logG, logGP,
-                         probs_table, states_prev, states_curr, child_id);
-      count += subtree_sizes[child_id];
-    }
-    const double log_ratio = MB_end_site(subtree_sizes, parent_ids, logG, logGP,
-                                         states_prev, states_curr, node_id);
-
-    accept_or_reject_proposal(log_ratio, node_id, states_curr);
-  }
-}
-
-
-template <class T> static void
-MH_update_site_start(const vector<size_t> &subtree_sizes,
-                     const vector<size_t> &parent_ids,
-                     const double pi0,
-                     const pair_state &logG,
-                     const vector<pair_state> &logP,
-                     const vector<triple_state> &logGP,
-                     const vector<double> &probs_table,
-                     vector<T> &states_curr,
-                     const vector<T> &states_next,
-                     const size_t node_id) {
-
-  /* if leaf observed, sample from the observed probability*/
-  if (is_leaf(subtree_sizes[node_id]) && probs_table[node_id] >= 0) {
-    uniform_real_distribution<> dis(0, 1); // ADS: remember to fix this
-    states_curr[node_id] = dis(gen) > probs_table[node_id] ? 0 : 1;
-  }
-  else {
-    for (size_t count = 1; count < subtree_sizes[node_id]; ) {
-      const size_t child_id = node_id + count;
-      MH_update_site_start(subtree_sizes, parent_ids, pi0, logG, logP, logGP,
-                           probs_table, states_curr, states_next, child_id);
-      count += subtree_sizes[child_id];
-    }
-    const double log_ratio =
-      MB_start_site(subtree_sizes, parent_ids, pi0, logG, logP, logGP,
-                    states_curr, states_next, node_id);
-
-    accept_or_reject_proposal(log_ratio, node_id, states_curr);
-  }
-}
-
-
-template <class T> static void
-MH_update(const vector<size_t> &subtree_sizes, const vector<size_t> &parent_ids,
-          const param_set &ps, const vector<vector<double> > &probs_table,
-          const vector<pair<size_t, size_t> > &reset_points,
-          vector<vector<T> > &states_table) {
-
-  pair_state logG(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-  logG.make_logs();
-
-  vector<pair_state> logP;
-  vector<triple_state> logGP;
-  get_transition_matrices(ps, logP, logGP);
-  for (size_t i = 0; i < logP.size(); ++i) {
-    logP[i].make_logs();
-    logGP[i].make_logs();
-  }
-
-  for (size_t i = 0; i < reset_points.size(); ++i) {
-    const size_t start = reset_points[i].first;
-    const size_t end = reset_points[i].second; // !!!!
-    if (start < end) {
-      MH_update_site_start(subtree_sizes, parent_ids, ps.pi0, logG, logP, logGP,
-                           probs_table[start], states_table[start],
-                           states_table[start + 1], 0);
-      for (size_t pos = start + 1; pos < end; ++pos)
-        MH_update_site_middle(subtree_sizes, parent_ids, logG, logGP,
-                              probs_table[pos], states_table[pos - 1],
-                              states_table[pos], states_table[pos + 1], 0);
-      MH_update_site_end(subtree_sizes, parent_ids, logG, logGP, probs_table[end],
-                         states_table[end - 1], states_table[end], 0);
-    }
-  }
-}
-
-
-template <class T>
-static void
-count_triads(const vector<size_t> &subtree_sizes,
-             const vector<size_t> &parent_ids,
-             const vector<vector<T> > &tree_states,
-             const vector<pair<size_t, size_t> > &reset_points,
-             pair<double, double> &root_start_counts,
-             pair_state &root_counts,
-             vector<pair_state> &start_counts,
-             vector<triple_state> &triad_counts) {
-
-  root_start_counts = std::make_pair(0.0, 0.0);
-  triad_counts = vector<triple_state>(subtree_sizes.size());
-  start_counts = vector<pair_state>(subtree_sizes.size());
-  root_counts = pair_state();
-
-  for (size_t i = 0; i < reset_points.size(); ++i) {
-
-    const size_t start = reset_points[i].first;
-    const size_t end = reset_points[i].second;
-
-    root_start_counts.first += !tree_states[start][0];
-    root_start_counts.second += tree_states[start][0];
-
-    for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-      const size_t parent = tree_states[start][parent_ids[node_id]];
-      const size_t curr = tree_states[start][node_id];
-      start_counts[node_id](parent, curr) += 1.0;
-    }
-
-    for (size_t pos = start + 1; pos <= end; ++pos) {
-
-      root_counts(tree_states[pos - 1][0], tree_states[pos][0])++;
-
-      for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id) {
-        const size_t parent = tree_states[pos][parent_ids[node_id]];
-        const size_t prev = tree_states[pos - 1][node_id];
-        const size_t curr = tree_states[pos][node_id];
-        triad_counts[node_id](prev, parent, curr) += 1.0;
-      }
-    }
-  }
 }
 
 
@@ -591,11 +206,13 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
 
 template <class T>
 static void
-expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
+expectation_step(const bool VERBOSE,
+                 const size_t mh_max_iterations,
+                 const epiphy_mcmc &sampler,
                  const vector<size_t> &subtree_sizes,
                  const vector<size_t> &parent_ids,
                  const vector<vector<double> > &tree_probs,
-                 const vector<pair<size_t, size_t> > &reset_points,
+                 const vector<pair<size_t, size_t> > &blocks,
                  const param_set &ps,
                  pair<double, double> &root_start_counts,
                  pair_state &root_counts,
@@ -609,7 +226,6 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
   triad_counts = vector<triple_state>(n_nodes);
   start_counts = vector<pair_state>(n_nodes);
   root_counts = pair_state();
-  vector<triple_state> triad_counts_prev(n_nodes);
 
   bool converged = false;
   size_t mh_iter = 0;
@@ -617,13 +233,20 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
 
+    // take the sample
+    sampler.sample_states(subtree_sizes, parent_ids, ps, tree_probs,
+                          blocks, sampled_states);
+
     pair<double, double> root_start_counts_samp;
     pair_state root_counts_samp;
-    vector<pair_state> start_counts_samp(n_nodes);
-    vector<triple_state> triad_counts_samp(n_nodes);
-    count_triads(subtree_sizes, parent_ids, sampled_states, reset_points,
+    vector<pair_state> start_counts_samp;
+    vector<triple_state> triad_counts_samp;
+    count_triads(subtree_sizes, parent_ids, sampled_states, blocks,
                  root_start_counts_samp, root_counts_samp, start_counts_samp,
                  triad_counts_samp);
+
+    // retain previous values for comparison with next iteration
+    vector<triple_state> triad_counts_prev(triad_counts);
 
     // update the counts with current iteration samples
     root_start_counts.first += root_start_counts_samp.first;
@@ -643,14 +266,6 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
     // determine convergence based on how far proportions have moved
     converged =
       *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
-
-    if (!converged) // take next sample (all sites)
-      // tree_probs only used at leaf nodes (to sample leaf states)
-      MH_update(subtree_sizes, parent_ids, ps, tree_probs, reset_points,
-                sampled_states);
-
-    // retain previous values for comparison with next iteration
-    triad_counts_prev = triad_counts; // ADS: should this be a swap?
   }
   if (VERBOSE)
     cerr << endl;
@@ -675,10 +290,11 @@ expectation_maximization(const bool VERBOSE,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
+                         const epiphy_mcmc &sampler,
                          const vector<size_t> &subtree_sizes,
                          const vector<size_t> &parent_ids,
                          const vector<vector<double> > &tree_probs,
-                         const vector<pair<size_t, size_t> > &reset_points,
+                         const vector<pair<size_t, size_t> > &blocks,
                          param_set &params,
                          pair<double, double> &root_start_counts,
                          pair_state &root_counts,
@@ -695,8 +311,8 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     // next line is optional, just for consistency with older version.
-    expectation_step(VERBOSE, mh_max_iterations, subtree_sizes, parent_ids,
-                     tree_probs, reset_points, params, root_start_counts,
+    expectation_step(VERBOSE, mh_max_iterations, sampler, subtree_sizes, parent_ids,
+                     tree_probs, blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts, sampled_states);
 
     if (VERBOSE) {
@@ -729,40 +345,43 @@ expectation_maximization(const bool VERBOSE,
 }
 
 
-template <class T> static void
-mcmc_estimate_posterior(const bool VERBOSE, const size_t mh_max_iterations,
-                        const vector<size_t> &subtree_sizes,
-                        const vector<size_t> &parent_ids,
-                        const vector<vector<double> > &tree_probs,
-                        const vector<pair<size_t, size_t> > &reset_points,
-                        const param_set &ps,
-                        vector<vector<T> > &sampled_states,
-                        vector<vector<double> > &posteriors) {
+template <class T>
+static void
+estimate_posterior(const bool VERBOSE,
+                   const size_t max_iterations,
+                   const epiphy_mcmc &sampler,
+                   const vector<size_t> &subtree_sizes,
+                   const vector<size_t> &parent_ids,
+                   const vector<vector<double> > &marginals,
+                   const vector<pair<size_t, size_t> > &blocks,
+                   const param_set &params,
+                   vector<vector<T> > &states,
+                   vector<vector<double> > &posteriors) {
 
   const size_t n_nodes = subtree_sizes.size();
 
-  posteriors = vector<vector<double> >(tree_probs.size(),
+  posteriors = vector<vector<double> >(marginals.size(),
                                        vector<double>(n_nodes, 0.0));
 
-  for (size_t mh_iter = 0; mh_iter < mh_max_iterations; ++mh_iter) {
+  // ADS: need convergence criteria here??
+  for (size_t mh_iter = 0; mh_iter < max_iterations; ++mh_iter) {
     if (VERBOSE)
-      cerr << "\r[inside mcmc_estimate_posterior (iter=" << mh_iter << ")]";
+      cerr << "\r[inside estimate_posterior (iter=" << mh_iter << ")]";
 
-    MH_update(subtree_sizes, parent_ids, ps, tree_probs, reset_points,
-              sampled_states);
+    sampler.sample_states(subtree_sizes, parent_ids, params,
+                          marginals, blocks, states);
 
-    for (size_t i = 0; i < sampled_states.size(); ++i)
-      for (size_t j = 0; j < sampled_states[i].size(); ++j)
-        posteriors[i][j] += sampled_states[i][j];
+    for (size_t i = 0; i < states.size(); ++i)
+      for (size_t j = 0; j < states[i].size(); ++j)
+        posteriors[i][j] += states[i][j];
   }
   if (VERBOSE)
     cerr << endl;
 
   for (size_t i = 0; i < posteriors.size(); ++i)
     for (size_t j = 0; j < posteriors[i].size(); ++j)
-      posteriors[i][j] /= mh_max_iterations;
+      posteriors[i][j] /= max_iterations;
 }
-
 
 ////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////
@@ -771,58 +390,99 @@ mcmc_estimate_posterior(const bool VERBOSE, const size_t mh_max_iterations,
 ////////////////////////////////////////////////////////////////////////
 
 
-static void
-local_parsimony(const vector<size_t> &subtree_sizes,
-                const vector<size_t> &parent_ids,
-                const size_t node_id, string &state) {
+static size_t
+binary_parsimony_forward(const vector<size_t> &subtree_sizes,
+                         const size_t node_id, string &states) {
 
+  size_t pars_score = 0;
   if (!is_leaf(subtree_sizes[node_id])) {
 
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
-      local_parsimony(subtree_sizes, parent_ids, child_id, state);
+      pars_score +=
+        binary_parsimony_forward(subtree_sizes, child_id, states);
       count += subtree_sizes[child_id];
     }
 
-    char s = state[node_id + 1];
-    bool SAME = true;
+    // check intersection
+    char s = '-';
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
-      if (state[child_id] != s) {
-        SAME = false;
-        break; // ADS: "break" should never be used
-      }
+      if (s != states[child_id]) // do nothing if no conflict
+        s = (s == '-') ? states[child_id] : 0;
       count += subtree_sizes[child_id];
     }
-    if (SAME) {
-      state[node_id] = s;
-    }
-    else {
-      s = state[parent_ids[node_id]];
-      state[node_id] = s;
-    }
+    states[node_id] = (s == 0) ? '-' : s;
+    pars_score += (s == 0);
+  }
+  return pars_score;
+}
+
+static void
+binary_parsimony_traceback(const vector<size_t> &subtree_sizes,
+                           const size_t node_id, string &states) {
+
+  for (size_t count = 1; count < subtree_sizes[node_id];) {
+    const size_t child_id = node_id + count;
+    if (states[node_id] == states[child_id] || states[child_id] == '-')
+      states[child_id] = states[node_id];
+    binary_parsimony_traceback(subtree_sizes, child_id, states);
+    count += subtree_sizes[child_id];
   }
 }
 
 
-static void
+// static void
+// local_parsimony(const vector<size_t> &subtree_sizes,
+//                 const vector<size_t> &parent_ids,
+//                 const size_t node_id, string &state) {
+
+//   if (!is_leaf(subtree_sizes[node_id])) {
+
+//     for (size_t count = 1; count < subtree_sizes[node_id];) {
+//       const size_t child_id = node_id + count;
+//       local_parsimony(subtree_sizes, parent_ids, child_id, state);
+//       count += subtree_sizes[child_id];
+//     }
+
+//     char s = state[node_id + 1];
+//     bool SAME = true;
+//     for (size_t count = 1; count < subtree_sizes[node_id] && SAME;) {
+//       const size_t child_id = node_id + count;
+//       if (state[child_id] != s)
+//         SAME = false;
+//       count += subtree_sizes[child_id];
+//     }
+//     if (SAME) state[node_id] = s;
+//     else state[node_id] = state[parent_ids[node_id]];
+//   }
+// }
+
+
+static size_t
 tree_prob_to_states(const vector<size_t> &subtree_sizes,
-                    const vector<size_t> &parent_ids,
                     const vector<vector<double> > &tree_probs,
-                    const double cutoff, vector<string> &states) {
+                    vector<string> &states) {
+  static const double state_cutoff = 0.5; // MAGIC
+  uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
 
-  const size_t n_nodes = tree_probs[0].size();
-  const size_t n_sites= tree_probs.size();
+  states.clear();
+  size_t pars_score = 0;
+  for (size_t i = 0; i < tree_probs.size(); ++i) {
 
-  for (size_t i = 0; i < n_sites; ++i) {
     string state;
-    for (size_t j = 0; j < n_nodes; ++j)
-      state += (tree_probs[i][j] <= cutoff ? '1' : '0');
+    for (size_t j = 0; j < tree_probs[i].size(); ++j)
+      state += (tree_probs[i][j] < state_cutoff ? '0' : '1');
+
+    pars_score += binary_parsimony_forward(subtree_sizes, 0, state);
+
+    if (state[0] == '-')
+      state[0] = dis(gen) > 0.5 ? '0' : '1';
+
+    binary_parsimony_traceback(subtree_sizes, 0, state);
     states.push_back(state);
   }
-
-  for (size_t i = 0; i < n_sites; ++i)
-    local_parsimony(subtree_sizes, parent_ids, 0, states[i]);
+  return pars_score;
 }
 
 
@@ -833,10 +493,9 @@ write_treeprob_states(const vector<size_t> &subtree_sizes,
                       const vector<string> &node_names,
                       const string &outfile) {
 
-  const string post_outfile(outfile + ".posteriors");
-  std::ofstream out(post_outfile.c_str());
+  std::ofstream out(outfile.c_str());
   if (!out)
-    throw std::runtime_error("bad output file: " + post_outfile);
+    throw std::runtime_error("bad output file: " + outfile);
 
   copy(node_names.begin(), node_names.end(),
        ostream_iterator<string>(out, "\t"));
@@ -857,48 +516,38 @@ build_domain(const size_t minCpG, const size_t desert_size,
              vector<GenomicRegion> &domains) {
 
   // first round collapsing
-  GenomicRegion cpg(sites[0].chrom, sites[0].pos, sites[0].pos + 1,
-                    states[0], 1.0, '+');
+  domains.push_back(GenomicRegion(sites[0].chrom, sites[0].pos,
+                                  sites[0].pos + 1, states[0], 1.0, '+'));
   for (size_t i = 1; i < sites.size(); ++i) {
     const size_t d = distance(sites[i], sites[i - 1]);
     if (d < desert_size && states[i] == states[i - 1]) {
-      cpg.set_score(1.0 + cpg.get_score());
-      cpg.set_end(sites[i].pos + 1);
+      domains.back().set_score(1.0 + domains.back().get_score());
+      domains.back().set_end(sites[i].pos + 1);
     }
-    else {
-      domains.push_back(cpg);
-      cpg.set_chrom(sites[i].chrom);
-      cpg.set_start(sites[i].pos);
-      cpg.set_end(sites[i].pos + 1);
-      cpg.set_name(states[i]);
-      cpg.set_score(1.0);
-    }
+    else domains.push_back(GenomicRegion(sites[i].chrom, sites[i].pos,
+                                         sites[i].pos + 1, states[i], 1.0, '+'));
   }
-  domains.push_back(cpg);
 
   // Iteratively merge domains
   for (size_t i = 1; i <= minCpG; ++i) {
-    vector<GenomicRegion> merging_domains;
+    vector<GenomicRegion> merging;
     size_t skip = 0;
     for (size_t j = 0; j < domains.size(); ++j) {
       if (domains[j].get_score() <= i)
         skip += domains[j].get_score();
       else {
-        if (merging_domains.size() > 0 &&
-            domains[j].get_name() == merging_domains.back().get_name() &&
-            domains[j].distance(merging_domains.back()) < desert_size) {
-          merging_domains.back().set_score(merging_domains.back().get_score() +
-                                           domains[j].get_score() + skip);
-          merging_domains.back().set_end(domains[j].get_end());
-          skip = 0;
+        if (merging.size() > 0 &&
+            domains[j].get_name() == merging.back().get_name() &&
+            domains[j].distance(merging.back()) < desert_size) {
+          merging.back().set_score(merging.back().get_score() +
+                                   domains[j].get_score() + skip);
+          merging.back().set_end(domains[j].get_end());
         }
-        else {
-          merging_domains.push_back(domains[j]);
-          skip = 0;
-        }
+        else merging.push_back(domains[j]);
+        skip = 0;
       }
     }
-    domains.swap(merging_domains);
+    domains.swap(merging);
   }
 }
 
@@ -909,12 +558,11 @@ build_domain(const size_t minCpG, const size_t desert_size,
 ////////////////////////////////////////////////////////////////////////
 
 
-// ADS: not sure if this function is ever really needed???
 template <class T> static void
 sample_initial_states(const vector<vector<double> > &tree_probs,
                       vector<vector<T> > &sampled_states) {
 
-  uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
+  uniform_real_distribution<> dis(0, 1);
 
   for (size_t i = 0; i < tree_probs.size(); ++i)
     for (size_t j = 0; j < tree_probs[i].size(); ++j)
@@ -935,20 +583,26 @@ main(int argc, const char **argv) {
 
   try {
 
+    static const string param_file_suffix = "epiphy_param";
+    static const string posteriors_file_suffix = "epiphy_post";
+    static const string intervals_file_suffix = "epiphy_intervals";
+
+    string outprefix;
+    string paramfile;
+
     size_t desert_size = 1000;
-    size_t minCpG = 10;                            //MAGIC
-    size_t min_sites_per_frag = 5;  // ADS: probably should be a post-filter step
+    size_t min_sites_per_frag = 5;  // ADS: should this be a
+                                    // post-processing filter step in
+                                    // a separate program?
+    size_t minCpG = 10;                     // MAGIC
 
     size_t opt_max_iterations = 100;        // iterations inside the M-step
-    size_t em_max_iterations = 30;          // rounds of EM iterations
-    size_t mh_max_iterations = 2000;         // MAGIC
-
-    string outfile;
-    string paramfile, outparamfile;
+    size_t em_max_iterations = 100;         // rounds of EM iterations
+    size_t mh_max_iterations = 500;         // MAGIC
 
     // run mode flags
     bool VERBOSE = false;
-    bool COMPLETE = false;
+    bool assume_complete_data = false;
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "Estimate phylogeny shape "
@@ -960,13 +614,15 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("maxiter", 'i', "max EM iterations (default: " +
                       to_string(em_max_iterations) + ")",
                       false, em_max_iterations);
-    opt_parse.add_opt("complete", 'c', "complete observations",
-                      false, COMPLETE);
+    opt_parse.add_opt("mcmc-iter", 'h', "max mcmc iterations (default: " +
+                      to_string(mh_max_iterations) + ")",
+                      false, mh_max_iterations);
+    opt_parse.add_opt("complete", 'c', "input is complete observations",
+                      false, assume_complete_data);
     opt_parse.add_opt("verbose", 'v', "print more run info "
                       "(default: " + to_string(VERBOSE) + ")", false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
-    opt_parse.add_opt("outparams", 'P', "output parameters", false, outparamfile);
-    opt_parse.add_opt("output", 'o', "output file name", true, outfile);
+    opt_parse.add_opt("outprefix", 'o', "output file prefix", true, outprefix);
     opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
                       "(default: " + toa(min_sites_per_frag) + ")", false,
                       min_sites_per_frag);
@@ -1047,7 +703,7 @@ main(int argc, const char **argv) {
     /******************* READ THE METHYLATION DATA *****************************/
     if (VERBOSE)
       cerr << "[reading methylation data (mode="
-           << (COMPLETE ? "complete" : "missing") << ")]" << endl;
+           << (assume_complete_data ? "complete" : "missing") << ")]" << endl;
 
     vector<MSite> sites;
     vector<vector<double> > tree_probs;
@@ -1055,7 +711,7 @@ main(int argc, const char **argv) {
     read_meth_table(meth_table_file, sites, meth_table_species, tree_probs);
     const size_t n_sites = tree_probs.size();
 
-    if (COMPLETE) {
+    if (assume_complete_data) {
       if (meth_table_species.size() != n_nodes) {
         cerr << "complete data specified but inconsistent tree sizes:" << endl
              << meth_table_file << endl
@@ -1082,10 +738,10 @@ main(int argc, const char **argv) {
 
     if (VERBOSE)
       cerr << "[separating deserts]" << endl;
-    vector<pair<size_t, size_t> > reset_points;
-    separate_regions(desert_size, sites, reset_points);
+    vector<pair<size_t, size_t> > blocks;
+    separate_regions(desert_size, sites, blocks);
     if (VERBOSE)
-      cerr << "number of blocks: " << reset_points.size() << endl;
+      cerr << "number of blocks: " << blocks.size() << endl;
 
     if (paramfile.empty()) {
       // heuristic starting points for G and pi
@@ -1105,48 +761,62 @@ main(int argc, const char **argv) {
 
     param_set params(initial_params);
 
-    if (COMPLETE) {
-      count_triads(subtree_sizes, parent_ids, tree_states, reset_points,
+    if (assume_complete_data) {
+      count_triads(subtree_sizes, parent_ids, tree_states, blocks,
                    root_start_counts, root_counts, start_counts, triad_counts);
-      maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
-                        root_start_counts, root_counts, start_counts,
-                        triad_counts, params);
+      if (paramfile.empty())
+        maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                          root_start_counts, root_counts, start_counts,
+                          triad_counts, params);
+      if (VERBOSE) {
+        const double llk =
+          log_likelihood(subtree_sizes, params, root_start_counts,
+                         root_counts, start_counts, triad_counts);
+        // ADS: for complete data and params provided, this is all
+        // that will be output
+        cerr << "log_likelihood=" << llk << endl;
+      }
     }
     else {
+
+      const epiphy_mcmc sampler(mh_max_iterations, 0);
+
       if (paramfile.empty())
         expectation_maximization(VERBOSE, em_max_iterations, opt_max_iterations,
-                                 mh_max_iterations, subtree_sizes, parent_ids,
-                                 tree_probs, reset_points, params,
+                                 mh_max_iterations, sampler, subtree_sizes, parent_ids,
+                                 tree_probs, blocks, params,
                                  root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
 
       if (VERBOSE)
         cerr << "[computing posterior probabilities]" << endl;
       vector<vector<double> > posteriors;
-      mcmc_estimate_posterior(VERBOSE, mh_max_iterations, subtree_sizes,
-                              parent_ids, tree_probs, reset_points, params,
-                              tree_states, posteriors);
+      estimate_posterior(VERBOSE, mh_max_iterations, sampler,
+                         subtree_sizes, parent_ids, tree_probs,
+                         blocks, params, tree_states, posteriors);
 
       /************************** Output states ********************************/
       if (VERBOSE)
         cerr << "[building domains of contiguous state]" << endl;
       vector<string> states;
       vector<GenomicRegion> domains;
-      double cutoff = 0.5; // MAGIC
-      tree_prob_to_states(subtree_sizes, parent_ids, tree_probs, cutoff, states);
+      tree_prob_to_states(subtree_sizes, tree_probs, states);
       build_domain(min_sites_per_frag, desert_size, sites, states, domains);
       if (VERBOSE)
         cerr << "total domains: " << domains.size() << endl;
 
-      std::ofstream out(outfile.c_str());
+      // output the domains as contiguous intervals
+      const string interval_outfile(outprefix + "." + intervals_file_suffix);
+      std::ofstream out(interval_outfile.c_str());
       if (!out)
-        throw SMITHLABException("bad output file: " + outfile);
+        throw SMITHLABException("bad output file: " + interval_outfile);
       copy(domains.begin(), domains.end(),
            ostream_iterator<GenomicRegion>(out, "\n"));
 
-      /* output individual sites */
+      // output the posteriors on states
+      const string post_outfile(outprefix + "." + posteriors_file_suffix);
       write_treeprob_states(subtree_sizes, sites, posteriors,
-                            node_names, outfile);
+                            node_names, post_outfile);
     }
 
     if (VERBOSE) {
@@ -1163,8 +833,8 @@ main(int argc, const char **argv) {
            ostream_iterator<triple_state>(cerr, "\n"));
     }
 
-    if (!outparamfile.empty())
-      params.write(t, outparamfile);
+    const string param_outfile(outprefix + "." + param_file_suffix);
+    params.write(t, param_outfile);
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
@@ -1187,6 +857,13 @@ main(int argc, const char **argv) {
   (4) Determine whether any states should not have their values
   printed in the final output, due to their distance from any actual
   leaf data making them meaningless.
+
+  (3) The part of this program that actually identifies contiguous
+  domains should be removed and put in a separate program. The reason
+  is that this is the program that we expect should take a long time
+  to run, and afterwards we should be able to use all learned
+  parameters and posteriors for doing any quick things -- without
+  assuming this program gets rerun.
 
   (5) Determine whether any states should not be involved in parameter
   estimation, as they are so far from any observed data that they just
