@@ -620,7 +620,8 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("complete", 'c', "input is complete observations",
                       false, assume_complete_data);
     opt_parse.add_opt("verbose", 'v', "print more run info "
-                      "(default: " + to_string(VERBOSE) + ")", false, VERBOSE);
+                      "(default: " + string(VERBOSE ? "true" : "false") + ")",
+                      false, VERBOSE);
     opt_parse.add_opt("params", 'p', "given parameters", false, paramfile);
     opt_parse.add_opt("outprefix", 'o', "output file prefix", true, outprefix);
     opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
