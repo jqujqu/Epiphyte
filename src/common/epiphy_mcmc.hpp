@@ -39,6 +39,7 @@ public:
     gen = std::mt19937_64(the_seed);
   }
 
+  //JQU: this functions is not defined/used anywhere yet.
   template <class T> void
   estimate_posterior(const bool VERBOSE,
                      const std::vector<size_t> &subtree_sizes,
@@ -113,6 +114,10 @@ private:
 };
 
 
+/*
+  prev/curr/next denote site positions in the genome
+  parent/self/child denote species (nodes) in the phylogenetic tree
+ */
 template <class T>
 static double
 MB_state_middle(const std::vector<size_t> &subtree_sizes,
