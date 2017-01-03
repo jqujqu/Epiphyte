@@ -72,9 +72,9 @@ static const double KL_CONV_TOL = 1e-8;    //MAGIC
 
 #include <random>
 using std::uniform_real_distribution;
-std::random_device rd; //seed generator
+//std::random_device rd; //seed generator
 //std::mt19937_64 gen(rd()); //generator initialized with seed from rd
-std::mt19937_64 gen(0); //generator initialized with seed from rd
+std::mt19937_64 gen(0); //generator initialized with seed 0
 
 
 static void
@@ -161,6 +161,7 @@ add_internal_node_probs(const vector<size_t> &subtree_sizes,
   for (size_t i = 0; i < n_sites; ++i)
     for (size_t j = 0; j < leaves_preorder.size(); ++j)
       // ADS: should these be checked for "extremes"???
+      // JQU: checking for extremes should be done when reading in prob_table.
       expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
 
   prob_table.swap(expanded_probs);
@@ -208,6 +209,7 @@ template <class T>
 static void
 expectation_step(const bool VERBOSE,
                  const size_t mh_max_iterations,
+                 const size_t burnin,
                  const epiphy_mcmc &sampler,
                  const vector<size_t> &subtree_sizes,
                  const vector<size_t> &parent_ids,
@@ -229,6 +231,7 @@ expectation_step(const bool VERBOSE,
 
   bool converged = false;
   size_t mh_iter = 0;
+  size_t burned = 0;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
@@ -248,34 +251,40 @@ expectation_step(const bool VERBOSE,
     // retain previous values for comparison with next iteration
     vector<triple_state> triad_counts_prev(triad_counts);
 
-    // update the counts with current iteration samples
-    root_start_counts.first += root_start_counts_samp.first;
-    root_start_counts.second += root_start_counts_samp.second;
-    root_counts += root_counts_samp;
-    for (size_t i = 0; i < triad_counts.size(); ++i) {
-      triad_counts[i] += triad_counts_samp[i];
-      start_counts[i] += start_counts_samp[i];
+    if (burned < burnin) {
+      ++burned;
+      if (VERBOSE)
+        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ") burned]";
+    } else {
+      // update the counts with current iteration samples
+      root_start_counts.first += root_start_counts_samp.first;
+      root_start_counts.second += root_start_counts_samp.second;
+      root_counts += root_counts_samp;
+      for (size_t i = 0; i < triad_counts.size(); ++i) {
+        triad_counts[i] += triad_counts_samp[i];
+        start_counts[i] += start_counts_samp[i];
+      }
+
+      // check how far the proportions have moved; only the triad_counts
+      // used for convergence testing; the start and root counts do not
+      // contribute enough to check
+      vector<double> divergence;
+      kl_divergence(triad_counts_prev, triad_counts, divergence);
+
+      // determine convergence based on how far proportions have moved
+      converged =
+        *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
     }
-
-    // check how far the proportions have moved; only the triad_counts
-    // used for convergence testing; the start and root counts do not
-    // contribute enough to check
-    vector<double> divergence;
-    kl_divergence(triad_counts_prev, triad_counts, divergence);
-
-    // determine convergence based on how far proportions have moved
-    converged =
-      *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
   }
   if (VERBOSE)
     cerr << endl;
 
-  root_start_counts.first /= mh_iter;
-  root_start_counts.second /= mh_iter;
+  root_start_counts.first /= mh_iter-burnin;
+  root_start_counts.second /= mh_iter-burnin;
   root_counts.div(mh_iter);
   for (size_t i = 0; i < triad_counts.size(); ++i) {
-    start_counts[i].div(mh_iter);
-    triad_counts[i].div(mh_iter);
+    start_counts[i].div(mh_iter-burnin);
+    triad_counts[i].div(mh_iter-burnin);
   }
 
   if (VERBOSE)
@@ -311,8 +320,9 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     // next line is optional, just for consistency with older version.
-    expectation_step(VERBOSE, mh_max_iterations, sampler, subtree_sizes, parent_ids,
-                     tree_probs, blocks, params, root_start_counts,
+    const size_t burnin = 20;
+    expectation_step(VERBOSE, mh_max_iterations, burnin, sampler, subtree_sizes,
+                     parent_ids, tree_probs, blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts, sampled_states);
 
     if (VERBOSE) {
