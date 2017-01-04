@@ -135,16 +135,22 @@ separate_regions_for_training(const vector<size_t> &subtree_sizes,
   }
 
   for (size_t i = 0; i < nsites; ++i) {
-    if (i == 0 || max_up_dist[i] > desert_size)
+    if (i == 0 || max_up_dist[i] > desert_size ||
+        distance(sites[i - 1], sites[i]) > desert_size)
       blocks.push_back(std::make_pair(i, i));
     else
       blocks.back().second = i;
   }
 
+  cerr << blocks.size() << " blocks" << endl;
+
   for (size_t i = 0; i < blocks.size(); ++i) {
-    if (blocks[i].second - blocks[i].first +1 > min_block_size)
+    if (blocks[i].second - blocks[i].first + 1 >= min_block_size)
       training_blocks.push_back(blocks[i]);
   }
+
+  cerr << training_blocks.size() << " training_blocks" << endl;
+
 }
 
 
@@ -812,7 +818,7 @@ main(int argc, const char **argv) {
       cerr << "[separating deserts]" << endl;
     vector<pair<size_t, size_t> > training_blocks;
     vector<pair<size_t, size_t> > blocks;
-    //separate_regions(desert_size, sites, blocks);
+    // separate_regions(desert_size, sites, blocks);
 
     const size_t min_block_size = 2;
     separate_regions_for_training(subtree_sizes, tree_probs, sites,
