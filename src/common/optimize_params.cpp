@@ -436,6 +436,8 @@ max_likelihood_pi0(const bool VERBOSE,
                    param_set &ps) {
   ps.pi0 = root_start_counts.first/(root_start_counts.first +
                                     root_start_counts.second);
+
+  if (ps.pi0 == 0.0 || ps.pi0 == 1.0) ps.pi0 = 0.5;
   // ADS: needs to be improved to use more information
   if (VERBOSE)
     cerr << "[max_likelihood_pi0: pi0=" << ps.pi0 << ']' << endl;
