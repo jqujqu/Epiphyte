@@ -219,16 +219,6 @@ int main(int argc, const char **argv) {
                  start_counts,
                  triad_counts);
 
-    if (VERBOSE) {
-      cerr << "root_counts:\n" << root_counts << endl
-           << endl << "start_counts:" << endl;
-      for (size_t i = 0; i < start_counts.size(); ++i)
-        cerr << start_counts[i] << endl;
-      cerr << endl << "triad_counts:" << endl;
-      for (size_t i = 0; i < triad_counts.size(); ++i)
-        cerr << triad_counts[i] << endl;
-    }
-
     param_set optimized_ps(ps);
 
     if (test_pi0) {
@@ -287,6 +277,26 @@ int main(int argc, const char **argv) {
     }
 
     optimized_ps.write(t, outfile);
+
+
+    if (VERBOSE) {
+      cerr << "[sufficient statistics]" << endl;
+      cerr << "root_start_counts:\n"
+           << root_start_counts.first << '\t'
+           << root_start_counts.second << endl
+           << "root_counts:\n" << root_counts << endl
+           << "start_counts:\n";
+      copy(start_counts.begin(), start_counts.end(),
+           std::ostream_iterator<pair_state>(cerr, "\n"));
+      cerr << "triad_counts:\n";
+      copy(triad_counts.begin(), triad_counts.end(),
+           std::ostream_iterator<triple_state>(cerr, "\n"));
+      const double llk =
+        log_likelihood(subtree_sizes, optimized_ps, root_start_counts,
+                       root_counts, start_counts, triad_counts);
+      cerr << "log_likelihood=" << llk << endl;
+    }
+
   }
   catch (const SMITHLABException &e) {
     cerr << e.what() << endl;
