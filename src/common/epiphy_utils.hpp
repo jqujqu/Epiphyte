@@ -60,14 +60,14 @@ kl_divergence(const std::vector<double> &P, const std::vector<double> &Q) {
   return d;
 }
 
-// ADS: temporary debug function; remember to remove; not even used?
-template <class T> void
-print_vec(std::ostream &out,
-          const std::vector<T> &dat, const std::string &s, std::string delim = "\t") {
-  out << s << '\n';
-  copy(dat.begin(), dat.end(), std::ostream_iterator<T>(out, delim.c_str()));
-  out << '\n';
-}
+// // ADS: temporary debug function; remember to remove; not even used?
+// template <class T> void
+// print_vec(std::ostream &out,
+//           const std::vector<T> &dat, const std::string &s, std::string delim = "\t") {
+//   out << s << '\n';
+//   copy(dat.begin(), dat.end(), std::ostream_iterator<T>(out, delim.c_str()));
+//   out << '\n';
+// }
 
 inline bool
 missing_meth_value(const double x) {return x == -1.0;}
