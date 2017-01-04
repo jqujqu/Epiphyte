@@ -69,6 +69,30 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
 
 
 double
+log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
+               const pair<double, double> &root_start_counts,
+               const pair_state &root_counts,
+               const vector<pair_state> &start_counts) { // dim=[treesize x 2 x 2]
+
+  vector<pair_state> P;
+  vector<triple_state> GP;
+  get_transition_matrices(ps, P, GP);
+
+  double llk =
+    (root_start_counts.first*log(ps.pi0) +
+     root_start_counts.second*log(1.0 - ps.pi0)) + // ADS: is this right?
+    (root_counts(0, 0)*log(ps.g0) + root_counts(0, 1)*log(1.0 - ps.g0) +
+     root_counts(1, 0)*log(1.0 - ps.g1) + root_counts(1, 1)*log(ps.g1));
+
+  for (size_t node = 1; node < subtree_sizes.size(); ++node)
+    for (size_t j = 0; j < 2; ++j)
+      for (size_t k = 0; k < 2; ++k)
+        llk += start_counts[node](j, k)*log(P[node](j, k));
+  return llk;
+}
+
+
+double
 log_likelihood(const vector<size_t> &subtree_sizes,
                const pair<double, double> &root_start_counts,
                const pair_state &root_counts,
