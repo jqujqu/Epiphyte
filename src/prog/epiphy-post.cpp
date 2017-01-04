@@ -214,6 +214,7 @@ main(int argc, const char **argv) {
     OptionParser opt_parse(strip_path(argv[0]),
                            "estimate posteriors on methylation states",
                            "<param-file> <meth-table>");
+    opt_parse.add_opt("outfile", 'o', "output file", true, outfile);
     opt_parse.add_opt("mcmc-iter", 'h', "max mcmc iterations (default: " +
                       to_string(mh_max_iterations) + ")",
                       false, mh_max_iterations);
