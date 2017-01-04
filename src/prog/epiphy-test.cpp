@@ -94,11 +94,11 @@ read_meth_table(const string &table_file,
 
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
-                 vector<pair<size_t, size_t> > &reset_points) {
+                 vector<pair<size_t, size_t> > &blocks) {
   for (size_t i = 0; i < sites.size(); ++i)
     if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
-      reset_points.push_back(std::make_pair(i, i));
-    else reset_points.back().second = i;
+      blocks.push_back(std::make_pair(i, i));
+    else blocks.back().second = i;
 }
 
 
@@ -161,10 +161,12 @@ int main(int argc, const char **argv) {
       cerr << "pi0, G, lambda and branch are mutually exclusive" << endl;
       return EXIT_SUCCESS;
     }
-    const bool optimize_all = (flag_sum + test_branch) == 0;
     const string meth_table_file(leftover_args.front());
     const string param_file(leftover_args.back());
     /****************** END COMMAND LINE OPTIONS *****************/
+
+    if (independent_sites)
+      desert_size = 0;
 
     // initialize the random number generator
     std::random_device rd;
@@ -202,10 +204,10 @@ int main(int argc, const char **argv) {
 
     if (VERBOSE)
       cerr << "[separating by deserts]" << endl;
-    vector<pair<size_t, size_t> > reset_points;
-    separate_regions(desert_size, sites, reset_points);
+    vector<pair<size_t, size_t> > blocks;
+    separate_regions(desert_size, sites, blocks);
     if (VERBOSE)
-      cerr << "==> n_resets=" << reset_points.size() << endl;
+      cerr << "==> n_resets=" << blocks.size() << endl;
 
     vector<triple_state> triad_counts;
     vector<pair_state> start_counts;
@@ -213,7 +215,7 @@ int main(int argc, const char **argv) {
     pair<double, double> root_start_counts;
 
     count_triads(subtree_sizes, parent_ids,
-                 states, reset_points,
+                 states, blocks,
                  root_start_counts,
                  root_counts,
                  start_counts,
@@ -266,16 +268,6 @@ int main(int argc, const char **argv) {
                             start_counts, triad_counts, optimized_ps);
     }
 
-    if (optimize_all) {
-      if (VERBOSE)
-        cerr << "optimizing all parameters" << endl;
-      optimize_params(VERBOSE, subtree_sizes,
-                      root_start_counts,
-                      root_counts,
-                      start_counts,
-                      triad_counts, optimized_ps);
-    }
-
     optimized_ps.write(t, outfile);
 
 
@@ -288,9 +280,11 @@ int main(int argc, const char **argv) {
            << "start_counts:\n";
       copy(start_counts.begin(), start_counts.end(),
            std::ostream_iterator<pair_state>(cerr, "\n"));
-      cerr << "triad_counts:\n";
-      copy(triad_counts.begin(), triad_counts.end(),
-           std::ostream_iterator<triple_state>(cerr, "\n"));
+      if (!independent_sites) {
+        cerr << "triad_counts:\n";
+        copy(triad_counts.begin(), triad_counts.end(),
+             std::ostream_iterator<triple_state>(cerr, "\n"));
+      }
       const double llk =
         log_likelihood(subtree_sizes, optimized_ps, root_start_counts,
                        root_counts, start_counts, triad_counts);
