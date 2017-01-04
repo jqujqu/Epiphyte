@@ -201,31 +201,28 @@ expectation_step(const bool VERBOSE,
 
   bool converged = false;
   size_t mh_iter = 0;
-  size_t burned = 0;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
-      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
+      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
+           << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
 
     // take the sample
     sampler.sample_states(subtree_sizes, parent_ids, ps, tree_probs,
                           blocks, sampled_states);
 
-    pair<double, double> root_start_counts_samp;
-    pair_state root_counts_samp;
-    vector<pair_state> start_counts_samp;
-    vector<triple_state> triad_counts_samp;
-    count_triads(subtree_sizes, parent_ids, sampled_states, blocks,
-                 root_start_counts_samp, root_counts_samp, start_counts_samp,
-                 triad_counts_samp);
+    if (mh_iter > burnin) {
 
-    // retain previous values for comparison with next iteration
-    vector<triple_state> triad_counts_prev(triad_counts);
+      pair<double, double> root_start_counts_samp;
+      pair_state root_counts_samp;
+      vector<pair_state> start_counts_samp;
+      vector<triple_state> triad_counts_samp;
+      count_triads(subtree_sizes, parent_ids, sampled_states, blocks,
+                   root_start_counts_samp, root_counts_samp, start_counts_samp,
+                   triad_counts_samp);
 
-    if (burned < burnin) {
-      ++burned;
-      if (VERBOSE)
-        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ") burned]";
-    } else {
+      // retain previous values for comparison with next iteration
+      vector<triple_state> triad_counts_prev(triad_counts);
+
       // update the counts with current iteration samples
       root_start_counts.first += root_start_counts_samp.first;
       root_start_counts.second += root_start_counts_samp.second;
@@ -382,7 +379,7 @@ main(int argc, const char **argv) {
 
     size_t rng_seed = numeric_limits<size_t>::max();
 
-    string outfile;
+    string outfile("/dev/stdout");
 
     size_t desert_size = 1000;
 
@@ -467,11 +464,11 @@ main(int argc, const char **argv) {
     for (size_t i = 0; i < branches.size(); ++i)
       branches[i] = 1.0 - 1.0/exp(branches[i]);
 
-    const double pi0 = 0.5;   // MAGIC
-    const double rate0 = 0.5; // MAGIC
-    const double g0 = 0.9;    // MAGIC
-    const double g1 = 0.9;    // MAGIC
-    param_set params(pi0, rate0, g0, g1, branches);
+    static const double pi0_init   = 0.5; // MAGIC
+    static const double rate0_init = 0.5; // MAGIC
+    static const double g0_init    = 0.9; // MAGIC
+    static const double g1_init    = 0.9; // MAGIC
+    param_set params(pi0_init, rate0_init, g0_init, g1_init, branches);
     if (VERBOSE)
       cerr << "[starting params={" << params << "}]" << endl;
 
