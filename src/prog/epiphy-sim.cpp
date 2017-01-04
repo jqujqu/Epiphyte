@@ -62,11 +62,11 @@ using std::pair;
 
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
-                 vector<pair<size_t, size_t> > &reset_points) {
+                 vector<pair<size_t, size_t> > &blocks) {
   for (size_t i = 0; i < sites.size(); ++i)
     if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
-      reset_points.push_back(std::make_pair(i, i));
-    else reset_points.back().second = i;
+      blocks.push_back(std::make_pair(i, i));
+    else blocks.back().second = i;
 }
 
 
@@ -297,10 +297,8 @@ int main(int argc, const char **argv) {
 
     vector<size_t> subtree_sizes;
     t.get_subtree_sizes(subtree_sizes);
-
     vector<string> leaf_names;
     t.get_leaf_names(leaf_names);
-
     t.assign_missing_node_names();
 
     const size_t n_nodes = t.get_size();
@@ -322,8 +320,8 @@ int main(int argc, const char **argv) {
     }
 
     if (VERBOSE) {
-      cerr << "==> horizontal transitions:" << endl;
-      cerr << Gsamp << endl;
+      cerr << "==> horizontal transitions:" << endl
+           << Gsamp << endl;
       cerr << "==> vertical transitions:" << endl;
       for (size_t i = 0; i < n_nodes; ++i)
         cerr << Psamp[i] << endl;
@@ -344,36 +342,43 @@ int main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "==> n_sites=" << n_sites << endl;
 
-    if (VERBOSE)
-      cerr << "[separating by deserts]" << endl;
-    vector<pair<size_t, size_t> > reset_points;
-    separate_regions(desert_size, sites, reset_points);
-    if (VERBOSE)
-      cerr << "==> n_resets=" << reset_points.size() << endl;
-
-    if (VERBOSE)
-      cerr << "[simulating]" << endl;
-
     pair<double, double> root_start_counts;
     pair_state root_counts;
     vector<pair_state> start_counts(n_nodes);
     vector<triple_state> triad_counts(n_nodes);
 
     vector<vector<bool> > states(n_sites);
-    for (size_t i = 0; i < reset_points.size(); ++i) {
 
-      const size_t start = reset_points[i].first;
-      const size_t end = reset_points[i].second;
-
-      simulate_site_start(subtree_sizes, ps, Psamp,
-                          root_start_counts, start_counts, states[start]);
-      for (size_t pos = start + 1; pos <= end; ++pos)
-        simulate_site(subtree_sizes, Gsamp, GPsamp, states[pos - 1],
-                      root_counts, triad_counts, states[pos]);
+    if (independent_sites) {
+      if (VERBOSE)
+        cerr << "[simulating]" << endl;
+      for (size_t i = 0; i < states.size(); ++i)
+        simulate_site_start(subtree_sizes, ps, Psamp,
+                            root_start_counts, start_counts, states[i]);
     }
+    else {
+      if (VERBOSE)
+        cerr << "[separating by deserts]" << endl;
+      vector<pair<size_t, size_t> > blocks;
+      separate_regions(desert_size, sites, blocks);
+      if (VERBOSE)
+        cerr << "==> n_resets=" << blocks.size() << endl;
 
-    const double llk = log_likelihood(subtree_sizes, ps, root_start_counts,
-                                      root_counts, start_counts, triad_counts);
+      if (VERBOSE)
+        cerr << "[simulating]" << endl;
+
+      for (size_t i = 0; i < blocks.size(); ++i) {
+
+        const size_t start = blocks[i].first;
+        const size_t end = blocks[i].second;
+
+        simulate_site_start(subtree_sizes, ps, Psamp,
+                            root_start_counts, start_counts, states[start]);
+        for (size_t pos = start + 1; pos <= end; ++pos)
+          simulate_site(subtree_sizes, Gsamp, GPsamp, states[pos - 1],
+                        root_counts, triad_counts, states[pos]);
+      }
+    }
 
     vector<size_t> leaves_preorder;
     subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
@@ -399,9 +404,16 @@ int main(int argc, const char **argv) {
            << "start_counts:\n";
       copy(start_counts.begin(), start_counts.end(),
            ostream_iterator<pair_state>(cerr, "\n"));
-      cerr << "triad_counts:\n";
-      copy(triad_counts.begin(), triad_counts.end(),
-           ostream_iterator<triple_state>(cerr, "\n"));
+      if (!independent_sites) {
+        cerr << "triad_counts:\n";
+        copy(triad_counts.begin(), triad_counts.end(),
+             ostream_iterator<triple_state>(cerr, "\n"));
+      }
+      const double llk = independent_sites ?
+        log_likelihood(subtree_sizes, ps, root_start_counts,
+                       root_counts, start_counts) :
+        log_likelihood(subtree_sizes, ps, root_start_counts,
+                       root_counts, start_counts, triad_counts);
       cerr << "log_likelihood=" << llk << endl;
     }
 
