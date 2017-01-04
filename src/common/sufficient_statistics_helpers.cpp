@@ -118,6 +118,8 @@ get_transition_matrices_deriv(const param_set &ps,
   GP_dg1 = vector<triple_state>(n_nodes);
   GP_dT = vector<triple_state>(n_nodes);
 
+  P[0] = pair_state(1.0, 0.0, 0.0, 1.0);
+
   for (size_t i = 1; i < n_nodes; ++i) {
     make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
     combine_horiz_and_vert_deriv(ps, i, P[i], GP[i], GP_drate[i],
@@ -152,6 +154,8 @@ get_transition_matrices(const param_set &ps,
   P = vector<pair_state>(n_nodes);
   GP = vector<triple_state>(n_nodes);
   pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+
+  P[0] = pair_state(1.0, 0.0, 0.0, 1.0);
 
   for (size_t i = 1; i < n_nodes; ++i) {
     make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
