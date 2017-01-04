@@ -30,6 +30,7 @@
 #include <cmath>      //std::abs
 #include <limits>     //std::numeric_limits
 #include <iterator>   //std::distance
+#include <random>
 
 /* from smithlab_cpp */
 #include "OptionParser.hpp"
@@ -45,12 +46,6 @@
 #include "PhyloTree.hpp"
 #include "param_set.hpp"
 #include "epiphy_utils.hpp"
-
-#include <random>
-using std::uniform_real_distribution;
-//std::random_device rd; //seed generator
-//std::mt19937_64 gen(rd()); //generator initialized with seed from rd
-std::mt19937_64 gen(0); //generator initialized with seed 0
 
 using std::string;
 using std::vector;
@@ -126,11 +121,16 @@ binary_parsimony_traceback(const vector<size_t> &subtree_sizes,
 
 
 static size_t
-tree_prob_to_states(const vector<size_t> &subtree_sizes,
+tree_prob_to_states(const size_t rng_seed,
+                    const vector<size_t> &subtree_sizes,
                     const vector<vector<double> > &tree_probs,
                     vector<string> &states) {
   static const double state_cutoff = 0.5; // MAGIC
-  uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
+
+  std::random_device rd; // random devide to generate seed
+  std::mt19937_64 gen(rng_seed == numeric_limits<size_t>::max() ? rd() : rng_seed);
+
+  std::uniform_real_distribution<> dis(0, 1);  // interval [0, 1)
 
   states.clear();
   size_t pars_score = 0;
@@ -204,6 +204,8 @@ main(int argc, const char **argv) {
 
   try {
 
+    size_t rng_seed = numeric_limits<size_t>::max();
+
     string outfile;
 
     size_t desert_size = 1000;
@@ -219,14 +221,16 @@ main(int argc, const char **argv) {
     OptionParser opt_parse(strip_path(argv[0]), "segment epigenomic states for "
                            "species with specified evolutionary relationships",
                            "<param-file> <meth-table>");
+    opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
+                      "(default: " + toa(min_sites_per_frag) + ")", false,
+                      min_sites_per_frag);
+    opt_parse.add_opt("seed", 's', "rng seed (default: none)",
+                      false, rng_seed);
     opt_parse.add_opt("verbose", 'v', "print more run info "
                       "(default: " + string(VERBOSE ? "true" : "false") + ")",
                       false, VERBOSE);
     opt_parse.add_opt("out", 'o', "output file name (default: stdout)",
                       true, outfile);
-    opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
-                      "(default: " + toa(min_sites_per_frag) + ")", false,
-                      min_sites_per_frag);
 
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
@@ -306,7 +310,7 @@ main(int argc, const char **argv) {
       cerr << "[building domains of contiguous state]" << endl;
     vector<string> states;
     vector<GenomicRegion> domains;
-    tree_prob_to_states(subtree_sizes, tree_probs, states);
+    tree_prob_to_states(rng_seed, subtree_sizes, tree_probs, states);
     build_domain(min_sites_per_frag, desert_size, sites, states, domains);
     if (VERBOSE)
       cerr << "total domains: " << domains.size() << endl;
