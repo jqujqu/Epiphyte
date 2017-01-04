@@ -79,6 +79,70 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
 }
 
 
+size_t
+dist_to_obs(const vector<vector<double> > &tree_probs,
+                     const vector<size_t> &leaves_preorder,
+                     const vector<MSite> &sites, const size_t pos,
+                     size_t &max_up_dist, size_t &max_up_dist_site) {
+  /* compute distance to up/donwstream observed sites in each leaf species */
+  const size_t n_leaves = leaves_preorder.size();
+  vector<size_t>up_dist(n_leaves, numeric_limits<size_t>::max());
+  vector<size_t>up_dist_site(n_leaves, numeric_limits<size_t>::max());
+
+  for (size_t i = 0; i < leaves_preorder.size(); ++i) {
+    const size_t leafid =  leaves_preorder[i];
+    // upstream
+    size_t j = pos;
+    while (j > 0 && missing_meth_value(tree_probs[j][leafid])) --j;
+    if (!missing_meth_value(tree_probs[j][leafid])) {
+      up_dist[i] = distance(sites[j], sites[pos]);
+      up_dist_site[i] = j;
+    }
+  }
+
+  size_t max_up_id = std::distance(up_dist.begin(),
+                                   max_element(up_dist.begin(), up_dist.end()));
+  max_up_dist_site = up_dist_site[max_up_id];
+  max_up_dist = up_dist[max_up_id];
+}
+
+
+static void
+separate_regions(const vector<size_t> &subtree_sizes,
+                 const vector<vector<double> > &tree_probs,
+                 const vector<MSite> &sites,
+                 const size_t desert_size,
+                 const size_t min_block_size,
+                 vector<pair<size_t, size_t> > &blocks) {
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
+
+  const size_t nsites = sites.size();
+  vector<size_t> max_up_dist(nsites);
+  vector<size_t> max_up_dist_site(nsites);
+
+  /* measure steps to observed data in each species */
+  for (size_t i = 0; i < nsites; ++i) {
+    dist_to_obs(tree_probs, leaves_preorder, sites, i,
+                max_up_dist[i], max_up_dist_site[i]);
+  }
+
+  vector<pair<size_t, size_t> > all_blocks;
+  for (size_t i = 0; i < nsites; ++i) {
+    if (i == 0 || max_up_dist[i] > desert_size ||
+        distance(sites[i - 1], sites[i]) > desert_size)
+      all_blocks.push_back(std::make_pair(i, i));
+    else
+      all_blocks.back().second = i;
+  }
+
+  for (size_t i = 0; i < all_blocks.size(); ++i) {
+    if (all_blocks[i].second - all_blocks[i].first +1 >= min_block_size)
+      blocks.push_back(all_blocks[i]);
+  }
+}
+
+
 // putting this function here because it is related to the parameters
 static double
 estimate_pi0(const vector<vector<double> > &meth) {
@@ -511,9 +575,25 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[separating deserts]" << endl;
     vector<pair<size_t, size_t> > blocks;
-    separate_regions(desert_size, sites, blocks);
-    if (VERBOSE)
-      cerr << "number of blocks: " << blocks.size() << endl;
+    //separate_regions(desert_size, sites, blocks);
+    const size_t min_block_size = 2;
+    separate_regions(subtree_sizes, tree_probs, sites,
+                     desert_size, min_block_size, blocks);
+
+    // when min_block_size > 1, bocks may not cover all sites
+    if (VERBOSE) {
+      cerr << "number of blocks: " << blocks.size() ;
+      size_t count = 0;
+      for (size_t i = 0; i < blocks.size(); ++i) {
+        count += blocks[i].second - blocks[i].first + 1;
+      }
+
+      cerr << " (" << blocks.size()
+           << " blocks with minsize " << min_block_size << ", covering "
+           << count << " sites)" << endl;
+    }
+
+
 
     // heuristic starting points for G and pi
     estimate_g0_g1(tree_probs, params.g0, params.g1);
