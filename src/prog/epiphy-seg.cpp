@@ -216,10 +216,9 @@ main(int argc, const char **argv) {
     bool VERBOSE = false;
 
     /********************* COMMAND LINE OPTIONS ***********************/
-    OptionParser opt_parse(strip_path(argv[0]), "Estimate phylogeny shape "
-                           "and methylation state transition rates for "
-                           "methylome evolution",
-                           "<newick> <hypoprob-tab>");
+    OptionParser opt_parse(strip_path(argv[0]), "segment epigenomic states for "
+                           "species with specified evolutionary relationships",
+                           "<param-file> <meth-table>");
     opt_parse.add_opt("verbose", 'v', "print more run info "
                       "(default: " + string(VERBOSE ? "true" : "false") + ")",
                       false, VERBOSE);
@@ -313,12 +312,13 @@ main(int argc, const char **argv) {
       cerr << "total domains: " << domains.size() << endl;
 
     // output the domains as contiguous intervals
-    std::ofstream out(outfile.c_str());
+    std::ofstream of;
+    if (!outfile.empty()) of.open(outfile.c_str());
+    std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
     if (!out)
       throw SMITHLABException("bad output file: " + outfile);
     copy(domains.begin(), domains.end(),
          ostream_iterator<GenomicRegion>(out, "\n"));
-
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
