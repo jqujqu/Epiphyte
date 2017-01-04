@@ -58,6 +58,7 @@ using std::make_pair;
 using std::numeric_limits;
 using std::min;
 using std::max;
+using std::max_element;
 using std::istringstream;
 using std::to_string;
 using std::ostream_iterator;
@@ -78,12 +79,72 @@ std::mt19937_64 gen(0); //generator initialized with seed 0
 
 
 static void
-separate_regions(const size_t desert_size, vector<MSite> &sites,
+separate_regions(const size_t desert_size, const vector<MSite> &sites,
                  vector<pair<size_t, size_t> > &blocks) {
   for (size_t i = 0; i < sites.size(); ++i)
     if (i == 0 || distance(sites[i - 1], sites[i]) > desert_size)
       blocks.push_back(std::make_pair(i, i));
     else blocks.back().second = i;
+}
+
+size_t
+dist_to_obs(const vector<vector<double> > &tree_probs,
+                     const vector<size_t> &leaves_preorder,
+                     const vector<MSite> &sites, const size_t pos,
+                     size_t &max_up_dist, size_t &max_up_dist_site) {
+  /* compute distance to up/donwstream observed sites in each leaf species */
+  const size_t n_leaves = leaves_preorder.size();
+  vector<size_t>up_dist(n_leaves, numeric_limits<size_t>::max());
+  vector<size_t>up_dist_site(n_leaves, numeric_limits<size_t>::max());
+
+  for (size_t i = 0; i < leaves_preorder.size(); ++i) {
+    const size_t leafid =  leaves_preorder[i];
+    // upstream
+    size_t j = pos;
+    while (j > 0 && missing_meth_value(tree_probs[j][leafid])) --j;
+    if (!missing_meth_value(tree_probs[j][leafid])) {
+      up_dist[i] = distance(sites[j], sites[pos]);
+      up_dist_site[i] = j;
+    }
+  }
+
+  size_t max_up_id = std::distance(up_dist.begin(),
+                                   max_element(up_dist.begin(), up_dist.end()));
+  max_up_dist_site = up_dist_site[max_up_id];
+  max_up_dist = up_dist[max_up_id];
+}
+
+static void
+separate_regions_for_training(const vector<size_t> &subtree_sizes,
+                              const vector<vector<double> > &tree_probs,
+                              const vector<MSite> &sites,
+                              const size_t desert_size,
+                              const size_t min_block_size,
+                              vector<pair<size_t, size_t> > &training_blocks,
+                              vector<pair<size_t, size_t> > &blocks) {
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
+
+  const size_t nsites = sites.size();
+  vector<size_t> max_up_dist(nsites);
+  vector<size_t> max_up_dist_site(nsites);
+
+  for (size_t i = 0; i < nsites; ++i) {
+    dist_to_obs(tree_probs, leaves_preorder, sites, i,
+                max_up_dist[i], max_up_dist_site[i]);
+  }
+
+  for (size_t i = 0; i < nsites; ++i) {
+    if (i == 0 || max_up_dist[i] > desert_size)
+      blocks.push_back(std::make_pair(i, i));
+    else
+      blocks.back().second = i;
+  }
+
+  for (size_t i = 0; i < blocks.size(); ++i) {
+    if (blocks[i].second - blocks[i].first +1 > min_block_size)
+      training_blocks.push_back(blocks[i]);
+  }
 }
 
 
@@ -254,7 +315,7 @@ expectation_step(const bool VERBOSE,
     if (burned < burnin) {
       ++burned;
       if (VERBOSE)
-        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ") burned]";
+        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
     } else {
       // update the counts with current iteration samples
       root_start_counts.first += root_start_counts_samp.first;
@@ -749,10 +810,31 @@ main(int argc, const char **argv) {
 
     if (VERBOSE)
       cerr << "[separating deserts]" << endl;
+    vector<pair<size_t, size_t> > training_blocks;
     vector<pair<size_t, size_t> > blocks;
-    separate_regions(desert_size, sites, blocks);
-    if (VERBOSE)
-      cerr << "number of blocks: " << blocks.size() << endl;
+    //separate_regions(desert_size, sites, blocks);
+
+    const size_t min_block_size = 2;
+    separate_regions_for_training(subtree_sizes, tree_probs, sites,
+                                  desert_size, min_block_size,
+                                  training_blocks, blocks);
+
+    if (VERBOSE) {
+      cerr << "number of blocks: " << blocks.size() ;
+      if (min_block_size > 1) {
+        size_t count = 0;
+        for (size_t i = 0; i < training_blocks.size(); ++i) {
+          count += training_blocks[i].second - training_blocks[i].first + 1;
+        }
+
+        cerr << " (" << training_blocks.size()
+             << " blocks with minsize " << min_block_size << ", covering "
+             << count << " sites)";
+      }
+      cerr << endl;
+
+
+    }
 
     if (paramfile.empty()) {
       // heuristic starting points for G and pi
@@ -793,9 +875,11 @@ main(int argc, const char **argv) {
       const epiphy_mcmc sampler(mh_max_iterations, 0);
 
       if (paramfile.empty())
-        expectation_maximization(VERBOSE, em_max_iterations, opt_max_iterations,
-                                 mh_max_iterations, sampler, subtree_sizes, parent_ids,
-                                 tree_probs, blocks, params,
+        expectation_maximization(VERBOSE, em_max_iterations,
+                                 opt_max_iterations,
+                                 mh_max_iterations, sampler,
+                                 subtree_sizes, parent_ids,
+                                 tree_probs, training_blocks, params,
                                  root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
 
