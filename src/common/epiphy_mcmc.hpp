@@ -107,6 +107,15 @@ private:
                       const std::vector<T> &states_next,
                       const size_t node_id) const;
 
+  template <class T> void
+  sample_states_indep(const std::vector<size_t> &subtree_sizes,
+                      const std::vector<size_t> &parent_ids,
+                      const std::pair<double, double> &log_pi,
+                      const std::vector<pair_state> &logP,
+                      const std::vector<double> &marginals,
+                      std::vector<T> &states_curr,
+                      const size_t node_id) const;
+
   mutable std::uniform_real_distribution<> dis;
   mutable std::mt19937_64 gen;
   size_t max_iterations;
@@ -260,6 +269,42 @@ MB_state_start(const std::vector<size_t> &subtree_sizes,
 
 
 template <class T>
+static double
+MB_state_indep(const std::vector<size_t> &subtree_sizes,
+               const std::vector<size_t> &parent_ids,
+               const std::pair<double, double> &log_pi,
+               const std::vector<pair_state> &logP,
+               const std::vector<T> &meth_curr,
+               const size_t node_id) {
+
+  double lp0 = 0.0, lp1 = 0.0;
+  const size_t parent = parent_ids[node_id];
+  // transition from parents in network [same here as parents in tree]
+  // (or root distribution)
+  if (is_root(node_id)) {
+    lp0 += log_pi.first;
+    lp1 += log_pi.second;
+  }
+  else {
+    const T curr_parent_state = meth_curr[parent];
+    lp0 += logP[node_id](curr_parent_state, 0);
+    lp1 += logP[node_id](curr_parent_state, 1);
+  }
+
+  // children in network (only one parent; current self)
+  for (size_t count = 1; count < subtree_sizes[node_id];) {
+    const size_t child_id = node_id + count;
+    const T curr_child_state = meth_curr[child_id];
+    lp0 += logP[child_id](0, curr_child_state);
+    lp1 += logP[child_id](1, curr_child_state);
+    count += subtree_sizes[child_id];
+  }
+
+  return lp0 - lp1;
+}
+
+
+template <class T>
 void
 epiphy_mcmc::accept_or_reject_proposal(const double log_ratio, const size_t idx,
                                        std::vector<T> &states) const {
@@ -368,6 +413,35 @@ epiphy_mcmc::sample_states_start(const std::vector<size_t> &subtree_sizes,
 
 template <class T>
 void
+epiphy_mcmc::sample_states_indep(const std::vector<size_t> &subtree_sizes,
+                                 const std::vector<size_t> &parent_ids,
+                                 const std::pair<double, double> &log_pi,
+                                 const std::vector<pair_state> &logP,
+                                 const std::vector<double> &marginals,
+                                 std::vector<T> &states_curr,
+                                 const size_t node_id) const {
+
+  if (is_leaf(subtree_sizes[node_id]) && !missing_meth_value(marginals[node_id]))
+    states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
+
+  else {
+    for (size_t count = 1; count < subtree_sizes[node_id]; ) {
+      const size_t child_id = node_id + count;
+      sample_states_indep(subtree_sizes, parent_ids, log_pi, logP,
+                          marginals, states_curr, child_id);
+      count += subtree_sizes[child_id];
+    }
+    const double log_ratio =
+      MB_state_indep(subtree_sizes, parent_ids, log_pi, logP,
+                     states_curr, node_id);
+
+    accept_or_reject_proposal(log_ratio, node_id, states_curr);
+  }
+}
+
+
+template <class T>
+void
 epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
                            const std::vector<size_t> &parent_ids,
                            const param_set &params,
@@ -390,13 +464,18 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
   for (size_t i = 0; i < blocks.size(); ++i) {
     const size_t start = blocks[i].first;
     const size_t end = blocks[i].second;
-    sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
-                        marginals[start], states[start], states[start + 1], 0);
-    for (size_t pos = start + 1; pos < end; ++pos)
-      sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals[pos],
-                           states[pos - 1], states[pos], states[pos + 1], 0);
-    sample_states_end(subtree_sizes, parent_ids, logG, logGP, marginals[end],
-                      states[end - 1], states[end], 0);
+    if (start < end) {
+      sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                          marginals[start], states[start], states[start + 1], 0);
+      for (size_t pos = start + 1; pos < end; ++pos)
+        sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals[pos],
+                             states[pos - 1], states[pos], states[pos + 1], 0);
+      sample_states_end(subtree_sizes, parent_ids, logG, logGP, marginals[end],
+                        states[end - 1], states[end], 0);
+    }
+    else
+      sample_states_indep(subtree_sizes, parent_ids, log_pi, logP,
+                          marginals[start], states[start], 0);
   }
 }
 
@@ -435,13 +514,18 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
   for (size_t i = 0; i < blocks.size(); ++i) {
     const size_t start = blocks[i].first;
     const size_t end = blocks[i].second;
-    sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
-                        marginals[start], states[start], states[start + 1], 0);
-    for (size_t pos = start + 1; pos < end; ++pos)
-      sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals[pos],
-                           states[pos - 1], states[pos], states[pos + 1], 0);
-    sample_states_end(subtree_sizes, parent_ids, logG, logGP, marginals[end],
-                      states[end - 1], states[end], 0);
+    if (start < end) {
+      sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                          marginals[start], states[start], states[start + 1], 0);
+      for (size_t pos = start + 1; pos < end; ++pos)
+        sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals[pos],
+                             states[pos - 1], states[pos], states[pos + 1], 0);
+      sample_states_end(subtree_sizes, parent_ids, logG, logGP, marginals[end],
+                        states[end - 1], states[end], 0);
+    }
+    else
+      sample_states_indep(subtree_sizes, parent_ids, log_pi, logP, marginals[end],
+                          states[start], 0);
   }
 }
 
