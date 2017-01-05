@@ -87,70 +87,87 @@ separate_regions(const size_t desert_size, const vector<MSite> &sites,
     else blocks.back().second = i;
 }
 
-size_t
-dist_to_obs(const vector<vector<double> > &tree_probs,
-                     const vector<size_t> &leaves_preorder,
-                     const vector<MSite> &sites, const size_t pos,
-                     size_t &max_up_dist, size_t &max_up_dist_site) {
-  /* compute distance to up/donwstream observed sites in each leaf species */
-  const size_t n_leaves = leaves_preorder.size();
-  vector<size_t>up_dist(n_leaves, numeric_limits<size_t>::max());
-  vector<size_t>up_dist_site(n_leaves, numeric_limits<size_t>::max());
+void
+mark_sites(const vector<size_t> &subtree_sizes,
+           const vector<MSite> &sites,
+           const vector<vector<double> > &tree_probs,
+           const size_t desert_size, const size_t node_id,
+           vector<vector<bool> > &marks) {
 
-  for (size_t i = 0; i < leaves_preorder.size(); ++i) {
-    const size_t leafid =  leaves_preorder[i];
-    // upstream
-    size_t j = pos;
-    while (j > 0 && missing_meth_value(tree_probs[j][leafid])) --j;
-    if (!missing_meth_value(tree_probs[j][leafid])) {
-      up_dist[i] = distance(sites[j], sites[pos]);
-      up_dist_site[i] = j;
+  if (is_leaf(subtree_sizes[node_id])) {
+    size_t prev_obs = numeric_limits<size_t>::max();
+
+    for (size_t i = 0; i < tree_probs.size();) {
+      // find next observed site
+      while(i < tree_probs.size() &&
+            missing_meth_value(tree_probs[i][node_id])) ++i;
+
+      if (i < tree_probs.size()) {
+        marks[i][node_id] = true;
+
+        // fill in interval if not end of a desert
+        if (i < tree_probs.size() && prev_obs < i &&
+            distance(sites[prev_obs], sites[i]) <= desert_size)
+          for (size_t j = prev_obs + 1; j < i; ++j)
+            marks[j][node_id] = true;
+
+        prev_obs = i;
+        ++i;
+      }
+    }
+  } else {
+    for (size_t count = 1; count < subtree_sizes[node_id];) {
+      mark_sites(subtree_sizes, sites, tree_probs,
+                 desert_size, node_id + count, marks);
+      // non-desert sites in an internal node
+      // is the intersection of non-deserts of all its children
+      if (count == 1) {
+        for (size_t i = 0; i < tree_probs.size(); ++i)
+          marks[i][node_id] = marks[i][node_id + count];
+      } else {
+        for (size_t i = 0; i < tree_probs.size(); ++i)
+          marks[i][node_id] =  marks[i][node_id] && marks[i][node_id + count];
+      }
+      count += subtree_sizes[node_id + count];
     }
   }
-
-  size_t max_up_id = std::distance(up_dist.begin(),
-                                   max_element(up_dist.begin(), up_dist.end()));
-  max_up_dist_site = up_dist_site[max_up_id];
-  max_up_dist = up_dist[max_up_id];
 }
 
-static void
-separate_regions_for_training(const vector<size_t> &subtree_sizes,
-                              const vector<vector<double> > &tree_probs,
-                              const vector<MSite> &sites,
-                              const size_t desert_size,
-                              const size_t min_block_size,
-                              vector<pair<size_t, size_t> > &training_blocks,
-                              vector<pair<size_t, size_t> > &blocks) {
-  vector<size_t> leaves_preorder;
-  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
 
-  const size_t nsites = sites.size();
-  vector<size_t> max_up_dist(nsites);
-  vector<size_t> max_up_dist_site(nsites);
 
-  for (size_t i = 0; i < nsites; ++i) {
-    dist_to_obs(tree_probs, leaves_preorder, sites, i,
-                max_up_dist[i], max_up_dist_site[i]);
+void
+mark_sites(const vector<size_t> subtree_sizes,
+           const vector<MSite> &sites,
+           const vector<vector<double> > &tree_probs,
+           const size_t desert_size,
+           vector<vector<bool> > &marks) {
+  marks = vector<vector<bool> >(tree_probs.size(),
+                                vector<bool>(subtree_sizes.size(), false));
+  cerr << "[in mark_sites]" << endl;
+  mark_sites(subtree_sizes, sites, tree_probs,
+             desert_size, 0, marks);
+}
+
+
+void
+marks_to_blocks(const vector<size_t> subtree_sizes,
+                const vector<MSite> &sites,
+                const size_t desert_size,
+                const vector<vector<bool> > &marks,
+                vector<vector<pair<size_t, size_t> > > &blocks) {
+  blocks = vector<vector<pair<size_t, size_t> > >(subtree_sizes.size());
+  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
+    for (size_t i = 0; i < marks.size(); ++i) {
+      if ((i == 0 && marks[i][node_id]) ||
+          (i > 0 && !marks[i - 1][node_id] && marks[i][node_id]) ||
+          (i > 0 && marks[i - 1][node_id] && marks[i][node_id] &&
+           distance(sites[i - 1], sites[i]) > desert_size)) {
+        blocks[node_id].push_back(std::make_pair(i, i));
+      } else if (i > 0 && marks[i - 1][node_id] && marks[i][node_id]) {
+        blocks[node_id].back().second = i;
+      }
+    }
   }
-
-  for (size_t i = 0; i < nsites; ++i) {
-    if (i == 0 || max_up_dist[i] > desert_size ||
-        distance(sites[i - 1], sites[i]) > desert_size)
-      blocks.push_back(std::make_pair(i, i));
-    else
-      blocks.back().second = i;
-  }
-
-  cerr << blocks.size() << " blocks" << endl;
-
-  for (size_t i = 0; i < blocks.size(); ++i) {
-    if (blocks[i].second - blocks[i].first + 1 >= min_block_size)
-      training_blocks.push_back(blocks[i]);
-  }
-
-  cerr << training_blocks.size() << " training_blocks" << endl;
-
 }
 
 
@@ -816,31 +833,22 @@ main(int argc, const char **argv) {
 
     if (VERBOSE)
       cerr << "[separating deserts]" << endl;
-    vector<pair<size_t, size_t> > training_blocks;
     vector<pair<size_t, size_t> > blocks;
-    // separate_regions(desert_size, sites, blocks);
+    separate_regions(desert_size, sites, blocks);
 
-    const size_t min_block_size = 2;
-    separate_regions_for_training(subtree_sizes, tree_probs, sites,
-                                  desert_size, min_block_size,
-                                  training_blocks, blocks);
+    if (VERBOSE)
+      cerr << "number of blocks: " << blocks.size() << endl;
 
-    if (VERBOSE) {
-      cerr << "number of blocks: " << blocks.size() ;
-      if (min_block_size > 1) {
-        size_t count = 0;
-        for (size_t i = 0; i < training_blocks.size(); ++i) {
-          count += training_blocks[i].second - training_blocks[i].first + 1;
-        }
-
-        cerr << " (" << training_blocks.size()
-             << " blocks with minsize " << min_block_size << ", covering "
-             << count << " sites)";
-      }
+    // mark sites usable for training
+    vector<vector<bool> > marks;
+    mark_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
+    for (size_t i = 0; i < 200; ++i) {
+      cerr << "Site " << i << "\t";
+      for (size_t j = 0; j < subtree_sizes.size(); ++j)
+        cerr << (marks[i][j]? '0' : '1') << " ";
       cerr << endl;
-
-
     }
+
 
     if (paramfile.empty()) {
       // heuristic starting points for G and pi
@@ -885,7 +893,7 @@ main(int argc, const char **argv) {
                                  opt_max_iterations,
                                  mh_max_iterations, sampler,
                                  subtree_sizes, parent_ids,
-                                 tree_probs, training_blocks, params,
+                                 tree_probs, blocks, params,
                                  root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
 
