@@ -40,7 +40,6 @@
 
 /* headers for epigenomic evolution */
 #include "PhyloTreePreorder.hpp"
-#include "PhyloTree.hpp"
 #include "param_set.hpp"
 #include "epiphy_utils.hpp"
 #include "epiphy_mcmc.hpp"
@@ -67,7 +66,6 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
 }
 
 
-
 static void
 add_internal_node_probs(const vector<size_t> &subtree_sizes,
                         vector<vector<double> > &prob_table) {
@@ -82,8 +80,6 @@ add_internal_node_probs(const vector<size_t> &subtree_sizes,
 
   for (size_t i = 0; i < n_sites; ++i)
     for (size_t j = 0; j < leaves_preorder.size(); ++j)
-      // ADS: should these be checked for "extremes"???
-      // JQU: checking for extremes should be done when reading in prob_table.
       expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
 
   prob_table.swap(expanded_probs);
@@ -95,7 +91,6 @@ add_internal_node_probs(const vector<size_t> &subtree_sizes,
 /////////////// POSTERIOR ESTIMATION     ///////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
 
 
 template <class T>
@@ -143,18 +138,17 @@ estimate_posterior(const bool VERBOSE,
 ////////////////////////////////////////////////////////////////////////
 
 template <class T> void
-write_treeprob_states(const vector<size_t> &subtree_sizes,
-                      const vector<MSite> &sites,
-                      const vector<vector<T> > &states,
-                      const vector<string> &node_names,
-                      const string &outfile) {
+write_posteriors_table(const vector<size_t> &subtree_sizes,
+                       const vector<MSite> &sites,
+                       const vector<vector<T> > &states,
+                       const vector<string> &species,
+                       const string &outfile) {
 
   std::ofstream out(outfile.c_str());
   if (!out)
     throw std::runtime_error("bad output file: " + outfile);
 
-  copy(node_names.begin(), node_names.end(),
-       ostream_iterator<string>(out, "\t"));
+  copy(species.begin(), species.end(), ostream_iterator<string>(out, "\t"));
   out << endl;
 
   for (size_t i = 0; i < states.size(); ++i) {
@@ -204,7 +198,7 @@ main(int argc, const char **argv) {
     string outfile;
 
     size_t desert_size = 1000;
-    size_t mh_max_iterations = 500;         // MAGIC
+    size_t mh_max_iterations = 500;
 
     // run mode flags
     bool VERBOSE = false;
@@ -320,11 +314,9 @@ main(int argc, const char **argv) {
                        subtree_sizes, parent_ids, tree_probs,
                        blocks, params, tree_states, posteriors);
 
-    /************************** Output states ********************************/
-
     // output the posteriors on states
-    write_treeprob_states(subtree_sizes, sites, posteriors,
-                          node_names, outfile);
+    write_posteriors_table(subtree_sizes, sites, posteriors,
+                           node_names, outfile);
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
