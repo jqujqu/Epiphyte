@@ -64,7 +64,7 @@ public:
                 const std::pair<double, double> &root_start_distr,
                 const pair_state &root_distr,
                 const std::vector<pair_state> &start_distr,
-                const std::vector<triple_state> &traid_distr,
+                const std::vector<triple_state> &triad_distr,
                 const std::vector<std::vector<double> > &marginals,
                 const std::vector<std::pair<size_t, size_t> > &blocks,
                 std::vector<std::vector<T> > &states) const;
@@ -487,7 +487,7 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
                            const std::pair<double, double> &root_start_distr,
                            const pair_state &root_distr,
                            const std::vector<pair_state> &start_distr,
-                           const std::vector<triple_state> &traid_distr,
+                           const std::vector<triple_state> &triad_distr,
                            const std::vector<std::vector<double> > &marginals,
                            const std::vector<std::pair<size_t, size_t> > &blocks,
                            std::vector<std::vector<T> > &states) const {
@@ -506,7 +506,7 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
     logP.push_back(start_distr[i]);
     logP[i].to_probabilities();
     logP[i].make_logs();
-    logGP.push_back(traid_distr[i]);
+    logGP.push_back(triad_distr[i]);
     logGP[i].to_probabilities();
     logGP[i].make_logs();
   }
