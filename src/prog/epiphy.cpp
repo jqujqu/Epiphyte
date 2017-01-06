@@ -478,6 +478,209 @@ estimate_posterior(const bool VERBOSE,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+////////////////////      EM for general case      /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// maximization_step stays the same as before
+
+template <class T>
+static void
+expectation_step(const bool VERBOSE,
+                 const size_t mh_max_iterations,
+                 const size_t burnin,
+                 const epiphy_mcmc &sampler,
+                 const vector<size_t> &subtree_sizes,
+                 const vector<size_t> &parent_ids,
+                 const vector<vector<double> > &tree_probs,
+                 const vector<vector<bool> > &marks,
+                 const vector<MSite> &sites,
+                 const size_t desert_size,
+                 const param_set &ps,
+                 pair<double, double> &root_start_counts,
+                 pair_state &root_counts,
+                 vector<pair_state> &start_counts,
+                 vector<triple_state> &triad_counts,
+                 vector<vector<T> > &sampled_states) {
+
+  const size_t n_nodes = subtree_sizes.size();
+
+  root_start_counts = make_pair(0.0, 0.0);
+  triad_counts = vector<triple_state>(n_nodes);
+  start_counts = vector<pair_state>(n_nodes);
+  root_counts = pair_state();
+
+  bool converged = false;
+  size_t mh_iter = 0;
+  size_t burned = 0;
+  for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
+    if (VERBOSE)
+      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
+
+    // take the sample
+    sampler.sample_states(subtree_sizes, parent_ids, sites, desert_size,
+                          ps, tree_probs, marks, sampled_states);
+
+    pair<double, double> root_start_counts_samp;
+    pair_state root_counts_samp;
+    vector<pair_state> start_counts_samp;
+    vector<triple_state> triad_counts_samp;
+    count_triads(subtree_sizes, parent_ids, sampled_states,
+                 marks, sites, desert_size,
+                 root_start_counts_samp, root_counts_samp, start_counts_samp,
+                 triad_counts_samp);
+
+    // retain previous values for comparison with next iteration
+    vector<triple_state> triad_counts_prev(triad_counts);
+
+    if (burned < burnin) {
+      ++burned;
+      if (VERBOSE)
+        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
+    } else {
+      // update the counts with current iteration samples
+      root_start_counts.first += root_start_counts_samp.first;
+      root_start_counts.second += root_start_counts_samp.second;
+      root_counts += root_counts_samp;
+      for (size_t i = 0; i < triad_counts.size(); ++i) {
+        triad_counts[i] += triad_counts_samp[i];
+        start_counts[i] += start_counts_samp[i];
+      }
+
+      // check how far the proportions have moved; only the triad_counts
+      // used for convergence testing; the start and root counts do not
+      // contribute enough to check
+      vector<double> divergence;
+      kl_divergence(triad_counts_prev, triad_counts, divergence);
+
+      // determine convergence based on how far proportions have moved
+      converged =
+        *max_element(divergence.begin(), divergence.end()) < KL_CONV_TOL;
+    }
+  }
+  if (VERBOSE)
+    cerr << endl;
+
+  root_start_counts.first /= mh_iter - burnin;
+  root_start_counts.second /= mh_iter - burnin;
+  root_counts.div(mh_iter);
+  for (size_t i = 0; i < triad_counts.size(); ++i) {
+    start_counts[i].div(mh_iter - burnin);
+    triad_counts[i].div(mh_iter - burnin);
+  }
+
+  if (VERBOSE)
+    // ADS: should we print more summary statistics here?
+    cerr << "[MH iterations=" << mh_iter << ']' << endl;
+}
+
+template <class T>
+static void
+expectation_maximization(const bool VERBOSE,
+                         const size_t em_max_iterations,
+                         const size_t opt_max_iterations,
+                         const size_t mh_max_iterations,
+                         const epiphy_mcmc &sampler,
+                         const vector<size_t> &subtree_sizes,
+                         const vector<size_t> &parent_ids,
+                         const vector<vector<double> > &tree_probs,
+                         const vector<vector<bool> > &marks,
+                         const vector<MSite> &sites,
+                         const size_t desert_size,
+                         param_set &params,
+                         pair<double, double> &root_start_counts,
+                         pair_state &root_counts,
+                         vector<pair_state> &start_counts,
+                         vector<triple_state> &triad_counts,
+                         vector<vector<T> > &sampled_states) {
+
+  bool em_converged = false;
+  for (size_t iter = 0; iter < em_max_iterations && !em_converged; ++iter) {
+
+    if (VERBOSE)
+      cerr << endl << "====================[EM ITERATION=" << iter
+           << "]=======================" << endl;
+
+    const param_set prev_ps(params);
+    // next line is optional, just for consistency with older version.
+    const size_t burnin = 20;
+    expectation_step(VERBOSE, mh_max_iterations, burnin, sampler, subtree_sizes,
+                     parent_ids, tree_probs, marks, sites, desert_size,
+                     params, root_start_counts, root_counts, start_counts,
+                     triad_counts, sampled_states);
+
+    if (VERBOSE) {
+      cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
+      for (size_t i = 0; i < triad_counts.size(); ++i)
+        cerr << triad_counts[i] << "\tnode=" << i << endl;
+    }
+
+    /****************** M-step: optimize parameters ************************/
+    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                      root_start_counts, root_counts, start_counts,
+                      triad_counts, params);
+    if (VERBOSE)
+      cerr << "[M-step iter=" << iter << ", params:" << endl
+           << params << ']' << endl;
+
+    const double diff = param_set::absolute_difference(prev_ps, params);
+
+    const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
+
+    em_converged = (diff < param_set::tolerance*params.T.size());
+
+    if (VERBOSE)
+      cerr << "[EM iter=" << iter << ", "
+           << "log_lik=" << llk << ", "
+           << "delta=" << diff << ", "
+           << "conv=" << em_converged << ']' << endl;
+  }
+}
+
+
+template <class T>
+static void
+estimate_posterior(const bool VERBOSE,
+                   const size_t max_iterations,
+                   const epiphy_mcmc &sampler,
+                   const vector<size_t> &subtree_sizes,
+                   const vector<size_t> &parent_ids,
+                   const vector<vector<double> > &marginals,
+                   const vector<vector<bool> > &marks,
+                   const vector<MSite> &sites,
+                   const size_t desert_size,
+                   const param_set &params,
+                   vector<vector<T> > &states,
+                   vector<vector<double> > &posteriors) {
+
+  const size_t n_nodes = subtree_sizes.size();
+
+  posteriors = vector<vector<double> >(marginals.size(),
+                                       vector<double>(n_nodes, 0.0));
+
+  // ADS: need convergence criteria here??
+  for (size_t mh_iter = 0; mh_iter < max_iterations; ++mh_iter) {
+    if (VERBOSE)
+      cerr << "\r[inside estimate_posterior (iter=" << mh_iter << ")]";
+
+    sampler.sample_states(subtree_sizes, parent_ids, sites, desert_size,
+                          params, marginals, marks, states);
+
+    for (size_t i = 0; i < states.size(); ++i)
+      for (size_t j = 0; j < states[i].size(); ++j)
+        posteriors[i][j] += states[i][j];
+  }
+  if (VERBOSE)
+    cerr << endl;
+
+  for (size_t i = 0; i < posteriors.size(); ++i)
+    for (size_t j = 0; j < posteriors[i].size(); ++j)
+      posteriors[i][j] /= max_iterations;
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////// FORMATTING AND WRITING OUTPUT /////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -602,6 +805,34 @@ write_treeprob_states(const vector<size_t> &subtree_sizes,
     out << endl;
   }
 }
+
+
+// general case
+template <class T> void
+write_treeprob_states(const vector<size_t> &subtree_sizes,
+                      const vector<MSite> &sites,
+                      const vector<vector<T> > &states,
+                      const vector<vector<bool> > &marks,
+                      const vector<string> &node_names,
+                      const string &outfile) {
+
+  std::ofstream out(outfile.c_str());
+  if (!out)
+    throw std::runtime_error("bad output file: " + outfile);
+
+  copy(node_names.begin(), node_names.end(),
+       ostream_iterator<string>(out, "\t"));
+  out << endl;
+
+  for (size_t i = 0; i < states.size(); ++i) {
+    out << sites[i].chrom << '\t' << sites[i].pos;
+    for (size_t j = 0; j < states[i].size(); ++j)
+      out << '\t' << (marks[i][j] ? states[i][j] : -1.0);
+    out << endl;
+  }
+}
+
+
 
 
 static void
@@ -840,15 +1071,10 @@ main(int argc, const char **argv) {
       cerr << "number of blocks: " << blocks.size() << endl;
 
     // mark sites usable for training
+    if (VERBOSE)
+      cerr << "[marking sites]" << endl;
     vector<vector<bool> > marks;
     mark_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
-    for (size_t i = 0; i < 200; ++i) {
-      cerr << "Site " << i << "\t";
-      for (size_t j = 0; j < subtree_sizes.size(); ++j)
-        cerr << (marks[i][j]? '0' : '1') << " ";
-      cerr << endl;
-    }
-
 
     if (paramfile.empty()) {
       // heuristic starting points for G and pi
@@ -883,27 +1109,45 @@ main(int argc, const char **argv) {
         // that will be output
         cerr << "log_likelihood=" << llk << endl;
       }
-    }
-    else {
+    } else {
 
       const epiphy_mcmc sampler(mh_max_iterations, 0);
-
-      if (paramfile.empty())
-        expectation_maximization(VERBOSE, em_max_iterations,
-                                 opt_max_iterations,
-                                 mh_max_iterations, sampler,
-                                 subtree_sizes, parent_ids,
-                                 tree_probs, blocks, params,
-                                 root_start_counts, root_counts,
-                                 start_counts, triad_counts, tree_states);
-
+      bool MARK = true;
+      if (paramfile.empty()) {
+        if (!MARK) {
+          expectation_maximization(VERBOSE, em_max_iterations,
+                                   opt_max_iterations,
+                                   mh_max_iterations, sampler,
+                                   subtree_sizes, parent_ids,
+                                   tree_probs, blocks, params,
+                                   root_start_counts, root_counts,
+                                   start_counts, triad_counts, tree_states);
+        } else {
+          expectation_maximization(VERBOSE, em_max_iterations,
+                                   opt_max_iterations,
+                                   mh_max_iterations, sampler,
+                                   subtree_sizes, parent_ids,
+                                   tree_probs, marks, sites, desert_size, params,
+                                   root_start_counts, root_counts,
+                                   start_counts, triad_counts,
+                                   tree_states);
+        }
+      }
       if (VERBOSE)
         cerr << "[computing posterior probabilities]" << endl;
       vector<vector<double> > posteriors;
-      estimate_posterior(VERBOSE, mh_max_iterations, sampler,
-                         subtree_sizes, parent_ids, tree_probs,
-                         blocks, params, tree_states, posteriors);
-
+      if (!MARK) {
+        /*blocks*/
+        estimate_posterior(VERBOSE, mh_max_iterations, sampler,
+                           subtree_sizes, parent_ids, tree_probs,
+                           blocks, params, tree_states, posteriors);
+      } else {
+        /*marked sites*/
+        estimate_posterior(VERBOSE, mh_max_iterations, sampler,
+                           subtree_sizes, parent_ids, tree_probs,
+                           marks, sites, desert_size, params,
+                           tree_states, posteriors);
+      }
       /************************** Output states ********************************/
       if (VERBOSE)
         cerr << "[building domains of contiguous state]" << endl;
@@ -924,8 +1168,12 @@ main(int argc, const char **argv) {
 
       // output the posteriors on states
       const string post_outfile(outprefix + "." + posteriors_file_suffix);
-      write_treeprob_states(subtree_sizes, sites, posteriors,
-                            node_names, post_outfile);
+      if (!MARK)
+        write_treeprob_states(subtree_sizes, sites, posteriors,
+                              node_names, post_outfile);
+      else
+        write_treeprob_states(subtree_sizes, sites, posteriors, marks,
+                              node_names, post_outfile);
     }
 
     if (VERBOSE) {
@@ -963,7 +1211,11 @@ main(int argc, const char **argv) {
   printed in the final output, due to their distance from any actual
   leaf data making them meaningless.
 
-  separate site filters for training and posterior estimation.
+  Using all observed sites should help parameter estimation.
+  When writing out posteriors, un-estmated nodes should be missing
+  value (-1.0). When building domains, maybe use only sites with all
+  nodes estimated, this can be done by scanning through the masks
+  matrix to get a set of blocks, and building domains within the blocks.
 
   (3) The part of this program that actually identifies contiguous
   domains should be removed and put in a separate program. The reason
