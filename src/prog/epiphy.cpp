@@ -126,7 +126,7 @@ mark_sites(const vector<size_t> &subtree_sizes,
           marks[i][node_id] = marks[i][node_id + count];
       } else {
         for (size_t i = 0; i < tree_probs.size(); ++i)
-          marks[i][node_id] =  marks[i][node_id] && marks[i][node_id + count];
+          marks[i][node_id] = marks[i][node_id] && marks[i][node_id + count];
       }
       count += subtree_sizes[node_id + count];
     }

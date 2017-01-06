@@ -36,68 +36,68 @@
 struct param_set;
 
 struct pair_state {
-double uu, um; // think 2x2 matrix
-double mu, mm;
+  double uu, um; // think 2x2 matrix
+  double mu, mm;
 
-pair_state(double _uu, double _um, double _mu, double _mm) :
-  uu(_uu), um(_um), mu(_mu), mm(_mm) {}
+  pair_state(double _uu, double _um, double _mu, double _mm) :
+    uu(_uu), um(_um), mu(_mu), mm(_mm) {}
   pair_state() : uu(0.0), um(0.0), mu(0.0), mm(0.0) {}
 
-    // WARNING: no range checking (for i,j > 1)
-    double operator()(int i, int j) const { // version for l-values
-return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
-}
-      double & operator()(int i, int j) { // version for r-values
-return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
-}
-        pair_state operator+(const pair_state &other) const {
-return pair_state(uu + other.uu, um + other.um,
-                    mu + other.mu, mm + other.mm);
-}
-          pair_state operator-(const pair_state &other) const {
-return pair_state(uu - other.uu, um - other.um,
-                    mu - other.mu, mm - other.mm);
-}
-            pair_state operator*(const pair_state &other) const {
-return pair_state(uu*other.uu, um*other.um,
-                    mu*other.mu, mm*other.mm);
-}
-              void operator+=(const pair_state &other) {
-uu += other.uu; um += other.um;
-mu += other.mu; mm += other.mm;
-}
-                void operator/=(const pair_state &other) {
-uu /= other.uu; um /= other.um;
-mu /= other.mu; mm /= other.mm;
-}
-                  void div(const double x) {
-uu /= x; um /= x;
-mu /= x; mm /= x;
-}
-                    void to_probabilities() {
-const double u_denom = uu + um;
-uu /= u_denom;
-um /= u_denom;
-const double m_denom = mu + mm;
-mu /= m_denom;
-mm /= m_denom;
-}
-                      void make_logs() {
-uu = std::log(uu); um = std::log(um);
-mu = std::log(mu); mm = std::log(mm);
-}
-                        void flatten(std::vector<double> &p) const {
-p.clear();
-p.push_back(uu); p.push_back(um);
-p.push_back(mu); p.push_back(mm);
-}
-                          std::string tostring() const {
-std::ostringstream oss;
-oss << "[" << uu << ", " << um << "]\n"
-<< "[" << mu << ", " << mm << "]";
-return oss.str();
-}
-                              };
+  // WARNING: no range checking (for i,j > 1)
+  double operator()(int i, int j) const { // version for l-values
+    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
+  }
+  double & operator()(int i, int j) { // version for r-values
+    return (i == 0) ? (j == 0 ? uu : um) : (j == 0 ? mu : mm);
+  }
+  pair_state operator+(const pair_state &other) const {
+    return pair_state(uu + other.uu, um + other.um,
+                      mu + other.mu, mm + other.mm);
+  }
+  pair_state operator-(const pair_state &other) const {
+    return pair_state(uu - other.uu, um - other.um,
+                      mu - other.mu, mm - other.mm);
+  }
+  pair_state operator*(const pair_state &other) const {
+    return pair_state(uu*other.uu, um*other.um,
+                      mu*other.mu, mm*other.mm);
+  }
+  void operator+=(const pair_state &other) {
+    uu += other.uu; um += other.um;
+    mu += other.mu; mm += other.mm;
+  }
+  void operator/=(const pair_state &other) {
+    uu /= other.uu; um /= other.um;
+    mu /= other.mu; mm /= other.mm;
+  }
+  void div(const double x) {
+    uu /= x; um /= x;
+    mu /= x; mm /= x;
+  }
+  void to_probabilities() {
+    const double u_denom = uu + um;
+    uu /= u_denom;
+    um /= u_denom;
+    const double m_denom = mu + mm;
+    mu /= m_denom;
+    mm /= m_denom;
+  }
+  void make_logs() {
+    uu = std::log(uu); um = std::log(um);
+    mu = std::log(mu); mm = std::log(mm);
+  }
+  void flatten(std::vector<double> &p) const {
+    p.clear();
+    p.push_back(uu); p.push_back(um);
+    p.push_back(mu); p.push_back(mm);
+  }
+  std::string tostring() const {
+    std::ostringstream oss;
+    oss << "[" << uu << ", " << um << "]\n"
+        << "[" << mu << ", " << mm << "]";
+    return oss.str();
+  }
+};
 
 std::ostream &
 operator<<(std::ostream &out, const pair_state &ps);
@@ -307,7 +307,7 @@ count_triads(const std::vector<size_t> &subtree_sizes,
             root_counts(prev, curr) += 1.0;
           }
         } else { // no prev
-          if (has_par){ // has parent
+          if (has_par) { // has parent
             const size_t parent = tree_states[i][parent_ids[node_id]];
             const size_t curr = tree_states[i][node_id];
             start_counts[node_id](parent, curr) += 1.0;
