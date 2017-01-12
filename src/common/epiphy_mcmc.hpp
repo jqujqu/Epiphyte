@@ -19,7 +19,7 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-//////////////////   Markov blanket probabilities    ///////////////////////////
+//////////////   MCMC sampling using Markov Blancket    ////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -396,7 +396,6 @@ MB_state(const std::vector<size_t> &subtree_sizes,
 }
 
 
-
 template <class T>
 void
 epiphy_mcmc::accept_or_reject_proposal(const double log_ratio, const size_t idx,
@@ -456,10 +455,9 @@ epiphy_mcmc::sample_states_end(const std::vector<size_t> &subtree_sizes,
                                const size_t node_id) const {
 
   if (is_leaf(subtree_sizes[node_id]) &&
-      !missing_meth_value(marginals[node_id]))
+      !missing_meth_value(marginals[node_id])) {
     states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
-
-  else {
+  } else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       sample_states_end(subtree_sizes, parent_ids, logG, logGP,
@@ -489,10 +487,9 @@ epiphy_mcmc::sample_states_start(const std::vector<size_t> &subtree_sizes,
                                  const size_t node_id) const {
 
   if (is_leaf(subtree_sizes[node_id]) &&
-      !missing_meth_value(marginals[node_id]))
+      !missing_meth_value(marginals[node_id])) {
     states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
-
-  else {
+  } else {
     for (size_t count = 1; count < subtree_sizes[node_id]; ) {
       const size_t child_id = node_id + count;
       sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
@@ -695,5 +692,29 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
 }
 
 
+
+struct mcmc_stat{
+  std::pair<double, double> root_start_distr;
+  pair_state root_distr;
+  std::vector<pair_state> start_distr;
+  std::vector<triple_state> triad_distr;
+
+  mcmc_stat(const std::pair<double, double> &root_start,
+            const pair_state &root,
+            const std::vector<pair_state> &start,
+            const std::vector<triple_state> &triad) :
+    root_start_distr(root_start), root_distr(root),
+    start_distr(start), triad_distr(triad) {}
+
+  void scale();
+};
+
+
+// measure MCMC convergence
+// outter vector for parallel chains
+// inner vector for within-chain sample stats
+void
+EPSR(std::vector<std::vector<mcmc_stat> > &mcmcstats,
+     vector<double> &epsr);
 
 #endif

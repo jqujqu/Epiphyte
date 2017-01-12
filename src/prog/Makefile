@@ -30,7 +30,7 @@ METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
 endif
 
 PROGS = indep-epi-phylo simulation indep-sites-hypo \
-	epiphyte epiphy epiphy-sim epiphy-test epiphy-est \
+	epiphyte epiphy epiphy-sim epiphy-test epiphy-est epiphy-est-multichain\
 	epiphy-post epiphy-seg
 
 CXX = g++
@@ -68,10 +68,10 @@ simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-epiphy epiphy-est epiphy-post epiphy-seg: \
+epiphy epiphy-est epiphy-post epiphy-seg epiphy-est-multichain: \
 	$(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
 	param_set.o PhyloTreePreorder.o sufficient_statistics_helpers.o \
-	optimize_params.o epiphy_utils.o) \
+	optimize_params.o epiphy_utils.o epiphy_mcmc.o) \
 	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o)
 
