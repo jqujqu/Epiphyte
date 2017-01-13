@@ -66,7 +66,11 @@ using std::bind;
 using std::plus;
 
 static const double PROBABILITY_GUARD = 1e-10;
+static const double KL_CONV_TOL = 1e-4;    //MAGIC
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////        PROCESS SITES       ////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
@@ -76,6 +80,92 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
       blocks.push_back(std::make_pair(i, i));
     else blocks.back().second = i;
 }
+
+void
+mark_sites(const vector<size_t> &subtree_sizes,
+           const vector<MSite> &sites,
+           const vector<vector<double> > &tree_probs,
+           const size_t desert_size, const size_t node_id,
+           vector<vector<bool> > &marks) {
+
+  if (is_leaf(subtree_sizes[node_id])) {
+    size_t prev_obs = numeric_limits<size_t>::max();
+
+    for (size_t i = 0; i < tree_probs.size();) {
+      // find next observed site
+      while(i < tree_probs.size() &&
+            missing_meth_value(tree_probs[i][node_id])) ++i;
+
+      if (i < tree_probs.size()) {
+        marks[i][node_id] = true;
+
+        // fill in interval if not end of a desert
+        if (i < tree_probs.size() && prev_obs < i &&
+            distance(sites[prev_obs], sites[i]) <= desert_size)
+          for (size_t j = prev_obs + 1; j < i; ++j)
+            marks[j][node_id] = true;
+
+        prev_obs = i;
+        ++i;
+      }
+    }
+  } else {
+    for (size_t count = 1; count < subtree_sizes[node_id];) {
+      mark_sites(subtree_sizes, sites, tree_probs,
+                 desert_size, node_id + count, marks);
+      // non-desert sites in an internal node
+      // is the intersection of non-deserts of all its children
+      if (count == 1) {
+        for (size_t i = 0; i < tree_probs.size(); ++i)
+          marks[i][node_id] = marks[i][node_id + count];
+      } else {
+        for (size_t i = 0; i < tree_probs.size(); ++i)
+          marks[i][node_id] = marks[i][node_id] && marks[i][node_id + count];
+      }
+      count += subtree_sizes[node_id + count];
+    }
+  }
+}
+
+
+
+void
+mark_sites(const vector<size_t> subtree_sizes,
+           const vector<MSite> &sites,
+           const vector<vector<double> > &tree_probs,
+           const size_t desert_size,
+           vector<vector<bool> > &marks) {
+  marks = vector<vector<bool> >(tree_probs.size(),
+                                vector<bool>(subtree_sizes.size(), false));
+  cerr << "[in mark_sites]" << endl;
+  mark_sites(subtree_sizes, sites, tree_probs,
+             desert_size, 0, marks);
+}
+
+
+void
+marks_to_blocks(const vector<size_t> subtree_sizes,
+                const vector<MSite> &sites,
+                const size_t desert_size,
+                const vector<vector<bool> > &marks,
+                vector<vector<pair<size_t, size_t> > > &blocks) {
+  blocks = vector<vector<pair<size_t, size_t> > >(subtree_sizes.size());
+  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
+    for (size_t i = 0; i < marks.size(); ++i) {
+      if ((i == 0 && marks[i][node_id]) ||
+          (i > 0 && !marks[i - 1][node_id] && marks[i][node_id]) ||
+          (i > 0 && marks[i - 1][node_id] && marks[i][node_id] &&
+           distance(sites[i - 1], sites[i]) > desert_size)) {
+        blocks[node_id].push_back(std::make_pair(i, i));
+      } else if (i > 0 && marks[i - 1][node_id] && marks[i][node_id]) {
+        blocks[node_id].back().second = i;
+      }
+    }
+  }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
 
 
 // putting this function here because it is related to the parameters
@@ -312,7 +402,8 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
       cerr << "max epsr = " << max_epsr << " mh_iter=" << mh_iter
            << "; (first chain) max kl= " << kld << endl;
       if (VERBOSE) cerr << "\t" << max_epsr;
-      converged = (max_epsr < epsr_tol && max_epsr > 1.0);
+      converged = ((max_epsr < epsr_tol) && (max_epsr > 1.0) &&
+                   (kld < KL_CONV_TOL));
 
       if (converged || mh_iter + 1 == mh_max_iterations) {
         // update the counts with current iteration samples
@@ -400,6 +491,202 @@ expectation_maximization(const bool VERBOSE,
                      samplers,
                      subtree_sizes, parent_ids, tree_probs, blocks, params,
                      root_start_counts, root_counts, start_counts,
+                     triad_counts, sampled_states_para);
+
+    if (VERBOSE) {
+      cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
+      for (size_t i = 0; i < triad_counts.size(); ++i)
+        cerr << triad_counts[i] << "\tnode=" << i << endl;
+    }
+
+    /****************** M-step: optimize parameters ************************/
+    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                      root_start_counts, root_counts, start_counts,
+                      triad_counts, params);
+    if (VERBOSE)
+      cerr << "[M-step iter=" << iter << ", params:" << endl
+           << params << ']' << endl;
+
+    const double diff = param_set::absolute_difference(prev_ps, params);
+
+    const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
+
+    em_converged = (diff < param_set::tolerance*params.T.size());
+
+    if (VERBOSE)
+      cerr << "[EM iter=" << iter << ", "
+           << "log_lik=" << llk << ", "
+           << "delta=" << diff << ", "
+           << "conv=" << em_converged << ']' << endl;
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////      EM for general case      /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// with marked sites and multi-chain
+template <class T>
+static void
+expectation_step(const bool VERBOSE,
+                 const size_t mh_max_iterations,
+                 const size_t burnin,
+                 const size_t keepsize,
+                 const double epsr_tol,
+                 const vector<epiphy_mcmc> &samplers,
+                 const vector<size_t> &subtree_sizes,
+                 const vector<size_t> &parent_ids,
+                 const vector<vector<double> > &tree_probs,
+                 const vector<vector<bool> > &marks,
+                 const vector<MSite> &sites,
+                 const size_t desert_size,
+                 const param_set &ps,
+                 pair<double, double> &root_start_counts,
+                 pair_state &root_counts,
+                 vector<pair_state> &start_counts,
+                 vector<triple_state> &triad_counts,
+                 vector<vector<vector<T> > > &sampled_states_para) {
+  const size_t n_nodes = subtree_sizes.size();
+
+  root_start_counts = make_pair(0.0, 0.0);
+  triad_counts = vector<triple_state>(n_nodes);
+  start_counts = vector<pair_state>(n_nodes);
+  root_counts = pair_state();
+
+  const size_t n_chain = samplers.size();
+  vector<vector<mcmc_stat> > mcmcstats(n_chain);
+
+  bool converged = false;
+  size_t mh_iter = 0;
+  for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
+
+    if (VERBOSE)
+      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
+           << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
+
+    for (size_t i = 0; i < n_chain; ++i) {
+      // take the sample
+      samplers[i].sample_states(subtree_sizes, parent_ids, sites, desert_size,
+                                ps, tree_probs, marks, sampled_states_para[i]);
+
+      pair<double, double> root_start_counts_samp;
+      pair_state root_counts_samp;
+      vector<pair_state> start_counts_samp;
+      vector<triple_state> triad_counts_samp;
+      count_triads(subtree_sizes, parent_ids, sampled_states_para[i],
+                   marks, sites, desert_size,
+                   root_start_counts_samp, root_counts_samp, start_counts_samp,
+                   triad_counts_samp);
+
+      if (mh_iter > burnin) {
+        // record stats if past burning stage
+        if (mcmcstats[i].size() >= keepsize)
+          mcmcstats[i].erase(mcmcstats[i].begin());
+
+        mcmc_stat m(root_start_counts_samp, root_counts_samp,
+                    start_counts_samp, triad_counts_samp);
+        mcmcstats[i].push_back(m);
+      }
+    }
+    if (mh_iter > burnin + keepsize) {
+      // check convergence by EPSR
+      vector<double> epsr;
+      EPSR(mcmcstats, epsr);
+      double max_epsr = *std::max_element(epsr.begin(),epsr.end());
+      double kld = max_kl(mcmcstats[0]);
+      cerr << "max epsr = " << max_epsr << " mh_iter=" << mh_iter
+           << "; (first chain) max kl= " << kld << endl;
+      if (VERBOSE) cerr << "\t" << max_epsr;
+      converged = (max_epsr < epsr_tol && max_epsr > 1.0 && kld < KL_CONV_TOL);
+
+      if (converged || mh_iter + 1 == mh_max_iterations) {
+        // update the counts with current iteration samples
+        for (size_t j = 0; j < n_chain; ++j) { // per chain
+          for (size_t k = 0; k < keepsize; ++k) {
+            root_start_counts.first += mcmcstats[j][k].root_start_distr.first;
+            root_start_counts.second += mcmcstats[j][k].root_start_distr.second;
+            root_counts += mcmcstats[j][k].root_distr;
+            for (size_t l = 0; l < triad_counts.size(); ++l) {
+              triad_counts[l] += mcmcstats[j][k].triad_distr[l];
+              start_counts[l] += mcmcstats[j][k].start_distr[l];
+            }
+          }
+        }
+      }
+    }
+  }
+  if (VERBOSE)
+    cerr << endl;
+
+  root_start_counts.first /= keepsize*n_chain;
+  root_start_counts.second /= keepsize*n_chain;
+  root_counts.div(keepsize*n_chain);
+  for (size_t i = 0; i < triad_counts.size(); ++i) {
+    start_counts[i].div(keepsize*n_chain);
+    triad_counts[i].div(keepsize*n_chain);
+  }
+
+  if (VERBOSE)
+    // ADS: should we print more summary statistics here?
+    cerr << "[MH iterations=" << mh_iter << ']' << endl;
+}
+
+
+// with marked sites and multichain
+template <class T>
+static void
+expectation_maximization(const bool VERBOSE,
+                         const size_t em_max_iterations,
+                         const size_t opt_max_iterations,
+                         const size_t mh_max_iterations,
+                         const size_t burnin,
+                         const size_t keepsize,
+                         const bool first_only,
+                         const double epsr_tol,
+                         const vector<epiphy_mcmc> &samplers,
+                         const vector<size_t> &subtree_sizes,
+                         const vector<size_t> &parent_ids,
+                         const vector<vector<double> > &tree_probs,
+                         const vector<vector<bool> > &marks,
+                         const vector<MSite> &sites,
+                         const size_t desert_size,
+                         param_set &params,
+                         pair<double, double> &root_start_counts,
+                         pair_state &root_counts,
+                         vector<pair_state> &start_counts,
+                         vector<triple_state> &triad_counts,
+                         vector<vector<vector<T> > > &sampled_states_para) {
+
+  // whether to start from random start points in each EM iteration
+  bool renew = false;
+  if (renew) {
+    // [for multiple chains]
+    const size_t n_chain = sampled_states_para.size();
+    const size_t n_sites = tree_probs.size();
+    const size_t n_nodes = subtree_sizes.size();
+    for (size_t i = 0; i < n_chain; ++i) {
+      vector<vector<bool> > ts(n_sites, vector<bool>(n_nodes, false));
+      // sample initial dates with seed i
+      // (consider randomizing seed as well)
+      sample_initial_states(i, tree_probs, ts);
+      sampled_states_para[i] = ts;
+    }
+  }
+
+  bool em_converged = false;
+  for (size_t iter = 0; iter < em_max_iterations && !em_converged; ++iter) {
+
+    if (VERBOSE)
+      cerr << endl << "====================[EM ITERATION=" << iter
+           << "]=======================" << endl;
+
+    const param_set prev_ps(params);
+    const size_t burn = (first_only && iter > 0)? 0 : burnin;
+    expectation_step(VERBOSE, mh_max_iterations,
+                     burn, keepsize, epsr_tol, samplers,
+                     subtree_sizes, parent_ids, tree_probs,
+                     marks, sites, desert_size,
+                     params, root_start_counts, root_counts, start_counts,
                      triad_counts, sampled_states_para);
 
     if (VERBOSE) {
@@ -601,6 +888,12 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "number of blocks: " << blocks.size() << endl;
 
+    // mark sites usable for training
+    if (VERBOSE)
+      cerr << "[marking sites]" << endl;
+    vector<vector<bool> > marks;
+    mark_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
+
     // heuristic starting points for G and pi
     estimate_g0_g1(tree_probs, params.g0, params.g1);
     params.pi0 = estimate_pi0(tree_probs);
@@ -636,18 +929,28 @@ main(int argc, const char **argv) {
       }
 
       vector<epiphy_mcmc> samplers;
+      bool MARK = true;
       for (size_t j = 0; j < n_chain; ++ j)
         samplers.push_back(epiphy_mcmc(mh_max_iterations, j)); // seed j
-
-      expectation_maximization(VERBOSE, em_max_iterations,
-                               opt_max_iterations, mh_max_iterations,
-                               burnin, keep, first_only, epsr_tol, samplers,
-                               subtree_sizes, parent_ids,
-                               tree_probs, blocks, params,
-                               root_start_counts, root_counts,
-                               start_counts, triad_counts,
-                               tree_states_para);
-
+      if (!MARK) {
+        expectation_maximization(VERBOSE, em_max_iterations,
+                                 opt_max_iterations, mh_max_iterations,
+                                 burnin, keep, first_only, epsr_tol, samplers,
+                                 subtree_sizes, parent_ids,
+                                 tree_probs, blocks, params,
+                                 root_start_counts, root_counts,
+                                 start_counts, triad_counts,
+                                 tree_states_para);
+      } else {
+        expectation_maximization(VERBOSE, em_max_iterations,
+                                 opt_max_iterations, mh_max_iterations,
+                                 burnin, keep, first_only, epsr_tol,
+                                 samplers, subtree_sizes, parent_ids,
+                                 tree_probs, marks, sites, desert_size,
+                                 params, root_start_counts, root_counts,
+                                 start_counts, triad_counts,
+                                 tree_states_para);
+      }
     }
 
     if (VERBOSE) {
