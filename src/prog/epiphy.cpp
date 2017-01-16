@@ -24,7 +24,7 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <numeric>
+#include <numeric>    // std::accumulate
 #include <random>
 #include <algorithm>  //std::max, min
 #include <cmath>      //std::abs
@@ -62,6 +62,7 @@ using std::max_element;
 using std::istringstream;
 using std::to_string;
 using std::ostream_iterator;
+using std::accumulate;
 
 #include <functional>
 using std::placeholders::_1;
@@ -87,88 +88,6 @@ separate_regions(const size_t desert_size, const vector<MSite> &sites,
     else blocks.back().second = i;
 }
 
-void
-mark_sites(const vector<size_t> &subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size, const size_t node_id,
-           vector<vector<bool> > &marks) {
-
-  if (is_leaf(subtree_sizes[node_id])) {
-    size_t prev_obs = numeric_limits<size_t>::max();
-
-    for (size_t i = 0; i < tree_probs.size();) {
-      // find next observed site
-      while(i < tree_probs.size() &&
-            missing_meth_value(tree_probs[i][node_id])) ++i;
-
-      if (i < tree_probs.size()) {
-        marks[i][node_id] = true;
-
-        // fill in interval if not end of a desert
-        if (i < tree_probs.size() && prev_obs < i &&
-            distance(sites[prev_obs], sites[i]) <= desert_size)
-          for (size_t j = prev_obs + 1; j < i; ++j)
-            marks[j][node_id] = true;
-
-        prev_obs = i;
-        ++i;
-      }
-    }
-  } else {
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      mark_sites(subtree_sizes, sites, tree_probs,
-                 desert_size, node_id + count, marks);
-      // non-desert sites in an internal node
-      // is the intersection of non-deserts of all its children
-      if (count == 1) {
-        for (size_t i = 0; i < tree_probs.size(); ++i)
-          marks[i][node_id] = marks[i][node_id + count];
-      } else {
-        for (size_t i = 0; i < tree_probs.size(); ++i)
-          marks[i][node_id] = marks[i][node_id] && marks[i][node_id + count];
-      }
-      count += subtree_sizes[node_id + count];
-    }
-  }
-}
-
-
-
-void
-mark_sites(const vector<size_t> subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size,
-           vector<vector<bool> > &marks) {
-  marks = vector<vector<bool> >(tree_probs.size(),
-                                vector<bool>(subtree_sizes.size(), false));
-  cerr << "[in mark_sites]" << endl;
-  mark_sites(subtree_sizes, sites, tree_probs,
-             desert_size, 0, marks);
-}
-
-
-void
-marks_to_blocks(const vector<size_t> subtree_sizes,
-                const vector<MSite> &sites,
-                const size_t desert_size,
-                const vector<vector<bool> > &marks,
-                vector<vector<pair<size_t, size_t> > > &blocks) {
-  blocks = vector<vector<pair<size_t, size_t> > >(subtree_sizes.size());
-  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
-    for (size_t i = 0; i < marks.size(); ++i) {
-      if ((i == 0 && marks[i][node_id]) ||
-          (i > 0 && !marks[i - 1][node_id] && marks[i][node_id]) ||
-          (i > 0 && marks[i - 1][node_id] && marks[i][node_id] &&
-           distance(sites[i - 1], sites[i]) > desert_size)) {
-        blocks[node_id].push_back(std::make_pair(i, i));
-      } else if (i > 0 && marks[i - 1][node_id] && marks[i][node_id]) {
-        blocks[node_id].back().second = i;
-      }
-    }
-  }
-}
 
 
 // putting this function here because it is related to the parameters
@@ -511,10 +430,12 @@ expectation_step(const bool VERBOSE,
 
   bool converged = false;
   size_t mh_iter = 0;
-  size_t burned = 0;
+
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
+
     if (VERBOSE)
-      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
+      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
+           << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
 
     // take the sample
     sampler.sample_states(subtree_sizes, parent_ids, sites, desert_size,
@@ -532,11 +453,7 @@ expectation_step(const bool VERBOSE,
     // retain previous values for comparison with next iteration
     vector<triple_state> triad_counts_prev(triad_counts);
 
-    if (burned < burnin) {
-      ++burned;
-      if (VERBOSE)
-        cerr << "\r[inside expectation: M-H (iter=" << mh_iter << ")]";
-    } else {
+    if (mh_iter > burnin) {
       // update the counts with current iteration samples
       root_start_counts.first += root_start_counts_samp.first;
       root_start_counts.second += root_start_counts_samp.second;
@@ -601,7 +518,6 @@ expectation_maximization(const bool VERBOSE,
            << "]=======================" << endl;
 
     const param_set prev_ps(params);
-    // next line is optional, just for consistency with older version.
     const size_t burnin = 20;
     expectation_step(VERBOSE, mh_max_iterations, burnin, sampler, subtree_sizes,
                      parent_ids, tree_probs, marks, sites, desert_size,
@@ -1026,7 +942,7 @@ main(int argc, const char **argv) {
         cerr << "[starting params={" << initial_params << "}]" << endl;
     }
 
-    /******************* READ THE METHYLATION DATA *****************************/
+    /******************* READ THE METHYLATION DATA ****************************/
     if (VERBOSE)
       cerr << "[reading methylation data (mode="
            << (assume_complete_data ? "complete" : "missing") << ")]" << endl;
@@ -1109,10 +1025,11 @@ main(int argc, const char **argv) {
         // that will be output
         cerr << "log_likelihood=" << llk << endl;
       }
+
     } else {
 
       const epiphy_mcmc sampler(mh_max_iterations, 0);
-      bool MARK = true;
+      bool MARK = false;
       if (paramfile.empty()) {
         if (!MARK) {
           expectation_maximization(VERBOSE, em_max_iterations,
@@ -1127,10 +1044,9 @@ main(int argc, const char **argv) {
                                    opt_max_iterations,
                                    mh_max_iterations, sampler,
                                    subtree_sizes, parent_ids,
-                                   tree_probs, marks, sites, desert_size, params,
-                                   root_start_counts, root_counts,
-                                   start_counts, triad_counts,
-                                   tree_states);
+                                   tree_probs, marks, sites, desert_size,
+                                   params, root_start_counts, root_counts,
+                                   start_counts, triad_counts, tree_states);
         }
       }
       if (VERBOSE)
@@ -1148,7 +1064,7 @@ main(int argc, const char **argv) {
                            marks, sites, desert_size, params,
                            tree_states, posteriors);
       }
-      /************************** Output states ********************************/
+      /************************** Output states *******************************/
       if (VERBOSE)
         cerr << "[building domains of contiguous state]" << endl;
       vector<string> states;

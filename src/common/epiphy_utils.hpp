@@ -60,15 +60,6 @@ kl_divergence(const std::vector<double> &P, const std::vector<double> &Q) {
   return d;
 }
 
-// // ADS: temporary debug function; remember to remove; not even used?
-// template <class T> void
-// print_vec(std::ostream &out,
-//           const std::vector<T> &dat, const std::string &s, std::string delim = "\t") {
-//   out << s << '\n';
-//   copy(dat.begin(), dat.end(), std::ostream_iterator<T>(out, delim.c_str()));
-//   out << '\n';
-// }
-
 inline bool
 missing_meth_value(const double x) {return x == -1.0;}
 
@@ -92,5 +83,13 @@ read_meth_table(const std::string &table_file,
                 std::vector<MSite> &sites,
                 std::vector<std::string> &species_names,
                 std::vector<std::vector<double> > &states);
+
+void
+mark_sites(const std::vector<size_t> subtree_sizes,
+           const std::vector<MSite> &sites,
+           const std::vector<std::vector<double> > &tree_probs,
+           const size_t desert_size,
+           std::vector<std::vector<bool> > &marks);
+
 
 #endif

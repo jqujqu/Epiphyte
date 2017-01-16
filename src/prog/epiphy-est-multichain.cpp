@@ -68,10 +68,6 @@ using std::plus;
 static const double PROBABILITY_GUARD = 1e-10;
 static const double KL_CONV_TOL = 1e-4;    //MAGIC
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////        PROCESS SITES       ////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
                  vector<pair<size_t, size_t> > &blocks) {
@@ -80,93 +76,6 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
       blocks.push_back(std::make_pair(i, i));
     else blocks.back().second = i;
 }
-
-void
-mark_sites(const vector<size_t> &subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size, const size_t node_id,
-           vector<vector<bool> > &marks) {
-
-  if (is_leaf(subtree_sizes[node_id])) {
-    size_t prev_obs = numeric_limits<size_t>::max();
-
-    for (size_t i = 0; i < tree_probs.size();) {
-      // find next observed site
-      while(i < tree_probs.size() &&
-            missing_meth_value(tree_probs[i][node_id])) ++i;
-
-      if (i < tree_probs.size()) {
-        marks[i][node_id] = true;
-
-        // fill in interval if not end of a desert
-        if (i < tree_probs.size() && prev_obs < i &&
-            distance(sites[prev_obs], sites[i]) <= desert_size)
-          for (size_t j = prev_obs + 1; j < i; ++j)
-            marks[j][node_id] = true;
-
-        prev_obs = i;
-        ++i;
-      }
-    }
-  } else {
-    for (size_t count = 1; count < subtree_sizes[node_id];) {
-      mark_sites(subtree_sizes, sites, tree_probs,
-                 desert_size, node_id + count, marks);
-      // non-desert sites in an internal node
-      // is the intersection of non-deserts of all its children
-      if (count == 1) {
-        for (size_t i = 0; i < tree_probs.size(); ++i)
-          marks[i][node_id] = marks[i][node_id + count];
-      } else {
-        for (size_t i = 0; i < tree_probs.size(); ++i)
-          marks[i][node_id] = marks[i][node_id] && marks[i][node_id + count];
-      }
-      count += subtree_sizes[node_id + count];
-    }
-  }
-}
-
-
-
-void
-mark_sites(const vector<size_t> subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size,
-           vector<vector<bool> > &marks) {
-  marks = vector<vector<bool> >(tree_probs.size(),
-                                vector<bool>(subtree_sizes.size(), false));
-  cerr << "[in mark_sites]" << endl;
-  mark_sites(subtree_sizes, sites, tree_probs,
-             desert_size, 0, marks);
-}
-
-
-void
-marks_to_blocks(const vector<size_t> subtree_sizes,
-                const vector<MSite> &sites,
-                const size_t desert_size,
-                const vector<vector<bool> > &marks,
-                vector<vector<pair<size_t, size_t> > > &blocks) {
-  blocks = vector<vector<pair<size_t, size_t> > >(subtree_sizes.size());
-  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
-    for (size_t i = 0; i < marks.size(); ++i) {
-      if ((i == 0 && marks[i][node_id]) ||
-          (i > 0 && !marks[i - 1][node_id] && marks[i][node_id]) ||
-          (i > 0 && marks[i - 1][node_id] && marks[i][node_id] &&
-           distance(sites[i - 1], sites[i]) > desert_size)) {
-        blocks[node_id].push_back(std::make_pair(i, i));
-      } else if (i > 0 && marks[i - 1][node_id] && marks[i][node_id]) {
-        blocks[node_id].back().second = i;
-      }
-    }
-  }
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-
 
 // putting this function here because it is related to the parameters
 static double
@@ -389,10 +298,9 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
         mcmc_stat m(root_start_counts_samp, root_counts_samp,
                     start_counts_samp, triad_counts_samp);
         mcmcstats[i].push_back(m);
-
-
       }
     }
+
     if (mh_iter > burnin + keepsize) {
       // check convergence by EPSR
       vector<double> epsr;
@@ -862,8 +770,7 @@ main(int argc, const char **argv) {
              << tree_file << endl;
         return EXIT_SUCCESS;
       }
-    }
-    else {
+    } else {
       // make sure meth data and tree info is in sync
       if (meth_table_species.size() != n_leaves ||
           !has_same_species_order(t, meth_table_species))
