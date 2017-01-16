@@ -27,7 +27,7 @@
 using std::vector;
 using std::string;
 
-double param_set::tolerance = 1e-4; // tolerance for parameter estimate precision
+double param_set::tolerance = 5e-4; // tolerance for parameter estimate precision
 
 std::ostream &
 operator<<(std::ostream &out, const param_set &ps) {
