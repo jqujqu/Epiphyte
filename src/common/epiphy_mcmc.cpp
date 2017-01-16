@@ -197,9 +197,22 @@ EPSR(vector<vector<mcmc_stat> > &mcmcstats,
   }
 
   for (size_t i = 0; i < n_var; ++i) {
-    // cerr << "[compute vhat]" << i << ":" << vhat[i]
-    //      << " over " << y_btwn_variance[i] << "\t"
-    //      << pow(vhat[i]/y_btwn_variance[i], 0.5) << endl;
     epsr.push_back(pow(vhat[i]/y_btwn_variance[i], 0.5));
+  }
+}
+
+
+void
+sum(const vector<mcmc_stat> &mcmcstats,
+    mcmc_stat &ave_mcmc_stat) {
+  ave_mcmc_stat = mcmcstats[0];
+  for (size_t i = 1; i < mcmcstats.size(); ++i) {
+    ave_mcmc_stat.root_start_distr.first += mcmcstats[i].root_start_distr.first;
+    ave_mcmc_stat.root_start_distr.second += mcmcstats[i].root_start_distr.second;
+    ave_mcmc_stat.root_distr += mcmcstats[i].root_distr;
+    for (size_t j = 0; j < mcmcstats[0].start_distr.size(); ++j) {
+      ave_mcmc_stat.start_distr[j] += mcmcstats[i].start_distr[j];
+      ave_mcmc_stat.triad_distr[j] += mcmcstats[i].triad_distr[j];
+    }
   }
 }

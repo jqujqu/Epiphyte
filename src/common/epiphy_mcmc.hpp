@@ -699,6 +699,8 @@ struct mcmc_stat{
   std::vector<pair_state> start_distr;
   std::vector<triple_state> triad_distr;
 
+  mcmc_stat() {}
+
   mcmc_stat(const std::pair<double, double> &root_start,
             const pair_state &root,
             const std::vector<pair_state> &start,
@@ -708,6 +710,10 @@ struct mcmc_stat{
 
   void scale();
 };
+
+void
+sum(const std::vector<mcmc_stat> &mcmcstats,
+    mcmc_stat &ave_mcmc_stat);
 
 
 // measure MCMC convergence
