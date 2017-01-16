@@ -25,6 +25,7 @@
 #include <vector>
 #include <sstream>
 #include <fstream>
+#include <limits>
 
 using std::vector;
 using std::string;
