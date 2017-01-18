@@ -312,12 +312,14 @@ expectation_maximization(const bool VERBOSE,
       cerr << "[M-step iter=" << iter << ", params:" << endl
            << params << ']' << endl;
 
-    const double diff = param_set::absolute_difference(prev_ps, params);
+    // const double diff = param_set::absolute_difference(prev_ps, params);
+    // em_converged = (diff < param_set::tolerance*params.T.size());
+
+    const double diff = param_set::max_abs_difference(prev_ps, params);
+    em_converged = (diff < param_set::tolerance);
 
     const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
                                       root_counts, start_counts, triad_counts);
-
-    em_converged = (diff < param_set::tolerance*params.T.size());
 
     if (VERBOSE)
       cerr << "[EM iter=" << iter << ", "
@@ -487,12 +489,14 @@ expectation_maximization(const bool VERBOSE,
       cerr << "[M-step iter=" << iter << ", params:" << endl
            << params << ']' << endl;
 
-    const double diff = param_set::absolute_difference(prev_ps, params);
+    // const double diff = param_set::absolute_difference(prev_ps, params);
+    // em_converged = (diff < param_set::tolerance*params.T.size());
+
+    const double diff = param_set::max_abs_difference(prev_ps, params);
+    em_converged = (diff < param_set::tolerance);
 
     const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
                                       root_counts, start_counts, triad_counts);
-
-    em_converged = (diff < param_set::tolerance*params.T.size());
 
     if (VERBOSE)
       cerr << "[EM iter=" << iter << ", "

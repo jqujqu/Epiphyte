@@ -65,6 +65,18 @@ struct param_set {
     return d;
   }
 
+  static double
+  max_abs_difference(const param_set &a, const param_set &b) {
+    assert(a.T.size() == b.T.size());
+    double d =  std::max(std::abs(a.g0 - b.g0), std::abs(a.g1 - b.g1));
+    d = std::abs(a.pi0 - b.pi0) > d ? std::abs(a.pi0 - b.pi0) : d;
+    d = std::abs(a.rate0 - b.rate0) > d ? std::abs(a.rate0 - b.rate0) : d;
+
+    for (size_t i = 0; i < a.T.size(); ++i)
+      d = std::abs(a.T[i] - b.T[i]) > d ? std::abs(a.T[i] - b.T[i]) : d;
+    return d;
+  }
+
   std::string tostring() const;
 
   void read(const std::string &paramfile, PhyloTreePreorder &t);
