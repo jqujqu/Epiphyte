@@ -150,6 +150,7 @@ kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+// optimize parameters one by one
 static void
 maximization_step(const bool VERBOSE, const size_t MAXITER,
                   const vector<size_t> &subtree_sizes,
@@ -179,6 +180,26 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
     diff = param_set::absolute_difference(ps, prev_ps); // convergence criteria
   }
 }
+
+// optimize all parameters simultaneously by gradient descent
+static void
+maximization_step(const bool VERBOSE,
+                  const vector<size_t> &subtree_sizes,
+                  const pair<double, double> &root_start_counts,
+                  const pair_state &root_counts,
+                  const vector<pair_state> &start_counts,
+                  const vector<triple_state> &triad_counts, param_set &ps) {
+
+  // one M-step: optimize parameters
+  double diff = std::numeric_limits<double>::max();
+  param_set prev_ps(ps);
+
+  max_likelihood_params(VERBOSE, subtree_sizes,
+                        root_start_counts, root_counts, start_counts,
+                        triad_counts, ps);
+}
+
+
 
 
 template <class T>
@@ -397,7 +418,7 @@ expectation_step(const bool VERBOSE,
       mcmcstats.push_back(m);
     }
 
-    if (mh_iter > burnin + keepsize*2) {
+    if (mcmcstats.size() >= keepsize*2) {
 
       vector<double> divergence;
       vector<mcmc_stat> win1(keepsize), win2(keepsize);
@@ -436,6 +457,8 @@ expectation_step(const bool VERBOSE,
     cerr << "[MH iterations=" << mh_iter << ']' << endl;
 }
 
+
+// EM steps using marked sites
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
@@ -482,9 +505,15 @@ expectation_maximization(const bool VERBOSE,
     }
 
     /****************** M-step: optimize parameters ************************/
-    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
-                      root_start_counts, root_counts, start_counts,
-                      triad_counts, params);
+    /*optimize parameters one by one, at most opt_max_iterations*/
+    // maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+    //                  root_start_counts, root_counts, start_counts,
+    //                  triad_counts, params);
+
+    /*optimize by gradient descent*/
+    maximization_step(VERBOSE, subtree_sizes, root_start_counts,
+                      root_counts, start_counts, triad_counts, params);
+
     if (VERBOSE)
       cerr << "[M-step iter=" << iter << ", params:" << endl
            << params << ']' << endl;
@@ -584,6 +613,9 @@ main(int argc, const char **argv) {
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
                            "a phylo-epigenomic model"
                            "<newick> <meth-table>");
+    opt_parse.add_opt("desert", 'd', "desert size (default: " +
+                      to_string(desert_size) + ")",
+                      false, desert_size);
     opt_parse.add_opt("maxiter", 'i', "max EM iterations (default: " +
                       to_string(em_max_iterations) + ")",
                       false, em_max_iterations);
@@ -630,6 +662,8 @@ main(int argc, const char **argv) {
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
     /******************** END COMMAND LINE OPTIONS ********************/
+
+    mh_max_iterations = std::max(burnin + 3*keep, mh_max_iterations);
 
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
