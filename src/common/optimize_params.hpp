@@ -71,10 +71,20 @@ max_likelihood_rate(const bool VERBOSE, const std::vector<size_t> &subtree_sizes
                     param_set &ps);
 
 void
-max_likelihood_branch(const bool VERBOSE, const vector<size_t> &subtree_sizes,
+max_likelihood_branch(const bool VERBOSE,
+                      const std::vector<size_t> &subtree_sizes,
                       const size_t node_id,
-                      const vector<pair_state> &start_counts,
-                      const vector<triple_state> &triad_counts,
+                      const std::vector<pair_state> &start_counts,
+                      const std::vector<triple_state> &triad_counts,
+                      param_set &ps);
+
+void
+max_likelihood_params(const bool VERBOSE,
+                      const std::vector<size_t> &subtree_sizes,
+                      const std::pair<double, double> &root_start_counts,
+                      const pair_state &root_counts,
+                      const std::vector<pair_state> &start_counts,
+                      const std::vector<triple_state> &triad_counts,
                       param_set &ps);
 
 #endif

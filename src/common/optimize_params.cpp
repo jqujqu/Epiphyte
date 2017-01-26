@@ -39,6 +39,7 @@ using std::log;
 
 using std::pair;
 
+static const double TOL = 1e-10; //param_set::tolerance * 0.1;
 
 double
 log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
@@ -134,6 +135,9 @@ log_likelihood(const vector<size_t> &subtree_sizes,
   return llk;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//////// Optimize inividual parameters to maximize log-likelihood  /////////////
+////////////////////////////////////////////////////////////////////////////////
 
 static void
 objective_branch(const param_set &ps,
@@ -172,16 +176,31 @@ btwn_01_eps(const T x, const double &epsilon) {
 }
 
 
+static bool
+btwn_01_eps(const param_set &ps, const double &epsilon,
+            const param_set &deriv, double step_size) {
+  bool valid = true;
+  valid = valid & btwn_01_eps(ps.rate0 + step_size*deriv.rate0, epsilon);
+  valid = valid & btwn_01_eps(ps.g0 + step_size*deriv.g0, epsilon);
+  valid = valid & btwn_01_eps(ps.g1 + step_size*deriv.g1, epsilon);
+  valid = valid & btwn_01_eps(ps.g1 + step_size*deriv.g1, epsilon);
+  for (size_t i = 1; i < ps.T.size(); ++i)
+    valid = valid & btwn_01_eps(ps.T[i] + step_size*deriv.T[i], epsilon);
+
+  return valid;
+}
+
 static double
 find_next_branch(const param_set &ps, const double deriv,
                  const size_t node_id, double step_size, param_set &next_ps) {
 
-  while (step_size > param_set::tolerance &&
-         !btwn_01_eps(ps.T[node_id] + step_size*sign(deriv), param_set::tolerance))
+  const double sgn = sign(deriv);
+  while (step_size > TOL &&
+         !btwn_01_eps(ps.T[node_id] + step_size*sgn, TOL))
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.T[node_id] = ps.T[node_id] + step_size*sign(deriv);
+  next_ps.T[node_id] = ps.T[node_id] + step_size*sgn;
 
   return step_size;
 }
@@ -199,15 +218,17 @@ max_likelihood_branch(const bool VERBOSE, const vector<size_t> &subtree_sizes,
   get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
 
   double F = 0.0, deriv = 0.0;
-  objective_branch(ps, start_counts, triad_counts, P, GP, GP_dT, node_id, F, deriv);
+  objective_branch(ps, start_counts, triad_counts,
+                   P, GP, GP_dT, node_id, F, deriv);
 
   double step_size = 1.0;
-  while (step_size > param_set::tolerance) {
+  while (step_size > TOL) {
 
     param_set next_ps(ps);
     step_size = find_next_branch(ps, deriv, node_id, step_size, next_ps);
 
-    get_transition_matrices_deriv(next_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
+    get_transition_matrices_deriv(next_ps, P, GP, GP_drate,
+                                  GP_dg0, GP_dg1, GP_dT);
 
     double next_F = 0.0, next_deriv = 0.0;
     objective_branch(next_ps, start_counts, triad_counts, P, GP,
@@ -223,8 +244,9 @@ max_likelihood_branch(const bool VERBOSE, const vector<size_t> &subtree_sizes,
       F = next_F;
       deriv = next_deriv;
       ps.T[node_id] = next_ps.T[node_id];
+    } else {
+      step_size /= 2.0;
     }
-    else step_size /= 2.0;
   }
 }
 
@@ -269,13 +291,12 @@ static double
 find_next_rate(const param_set &ps, const double deriv,
                double step_size, param_set &next_ps) {
 
-  const double denom = abs(deriv);
-  while (step_size > param_set::tolerance &&
-         !btwn_01_eps(ps.rate0 + step_size*(deriv/denom), param_set::tolerance))
+  const double sgn = sign(deriv);
+  while (step_size > TOL && !btwn_01_eps(ps.rate0 + step_size*sgn, TOL))
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.rate0 = ps.rate0 + step_size*(deriv/denom);
+  next_ps.rate0 = ps.rate0 + step_size*sgn;
 
   return step_size;
 }
@@ -297,12 +318,13 @@ max_likelihood_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                  P, GP, GP_drate, F, deriv);
 
   double step_size = 1.0;
-  while (step_size > param_set::tolerance) {
+  while (step_size > TOL) {
 
     param_set next_ps(ps);
     step_size = find_next_rate(ps, deriv, step_size, next_ps);
 
-    get_transition_matrices_deriv(next_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
+    get_transition_matrices_deriv(next_ps, P, GP, GP_drate,
+                                  GP_dg0, GP_dg1, GP_dT);
 
     double next_F = 0.0;
     double next_deriv = 0.0;
@@ -318,8 +340,9 @@ max_likelihood_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
       F = next_F;
       deriv = next_deriv;
       ps.rate0 = next_ps.rate0;
+    } else {
+      step_size /= 2.0;
     }
-    else step_size /= 2.0;
   }
 }
 
@@ -369,11 +392,9 @@ find_next_horiz(const param_set &ps, const pair<double, double> &deriv,
                 double step_size, param_set &next_ps) {
 
   const double denom = abs(deriv.first) + abs(deriv.second);
-  while (step_size > param_set::tolerance &&
-         !(btwn_01_eps(ps.g0 + step_size*(deriv.first/denom),
-                       param_set::tolerance) &&
-           btwn_01_eps(ps.g1 + step_size*(deriv.second/denom),
-                       param_set::tolerance)))
+  while (step_size > TOL &&
+         !(btwn_01_eps(ps.g0 + step_size*(deriv.first/denom), TOL) &&
+           btwn_01_eps(ps.g1 + step_size*(deriv.second/denom), TOL)))
     step_size /= 2.0;
 
   next_ps = ps;
@@ -401,12 +422,13 @@ max_likelihood_horiz(const bool VERBOSE,
                   GP, GP_dg0, GP_dg1, F, deriv);
 
   double step_size = 1.0;
-  while (step_size > param_set::tolerance) {
+  while (step_size > TOL) {
 
     param_set next_ps;
     step_size = find_next_horiz(ps, deriv, step_size, next_ps);
 
-    get_transition_matrices_deriv(next_ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
+    get_transition_matrices_deriv(next_ps, P, GP, GP_drate,
+                                  GP_dg0, GP_dg1, GP_dT);
 
     double next_F = 0.0;
     pair<double, double> next_deriv;
@@ -424,8 +446,9 @@ max_likelihood_horiz(const bool VERBOSE,
       deriv.swap(next_deriv);
       ps.g0 = next_ps.g0;
       ps.g1 = next_ps.g1;
+    } else {
+      step_size /= 2.0;
     }
-    else step_size /= 2.0;
   }
 }
 
@@ -443,7 +466,7 @@ max_likelihood_pi0(const bool VERBOSE,
     cerr << "[max_likelihood_pi0: pi0=" << ps.pi0 << ']' << endl;
 }
 
-
+// may get rid of  subtree_sizes
 void
 optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                 const pair<double, double> &root_start_counts,
@@ -460,4 +483,183 @@ optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
   max_likelihood_pi0(VERBOSE, root_start_counts, ps);
 
   max_likelihood_horiz(VERBOSE, subtree_sizes, root_counts, triad_counts, ps);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//////// Optimize by gradient descent to maximize log-likelihood  //////////////
+////////////////////////////////////////////////////////////////////////////////
+
+static void
+objective_params(const param_set &ps,
+                 const pair<double, double> &root_start_counts,
+                 const pair_state &root_counts,
+                 const vector<pair_state> &start_counts,
+                 const vector<triple_state> &triad_counts,
+                 const pair_state &G,
+                 const vector<pair_state> &P,
+                 const vector<triple_state> &GP,
+                 const vector<pair_state> &P_drate,
+                 const pair_state &P_dT, //share by all T
+                 const vector<triple_state> &GP_drate,
+                 const vector<triple_state> &GP_dg0,
+                 const vector<triple_state> &GP_dg1,
+                 const vector<triple_state> &GP_dT,
+                 double &F, param_set &deriv) {
+
+  //set all values to 0
+  F = 0.0;
+  deriv = ps;
+  std::fill(deriv.T.begin(), deriv.T.end(), 0.0);
+  deriv.pi0 = 0.0;
+  deriv.rate0 = 0.0;
+  deriv.g0 = 0.0;
+  deriv.g1 = 0.0;
+
+  // root_start_counts contribute to pi0
+  deriv.pi0 = (root_start_counts.first/ps.pi0 -
+               root_start_counts.second/(1.0 - ps.pi0));
+
+  // root_counts countribute to g0, g1
+  for (size_t i = 0; i < 2; ++i)
+    for (size_t j = 0; j < 2; ++j) {
+      F += root_counts(i, j)*log(G(i, j));
+    }
+  deriv.g0 += root_counts(0, 0)/G(0, 0) - root_counts(0, 1)/G(0, 1);
+  deriv.g1 += -1.0*root_counts(1, 0)/G(1, 0) + root_counts(1, 1)/G(1, 1);
+
+  const size_t n_nodes = ps.T.size();
+  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
+    // triad_counts contribute to rate, g0, g1, and T
+    for (size_t i = 0; i < 2; ++i)
+      for (size_t j = 0; j < 2; ++j)
+        for (size_t k = 0; k < 2; ++k) {
+          F += triad_counts[node_id](i, j, k)*log(GP[node_id](i, j, k));
+          deriv.rate0 += (triad_counts[node_id](i, j, k)*
+                          GP_drate[node_id](i, j, k)/GP[node_id](i, j, k));
+          deriv.T[node_id] += (triad_counts[node_id](i, j, k)*
+                               GP_dT[node_id](i, j, k)/GP[node_id](i, j, k));
+        }
+
+    for (size_t j = 0; j < 2; ++j)
+      for (size_t k = 0; k < 2; ++k) {
+        deriv.g0 += (triad_counts[node_id](0, j, k)*
+                     GP_dg0[node_id](0, j, k)/GP[node_id](0, j, k));
+        deriv.g1 += (triad_counts[node_id](1, j, k)*
+                     GP_dg1[node_id](1, j, k)/GP[node_id](1, j, k));
+      }
+    // start_counts contribute to rate and T
+    for (size_t j = 0; j < 2; ++j)
+      for (size_t k = 0; k < 2; ++k) {
+        F += start_counts[node_id](j, k)*log(P[node_id](j, k));
+        deriv.rate0 += (start_counts[node_id](j, k)*
+                        P_drate[node_id](j, k)/P[node_id](j, k));
+        deriv.T[node_id] += (start_counts[node_id](j, k)*
+                             (P_dT(j, k)/P[node_id](j, k)));
+      }
+  }
+}
+
+static double
+find_next_ps(const param_set &ps,
+             const param_set &deriv,
+             double &step_size, param_set &next_ps) {
+
+  // find the max gradient
+  double denom = max(abs(deriv.pi0), abs(deriv.rate0));
+  denom = max(max(abs(deriv.g0), abs(deriv.g1)), denom);
+  for (size_t i = 1; i < ps.T.size(); ++i)
+    denom = max(denom, abs(deriv.T[i]));
+
+  while (step_size > TOL && !btwn_01_eps(ps, TOL, deriv, step_size))
+    step_size /= 2.0;
+
+  next_ps = ps;
+  next_ps.pi0 = ps.pi0 + step_size*(deriv.pi0/denom);
+  next_ps.rate0 = ps.rate0 + step_size*(deriv.rate0/denom);
+  next_ps.g0 = ps.g0 + step_size*(deriv.g0/denom);
+  next_ps.g1 = ps.g1 + step_size*(deriv.g1/denom);
+  for (size_t i = 1; i < ps.T.size(); ++i)
+    next_ps.T[i] = ps.T[i] + step_size*(deriv.T[i]/denom);
+
+  return step_size;
+}
+
+
+
+void
+max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
+                      const pair<double, double> &root_start_counts,
+                      const pair_state &root_counts,
+                      const vector<pair_state> &start_counts,
+                      const vector<triple_state> &triad_counts,
+                      param_set &ps) {
+
+  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  vector<pair_state> P;
+  vector<triple_state> GP, GP_drate, GP_dg0, GP_dg1, GP_dT;
+  get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
+
+  const size_t n_nodes = ps.T.size();
+  vector<pair_state>P_drate(n_nodes);
+  for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
+    const double T_val = ps.T[node_id];
+    P_drate[node_id] = pair_state(-T_val, T_val, -T_val, T_val);
+  }
+
+  const double rate0 = ps.rate0;
+  pair_state P_dT(-rate0, rate0, 1.0 - rate0, rate0 - 1.0);
+
+  double F;
+  param_set deriv;
+  objective_params(ps, root_start_counts,root_counts, start_counts,
+                   triad_counts, G, P, GP, P_drate, P_dT,
+                   GP_drate, GP_dg0, GP_dg1, GP_dT, F, deriv);
+
+  double step_size = 1.0;
+  while (step_size > TOL) {
+
+    // find next point
+    param_set next_ps(ps);
+    step_size = find_next_ps(ps, deriv, step_size, next_ps);
+
+    // evaluate auxiliary quantities at next_ps
+    G = pair_state(next_ps.g0, 1.0 - next_ps.g0, 1.0 - next_ps.g1, next_ps.g1);
+    get_transition_matrices_deriv(next_ps, P, GP, GP_drate,
+                                  GP_dg0, GP_dg1, GP_dT);
+    for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
+      const double T_val = next_ps.T[node_id];
+      P_drate[node_id] = pair_state(-T_val, T_val, -T_val, T_val);
+    }
+
+    const double rate0 = ps.rate0;
+    P_dT = pair_state(-rate0, rate0, 1.0 - rate0, rate0 - 1.0);
+
+    // get log-likelihood and gradients at next_ps
+    double next_F = 0.0;
+    param_set next_deriv;
+    objective_params(next_ps, root_start_counts,root_counts, start_counts,
+                     triad_counts, G, P, GP, P_drate, P_dT,
+                     GP_drate, GP_dg0, GP_dg1, GP_dT, next_F, next_deriv);
+
+    if (next_F > F) {
+      F = next_F;
+      deriv = next_deriv;
+      ps = next_ps;
+    } else {
+      step_size /= 2.0;
+    }
+  }
+}
+
+// may get rid of  subtree_sizes
+void
+optimize_all_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
+                    const pair<double, double> &root_start_counts,
+                    const pair_state &root_counts,
+                    const vector<pair_state> &start_counts,
+                    const vector<triple_state> &triad_counts, param_set &ps) {
+
+  max_likelihood_params(VERBOSE, subtree_sizes, root_start_counts, root_counts,
+                        start_counts, triad_counts, ps);
 }
