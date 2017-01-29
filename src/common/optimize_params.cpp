@@ -39,7 +39,7 @@ using std::log;
 
 using std::pair;
 
-static const double TOL = 1e-10; //param_set::tolerance * 0.1;
+static const double TOL = 1e-10;
 
 double
 log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
@@ -643,6 +643,9 @@ max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                      GP_drate, GP_dg0, GP_dg1, GP_dT, next_F, next_deriv);
 
     if (next_F > F) {
+      if (VERBOSE)
+        cerr << "[Maximization step]\tlog_lik=" << next_F
+             << "\tparam:" << next_ps << endl;
       F = next_F;
       deriv = next_deriv;
       ps = next_ps;
