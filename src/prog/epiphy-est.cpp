@@ -506,20 +506,13 @@ expectation_maximization(const bool VERBOSE,
 
     /****************** M-step: optimize parameters ************************/
     /*optimize parameters one by one, at most opt_max_iterations*/
-    // maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
-    //                  root_start_counts, root_counts, start_counts,
-    //                  triad_counts, params);
-
-    /*optimize by gradient descent*/
-    maximization_step(VERBOSE, subtree_sizes, root_start_counts,
-                      root_counts, start_counts, triad_counts, params);
+    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+                      root_start_counts, root_counts, start_counts,
+                      triad_counts, params);
 
     if (VERBOSE)
       cerr << "[M-step iter=" << iter << ", params:" << endl
            << params << ']' << endl;
-
-    // const double diff = param_set::absolute_difference(prev_ps, params);
-    // em_converged = (diff < param_set::tolerance*params.T.size());
 
     const double diff = param_set::max_abs_difference(prev_ps, params);
     em_converged = (diff < param_set::tolerance);
@@ -608,6 +601,7 @@ main(int argc, const char **argv) {
     bool VERBOSE = false;
     bool assume_complete_data = false;
     bool first_only = false;
+    bool restart = false;
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
@@ -632,6 +626,8 @@ main(int argc, const char **argv) {
                       false, burnin);
     opt_parse.add_opt("first-only", 'f', "only burn-in in first EM iteration",
                       false, first_only);
+    opt_parse.add_opt("restart", 'r', "restart MCMC chain in each EM iteration",
+                      false, restart);
     opt_parse.add_opt("seed", 's', "rng seed (default: none)",
                       false, rng_seed);
     opt_parse.add_opt("verbose", 'v', "print more run info "
@@ -773,9 +769,12 @@ main(int argc, const char **argv) {
                         root_start_counts, root_counts, start_counts,
                         triad_counts, params);
     } else {
-
       const epiphy_mcmc sampler(mh_max_iterations, 0);
       bool MARK = true;
+
+      if (restart)
+        sample_initial_states(rng_seed, tree_probs, tree_states);
+
       if (!MARK) {
         expectation_maximization(VERBOSE, em_max_iterations,
                                  opt_max_iterations,
