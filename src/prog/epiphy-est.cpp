@@ -433,8 +433,7 @@ expectation_step(const bool VERBOSE,
       kl_divergence(sumwin1, sumwin2, divergence);
 
       // determine convergence based on how far proportions have moved
-      double kl = *max_element(divergence.begin(), divergence.end()) ;
-      cerr << "KL_div=" << kl;
+      const double kl = *max_element(divergence.begin(), divergence.end()) ;
       converged = kl < KL_CONV_TOL;
     }
   }
