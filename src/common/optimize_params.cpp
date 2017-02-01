@@ -190,6 +190,11 @@ btwn_01_eps(const param_set &ps, const double &epsilon,
   return valid;
 }
 
+static double 
+bound_01_eps(const double x, const double epsilon) {
+  return std::min(std::max(x, epsilon), 1.0-epsilon); 
+}
+
 static double
 find_next_branch(const param_set &ps, const double deriv,
                  const size_t node_id, double step_size, param_set &next_ps) {
@@ -200,10 +205,11 @@ find_next_branch(const param_set &ps, const double deriv,
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.T[node_id] = ps.T[node_id] + step_size*sgn;
+  next_ps.T[node_id] = bound_01_eps(ps.T[node_id] + step_size*sgn, TOL);
 
   return step_size;
 }
+
 
 
 void
@@ -296,7 +302,7 @@ find_next_rate(const param_set &ps, const double deriv,
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.rate0 = ps.rate0 + step_size*sgn;
+  next_ps.rate0 = bound_01_eps(ps.rate0 + step_size*sgn, TOL);
 
   return step_size;
 }
@@ -398,8 +404,8 @@ find_next_horiz(const param_set &ps, const pair<double, double> &deriv,
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.g0 = ps.g0 + step_size*(deriv.first/denom);
-  next_ps.g1 = ps.g1 + step_size*(deriv.second/denom);
+  next_ps.g0 = bound_01_eps(ps.g0 + step_size*(deriv.first/denom), TOL);
+  next_ps.g1 = bound_01_eps(ps.g1 + step_size*(deriv.second/denom), TOL);
 
   return step_size;
 }
@@ -575,12 +581,12 @@ find_next_ps(const param_set &ps,
     step_size /= 2.0;
 
   next_ps = ps;
-  next_ps.pi0 = ps.pi0 + step_size*(deriv.pi0/denom);
-  next_ps.rate0 = ps.rate0 + step_size*(deriv.rate0/denom);
-  next_ps.g0 = ps.g0 + step_size*(deriv.g0/denom);
-  next_ps.g1 = ps.g1 + step_size*(deriv.g1/denom);
+  next_ps.pi0 = bound_01_eps(ps.pi0 + step_size*(deriv.pi0/denom), TOL);
+  next_ps.rate0 = bound_01_eps(ps.rate0 + step_size*(deriv.rate0/denom), TOL);
+  next_ps.g0 = bound_01_eps(ps.g0 + step_size*(deriv.g0/denom), TOL);
+  next_ps.g1 = bound_01_eps(ps.g1 + step_size*(deriv.g1/denom), TOL);
   for (size_t i = 1; i < ps.T.size(); ++i)
-    next_ps.T[i] = ps.T[i] + step_size*(deriv.T[i]/denom);
+    next_ps.T[i] = bound_01_eps(ps.T[i] + step_size*(deriv.T[i]/denom), TOL);
 
   return step_size;
 }
