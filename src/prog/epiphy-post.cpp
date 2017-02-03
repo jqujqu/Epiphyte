@@ -97,6 +97,7 @@ template <class T>
 static void
 estimate_posterior(const bool VERBOSE,
                    const size_t max_iterations,
+                   const size_t burn,
                    const epiphy_mcmc &sampler,
                    const vector<size_t> &subtree_sizes,
                    const vector<size_t> &parent_ids,
@@ -112,16 +113,16 @@ estimate_posterior(const bool VERBOSE,
                                        vector<double>(n_nodes, 0.0));
 
   // ADS: need convergence criteria here??
-  for (size_t mh_iter = 0; mh_iter < max_iterations; ++mh_iter) {
+  for (size_t mh_iter = 0; mh_iter < max_iterations + burn; ++mh_iter) {
     if (VERBOSE)
       cerr << "\r[inside estimate_posterior (iter=" << mh_iter << ")]";
 
     sampler.sample_states(subtree_sizes, parent_ids, params,
                           marginals, blocks, states);
-
-    for (size_t i = 0; i < states.size(); ++i)
-      for (size_t j = 0; j < states[i].size(); ++j)
-        posteriors[i][j] += states[i][j];
+    if (mh_iter >= burn)
+      for (size_t i = 0; i < states.size(); ++i)
+        for (size_t j = 0; j < states[i].size(); ++j)
+          posteriors[i][j] += states[i][j];
   }
   if (VERBOSE)
     cerr << endl;
@@ -199,6 +200,7 @@ main(int argc, const char **argv) {
 
     size_t desert_size = 1000;
     size_t mh_max_iterations = 500;
+    size_t burn = 0;
 
     // run mode flags
     bool VERBOSE = false;
@@ -212,6 +214,9 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("mcmc-iter", 'h', "max mcmc iterations (default: " +
                       to_string(mh_max_iterations) + ")",
                       false, mh_max_iterations);
+    opt_parse.add_opt("burn", 'b', "burnin size (default: " +
+                      to_string(burn) + ")",
+                      false, burn);
     opt_parse.add_opt("verbose", 'v', "print more run info "
                       "(default: " + string(VERBOSE ? "true" : "false") + ")",
                       false, VERBOSE);
@@ -267,7 +272,7 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[tree:]\n" << t.tostring() << endl;
 
-    /******************* READ THE METHYLATION DATA *****************************/
+    /******************* READ THE METHYLATION DATA ****************************/
     if (VERBOSE)
       cerr << "[reading methylation data (mode="
            << (assume_complete_data ? "complete" : "missing") << ")]" << endl;
@@ -310,7 +315,7 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[computing posterior probabilities]" << endl;
     vector<vector<double> > posteriors;
-    estimate_posterior(VERBOSE, mh_max_iterations, sampler,
+    estimate_posterior(VERBOSE, mh_max_iterations, burn, sampler,
                        subtree_sizes, parent_ids, tree_probs,
                        blocks, params, tree_states, posteriors);
 
