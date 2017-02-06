@@ -600,7 +600,7 @@ main(int argc, const char **argv) {
     bool VERBOSE = false;
     bool assume_complete_data = false;
     bool first_only = false;
-    bool restart = false;
+    bool restart_chain = false;
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
@@ -626,7 +626,7 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("first-only", 'f', "only burn-in in first EM iteration",
                       false, first_only);
     opt_parse.add_opt("restart", 'r', "restart MCMC chain in each EM iteration",
-                      false, restart);
+                      false, restart_chain);
     opt_parse.add_opt("seed", 's', "rng seed (default: none)",
                       false, rng_seed);
     opt_parse.add_opt("verbose", 'v', "print more run info "
@@ -769,12 +769,12 @@ main(int argc, const char **argv) {
                         triad_counts, params);
     } else {
       const epiphy_mcmc sampler(mh_max_iterations, 0);
-      bool MARK = true;
+      const bool use_marks = true;
 
-      if (restart)
+      if (restart_chain)
         sample_initial_states(rng_seed, tree_probs, tree_states);
 
-      if (!MARK) {
+      if (!use_marks) {
         expectation_maximization(VERBOSE, em_max_iterations,
                                  opt_max_iterations,
                                  mh_max_iterations, burnin, sampler,
