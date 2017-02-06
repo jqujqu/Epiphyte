@@ -274,12 +274,12 @@ expectation_step(const bool VERBOSE,
   if (VERBOSE)
     cerr << endl;
 
-  root_start_counts.first /= mh_iter-burnin;
-  root_start_counts.second /= mh_iter-burnin;
+  root_start_counts.first /= mh_iter - burnin;
+  root_start_counts.second /= mh_iter - burnin;
   root_counts.div(mh_iter);
   for (size_t i = 0; i < triad_counts.size(); ++i) {
-    start_counts[i].div(mh_iter-burnin);
-    triad_counts[i].div(mh_iter-burnin);
+    start_counts[i].div(mh_iter - burnin);
+    triad_counts[i].div(mh_iter - burnin);
   }
 
   if (VERBOSE)
@@ -413,9 +413,8 @@ expectation_step(const bool VERBOSE,
       // record stats if past burning stage
       if (mcmcstats.size() >= keepsize*2)
         mcmcstats.erase(mcmcstats.begin());
-      mcmc_stat m(root_start_counts_samp, root_counts_samp,
-                  start_counts_samp, triad_counts_samp);
-      mcmcstats.push_back(m);
+      mcmcstats.push_back(mcmc_stat(root_start_counts_samp, root_counts_samp,
+                                    start_counts_samp, triad_counts_samp));
     }
 
     if (mcmcstats.size() >= keepsize*2) {
@@ -819,6 +818,10 @@ main(int argc, const char **argv) {
   }
   catch (std::bad_alloc &ba) {
     cerr << "ERROR: could not allocate memory" << endl;
+    return EXIT_FAILURE;
+  }
+  catch (const std::exception &e) {
+    cerr << e.what() << endl;
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;
