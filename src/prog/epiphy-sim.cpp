@@ -444,5 +444,9 @@ int main(int argc, const char **argv) {
     cerr << "ERROR: could not allocate memory" << endl;
     return EXIT_FAILURE;
   }
+  catch (const std::exception &e) {
+    cerr << e.what() << endl;
+    return EXIT_FAILURE;
+  }
   return EXIT_SUCCESS;
 }
