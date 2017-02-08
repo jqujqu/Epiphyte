@@ -65,8 +65,10 @@ $(PROGS): $(addprefix $(SMITHLAB_CPP)/, GenomicRegion.o smithlab_os.o \
 simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o )
 
-indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o PhyloTreePreorder.o) \
-	$(addprefix $(TREETOOL)/, PhyloTree.o )
+indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
+	BetaBin.o PhyloTreePreorder.o epiphy_utils.o ) \
+	$(addprefix $(TREETOOL)/, PhyloTree.o ) \
+	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o)
 
 epiphy epiphy-est epiphy-post epiphy-seg epiphy-est-multichain: \
 	$(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
