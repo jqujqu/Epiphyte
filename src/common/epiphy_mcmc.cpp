@@ -47,7 +47,7 @@ mcmc_stat::scale() {
     start_distr[i].to_probabilities();
     tot = (triad_distr[i].uuu + triad_distr[i].uum +
            triad_distr[i].umu + triad_distr[i].umm +
-           triad_distr[i].muu + triad_distr[i].uum +
+           triad_distr[i].muu + triad_distr[i].mum +
            triad_distr[i].mmu + triad_distr[i].mmm);
     assert(tot > 0);
     triad_distr[i].div(tot);
