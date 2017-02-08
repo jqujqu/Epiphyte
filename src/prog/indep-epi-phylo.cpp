@@ -26,7 +26,6 @@
 #include <iomanip> // std::setw
 #include <fstream>
 #include <numeric> //std::accumulate
-#include <unordered_map>
 #include <random>
 #include <algorithm>
 #include <cmath>    //std::abs, floor
@@ -42,11 +41,13 @@
 
 /* from methpipe */
 #include "MethpipeFiles.hpp"
+#include "MethpipeSite.hpp"
 #include "BetaBin.hpp"
 
 /* headers for epigenomic evolution */
 #include "PhyloTreePreorder.hpp"
 #include "PhyloTree.hpp"
+#include "epiphy_utils.hpp"
 
 using std::string;
 using std::vector;
@@ -54,204 +55,42 @@ using std::endl;
 using std::cerr;
 using std::cout;
 using std::setw;
-using std::pair;
-using std::make_pair;
-using std::unordered_map;
 using std::abs;
 using std::numeric_limits;
-using std::accumulate;
 using std::inner_product;
 using std::min;
 using std::max;
 using std::istringstream;
 using std::istream_iterator;
+using std::to_string;
 
 
-struct Site {
-  string chrom;
-  size_t pos;
-
-  Site() {}
-  Site(const string &chr, const size_t position) :
-    chrom(chr), pos(position) {}
-
-  void
-  assign_from_methtab_first_column(const string &line) {
-    size_t chrom_end = line.find_first_of(':');
-    chrom = line.substr(0, chrom_end);
-    size_t pos_end = line.find_first_of(':', chrom_end + 1);
-    pos = atoi(line.substr(chrom_end + 1, pos_end - chrom_end).c_str());
-  }
-};
-
-
-
-void
-parse_table_line(istringstream &iss,
-                 vector<vector<pair<size_t, size_t> > > &meth) {
-  meth.push_back(vector<pair<size_t, size_t> >());
-  size_t meth_count = 0, unmeth_count = 0;
-  while (iss >> meth_count) {
-    if (iss >> unmeth_count) {
-      meth.back().push_back(make_pair(meth_count, unmeth_count));
-    } else {
-      throw SMITHLABException("bad line format: " + iss.str());
-    }
-  }
-}
-
-
-
-void
-parse_table_line(istringstream &iss,
-                 vector<vector<double> > &meth) {
-  meth.push_back(vector<double>(istream_iterator<double>(iss),
-                                istream_iterator<double>()));
-  for (size_t i = 0; i < meth.back().size(); ++ i) {
-    if (meth.back()[i] < 0 || meth.back()[i] > 1.0)
-      throw SMITHLABException("bad line content: [" + iss.str() +
-                              "], expecting hypomethylation probabilities");
-  }
-  if (meth.back().empty())
-    throw SMITHLABException("bad line format: " + iss.str());
-}
-
-
-
-template <class T> void
-parse_meth_table_line(const string &line, vector<Site> &sites,
-                      vector<vector<T> > &meth) {
-
-  istringstream iss(line);
-
-  // take care of the site location (chrom and position)
-  string first_column;
-  iss >> first_column;
-  Site site;
-  site.assign_from_methtab_first_column(first_column);
-  sites.push_back(site);
-
-  // now get the methylation information, either as pairs of read
-  // counts or posteriors, depending on the file type (run mode)
-  parse_table_line(iss, meth);
-}
-
-
-
-template <class T> void
-load_meth_table(const string &filename, vector<Site> &sites,
-                vector<vector<T> > &meth,
-                vector<string> &species_names) {
-
-  std::ifstream in(filename.c_str());
-  if (!in)
-    throw SMITHLABException("cannot read: " + filename);
-
-  // get the species from the header
-  string line;
-  getline(in, line);
-  istringstream iss(line);
-  string token;
-  while (iss >> token)
-    species_names.push_back(token);
-
-  const size_t n_species = species_names.size();
-
-  while (getline(in, line)) {
-    parse_meth_table_line(line, sites, meth);
-    if (meth.back().size() != n_species)
-      throw SMITHLABException("inconsistent line length: " + line);
-  }
-}
 
 static void
 read_params(bool VERBOSE, const string &paramfile,
-            double &root_unmeth_prob, double &lam,
+            double &pi0, double &rate0,
             PhyloTreePreorder &t) {
   std::ifstream in(paramfile.c_str());
   if (!in)
     throw SMITHLABException("cannot read: " + paramfile);
 
-  string line;
-  getline(in, line);
-  istringstream iss(line);
-  iss >> t;
+  string dummy_label;
+  in >> dummy_label >> t;
+  in >> dummy_label >> pi0;
+  in >> dummy_label >> rate0;
+
+  if (pi0 >= 1.0 || pi0 <= 0.0 ||
+      rate0 >= 1.0 || rate0 <= 0.0)
+    throw SMITHLABException("wrong parameter range: " + paramfile);
+
   if (VERBOSE)
     cerr << "Read in tree branch lengths:" << endl
-         << t.tostring() << endl;
-
-  getline(in, line);
-  istringstream issp(line);
-  issp >> root_unmeth_prob >> lam;
-  if (VERBOSE)
-    cerr << "Root_unmeth_prob=" << root_unmeth_prob
-         << "\trate=" <<  lam << endl;
-  if (root_unmeth_prob >= 1.0 || root_unmeth_prob <= 0.0 ||
-      lam >= 1.0 || lam <= 0.0)
-    throw SMITHLABException("wrong parameter range: " + paramfile);
+         << t.tostring() << endl
+         << "pi0=" << pi0
+         << "\trate=" <<  rate0 << endl;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-///////////// ABOVE CODE IS FOR LOADING DATA  //////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-// Fix f/b parameters for now
-// change this part later
-// pair<size_t, size_t> > : <Coverge, M>
-void
-get_betabin_params(const vector<vector<pair<size_t, size_t> > > &meth_table,
-                   const size_t col, double &fa, double &fb,
-                   double &ba, double &bb) {
-  fa = 0.443;
-  fb = 4.314;
-  ba = 2.576;
-  bb = 0.491;
-}
-
-
-//meth_table dimemsion: nsites x nsample
-//pair in meth_table: <coverage, meth>
-static void
-meth_to_posterior(const vector<vector<pair<size_t, size_t> > > &meth_table,
-                  const size_t col, vector<double> &statepost,
-                  double &p) {
-  double fa, fb, ba, bb;
-  get_betabin_params(meth_table, col, fa, fb, ba, bb);
-  betabin FG(fa, fb), BG(ba, bb);
-  const size_t nsites = meth_table.size();
-  for (size_t i = 0; i < nsites; ++ i) {
-    if (meth_table[i][col].first >= 1) {
-      const double cov = meth_table[i][col].first;
-      const double mr = meth_table[i][col].second;
-      const pair<double, double> MU = make_pair(mr, cov - mr);
-      const double fllk = FG.log_likelihood(MU);
-      const double bllk = BG.log_likelihood(MU);
-      const double sum = exp(fllk) + exp(bllk);
-      statepost.push_back(exp(fllk)/sum);
-      p += exp(fllk)/sum;
-    } else {
-      statepost.push_back(0.5);
-      p += 0.5;
-    }
-  }
-}
-
-static void
-meth_to_posterior(const vector<vector<double> > &meth_table,
-                  const size_t col, vector<double> &statepost,
-                  double &p) {
-  const size_t nsites = meth_table.size();
-  for (size_t i = 0; i < nsites; ++ i) {
-    statepost.push_back(meth_table[i][col]);
-    p += meth_table[i][col];
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-/////////////  !!! ADS: CODE ABOVE IS TEMPORARY ////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -342,13 +181,13 @@ subtree_likelihood_deriv(const vector<size_t> &subtree_sizes,
                          vector<um_val> &deriv_rate,
                          vector<vector<um_val> > &deriv_branch) {
 
-  const size_t n_sites = states.front().size();
-  const size_t n_branches = states.size();
+  const size_t n_sites = states.size();
+  const size_t n_branches = states.front().size();
 
   if (subtree_sizes[tree_start] == 1) {
     for (size_t i = 0; i < n_sites; ++i) {
-      assert(states[tree_start][i] >= 0);
-      likelihood.push_back(um_val(states[tree_start][i], 1.0 - states[tree_start][i]));
+      assert(states[i][tree_start] >= 0);
+      likelihood.push_back(um_val(states[i][tree_start], 1.0 - states[i][tree_start]));
       deriv_rate.push_back(um_val(0.0, 0.0));
     }
   }
@@ -430,15 +269,15 @@ subtree_likelihood(const vector<size_t> &subtree_sizes,
                    vector<double> &subtree_lik_given_root_unmeth,
                    vector<double> &subtree_lik_given_root_meth) {
 
-  size_t nsites = states[0].size();
+  size_t nsites = states.size();
   subtree_lik_given_root_unmeth = vector<double>(nsites, 1.0);
   subtree_lik_given_root_meth = vector<double>(nsites, 1.0);
 
   if (subtree_sizes[tree_start] == 1) {
     for (size_t pos = 0; pos < nsites; ++ pos) {
-      assert (states[tree_start][pos] >= 0);
-      subtree_lik_given_root_unmeth[pos] = states[tree_start][pos];
-      subtree_lik_given_root_meth[pos] = 1.0 - states[tree_start][pos];
+      assert (states[pos][tree_start] >= 0);
+      subtree_lik_given_root_unmeth[pos] = states[pos][tree_start];
+      subtree_lik_given_root_meth[pos] = 1.0 - states[pos][tree_start];
     }
   } else {
     size_t count = 1;
@@ -476,9 +315,9 @@ subtree_likelihood_site(const vector<size_t> &subtree_sizes,
                         double &subtree_lik_given_root_meth) {
 
   if (subtree_sizes[tree_start] == 1) {
-    assert (states[tree_start][pos] >= 0);
-    subtree_lik_given_root_unmeth = states[tree_start][pos];
-    subtree_lik_given_root_meth = 1.0 - states[tree_start][pos];
+    assert (states[pos][tree_start] >= 0);
+    subtree_lik_given_root_unmeth = states[pos][tree_start];
+    subtree_lik_given_root_meth = 1.0 - states[pos][tree_start];
   } else {
     subtree_lik_given_root_unmeth = 1.0;
     subtree_lik_given_root_meth = 1.0;
@@ -508,7 +347,7 @@ subtree_likelihood_site(const vector<size_t> &subtree_sizes,
 // estimating parameters??? Needs name change.
 static double
 tree_loglikelihood_deriv(const vector<size_t> &subtree_sizes,
-                         const double root_unmeth_prob,
+                         const double pi0,
                          const double rate,
                          const vector<double> &branches,
                          const vector<vector<double> > &states,
@@ -516,7 +355,7 @@ tree_loglikelihood_deriv(const vector<size_t> &subtree_sizes,
                          double &deriv_rate,
                          vector<double> &deriv_branches) {
   double likelihood = 0.0;
-  const size_t n_sites = states[0].size();
+  const size_t n_sites = states.size();
   const size_t n_branches = branches.size();
 
   vector<double> expbranches;
@@ -524,7 +363,7 @@ tree_loglikelihood_deriv(const vector<size_t> &subtree_sizes,
     expbranches.push_back(exp(branches[i]));
 
   const um_mat Q(um_val(-rate, rate), um_val(1.0 - rate, rate - 1.0));
-  const um_val root_prob(root_unmeth_prob, 1.0 - root_unmeth_prob);
+  const um_val root_prob(pi0, 1.0 - pi0);
 
   vector<um_mat> trans_mat(n_branches);
   for (size_t i = 1; i < n_branches; ++i)
@@ -551,7 +390,6 @@ tree_loglikelihood_deriv(const vector<size_t> &subtree_sizes,
       deriv_branches[i] += dot(deriv_branch_given_root[pos][i], root_prob)/lk;
   }
 
-  // }
   return likelihood;
 }
 
@@ -561,14 +399,14 @@ tree_loglikelihood_deriv(const vector<size_t> &subtree_sizes,
 
 double
 tree_loglikelihood_deriv_rootdist(const vector<size_t> &subtree_sizes,
-                                  const double root_unmeth_prob,
+                                  const double pi0,
                                   const double rate,
                                   const vector<double> &branches,
                                   const vector<vector<double> > &states,
                                   double &deriv_root_dist) {
   double deriv_rate;
   vector<double> deriv_branches;
-  double llk = tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+  double llk = tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                                         branches, states, deriv_root_dist,
                                         deriv_rate, deriv_branches);
   return llk;
@@ -576,7 +414,7 @@ tree_loglikelihood_deriv_rootdist(const vector<size_t> &subtree_sizes,
 
 double
 tree_loglikelihood_deriv_branch(const vector<size_t> &subtree_sizes,
-                                const double root_unmeth_prob,
+                                const double pi0,
                                 const double rate,
                                 const vector<double> &branches,
                                 const vector<vector<double> > &states,
@@ -585,7 +423,7 @@ tree_loglikelihood_deriv_branch(const vector<size_t> &subtree_sizes,
   double deriv_root_dist;
   double deriv_rate;
   vector<double> deriv_branches;
-  double llk = tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+  double llk = tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                                         branches, states, deriv_root_dist,
                                         deriv_rate, deriv_branches);
   deriv_branch = deriv_branches[which_branch];
@@ -594,14 +432,14 @@ tree_loglikelihood_deriv_branch(const vector<size_t> &subtree_sizes,
 
 double
 tree_loglikelihood_deriv_rate(const vector<size_t> &subtree_sizes,
-                              const double root_unmeth_prob,
+                              const double pi0,
                               const double rate,
                               const vector<double> &branches,
                               const vector<vector<double> > &states,
                               double &deriv_rate) {
   double deriv_root_dist;
   vector<double> deriv_branches;
-  double llk = tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+  double llk = tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                                         branches, states, deriv_root_dist,
                                         deriv_rate, deriv_branches);
   return llk;
@@ -611,12 +449,12 @@ tree_loglikelihood_deriv_rate(const vector<size_t> &subtree_sizes,
 
 double
 tree_loglikelihood(const vector<size_t> &subtree_sizes,
-                   const double root_unmeth_prob,
+                   const double pi0,
                    const double rate,
                    const vector<double> &branches,
                    const vector<vector<double> > &states) {
   double llk = 0.0;
-  size_t nsites = states[0].size();
+  size_t nsites = states.size();
 
   vector<double> expbranches;
   for (size_t i = 0; i < branches.size(); ++i) {
@@ -629,14 +467,14 @@ tree_loglikelihood(const vector<size_t> &subtree_sizes,
       double u, m;
       subtree_likelihood_site(subtree_sizes, rate, expbranches,
                               0, states, pos, u, m);
-      llk += log(u*root_unmeth_prob + m*(1.0 - root_unmeth_prob));
+      llk += log(u*pi0 + m*(1.0 - pi0));
     }
   } else {
     vector<double> u, m;
     subtree_likelihood(subtree_sizes, rate, expbranches,
                        0, states, u, m);
     for  (size_t pos = 0; pos < nsites; ++pos) {
-      llk += log(u[pos]*root_unmeth_prob + m[pos]*(1.0 - root_unmeth_prob));
+      llk += log(u[pos]*pi0 + m[pos]*(1.0 - pi0));
     }
   }
   return llk;
@@ -672,8 +510,8 @@ subtree_pattern_log_prob(const double safecutoff,
                          const size_t pos,
                          vector<double> &subtree_log_probs) {
   if (subtree_sizes[tree_start] == 1) {
-    assert (states[tree_start][pos] >= 0);
-    double p = states[tree_start][pos];
+    assert (states[pos][tree_start] >= 0);
+    double p = states[pos][tree_start];
     if (p < safecutoff) p = safetol;
     if (p > 1.0 - safecutoff) p = 1.0-safetol;
     subtree_log_probs.push_back(log(p));
@@ -761,13 +599,13 @@ static void
 tree_pattern_probs_best(const double safecutoff,
                         const double safetol,
                         const vector<size_t> &subtree_sizes,
-                        const double root_unmeth_prob,
+                        const double pi0,
                         const double rate,
                         const vector<double> &branches,
                         const vector<vector<double> > &states,
                         vector<string> &best_patterns) {
 
-  const size_t nsites = states[0].size();
+  const size_t nsites = states.size();
   for (size_t pos = 0; pos < nsites; ++pos) {
     vector<double> tree_log_probs;
     subtree_pattern_log_prob(safecutoff, safetol,
@@ -786,12 +624,12 @@ static void
 tree_pattern_probs(const double safecutoff,
                    const double safetol,
                    const vector<size_t> &subtree_sizes,
-                   const double root_unmeth_prob,
+                   const double pi0,
                    const double rate,
                    const vector<double> &branches,
                    vector<vector<double> > &states) {
 
-  const size_t nsites = states[0].size();
+  const size_t nsites = states.size();
   const size_t treesize = subtree_sizes[0];
   for (size_t pos = 0; pos < nsites; ++pos) {
     vector<double> tree_log_probs;
@@ -801,9 +639,9 @@ tree_pattern_probs(const double safecutoff,
     for (size_t i = 0; i < tree_log_probs.size(); ++i) {
       string pattern = dec2binary(subtree_sizes[0], i);
       if (pattern[i]=='0') {
-        tree_log_probs[i] = log(root_unmeth_prob) + tree_log_probs[i];
+        tree_log_probs[i] = log(pi0) + tree_log_probs[i];
       } else {
-        tree_log_probs[i] = log(1.0 - root_unmeth_prob) + tree_log_probs[i];
+        tree_log_probs[i] = log(1.0 - pi0) + tree_log_probs[i];
       }
     }
     const double magic_positive_val = 1.0;
@@ -824,7 +662,7 @@ tree_pattern_probs(const double safecutoff,
 
     for (size_t i = 0; i < treesize; ++i) {
       if (subtree_sizes[i] >1 )
-        states[i][pos] = exp(unmeth_log_probs_by_node[i] -
+        states[pos][i] = exp(unmeth_log_probs_by_node[i] -
                              log_sum_log(unmeth_log_probs_by_node[i],
                                          meth_log_probs_by_node[i]));
     }
@@ -839,15 +677,6 @@ tree_pattern_probs(const double safecutoff,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-
-inline double
-sign(const double val) {
-  if (val > 0) return 1.0;
-  if (val < 0) return -1.0;
-  return 0.0;
-}
-
-
 double
 optimize_rootdist(const bool VERBOSE,
                   const double LIKTOL,
@@ -857,13 +686,13 @@ optimize_rootdist(const bool VERBOSE,
                   const double rate,
                   const vector<double> &branches,
                   const vector<vector<double> > &states,
-                  double &root_unmeth_prob) {
+                  double &pi0) {
 
   double deriv_root_u;
   double prev_llk =
-    tree_loglikelihood_deriv_rootdist(subtree_sizes, root_unmeth_prob, rate,
+    tree_loglikelihood_deriv_rootdist(subtree_sizes, pi0, rate,
                                       branches, states, deriv_root_u);
-  double prev_val = root_unmeth_prob;
+  double prev_val = pi0;
   double fac = 1.0; // modifies step size in case of failure to find
                     // a valid (i.e. better) next value
   double new_val;
@@ -895,7 +724,7 @@ optimize_rootdist(const bool VERBOSE,
     prev_llk = new_llk;
   }
 
-  root_unmeth_prob = prev_val;
+  pi0 = prev_val;
   return prev_llk;
 }
 
@@ -906,12 +735,12 @@ optimize_rate(const bool VERBOSE,
               const double PARTOL,
               const double STEPSIZE,
               const vector<size_t> &subtree_sizes,
-              const double root_unmeth_prob, const vector<double> &branches,
+              const double pi0, const vector<double> &branches,
               const vector<vector<double> > &states, double &rate) {
 
   double deriv_rate;
   double prev_llk =
-    tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob, rate,
+    tree_loglikelihood_deriv_rate(subtree_sizes, pi0, rate,
                                   branches, states, deriv_rate);
   double prev_rate = rate;
   double new_rate;
@@ -923,14 +752,14 @@ optimize_rate(const bool VERBOSE,
   } while (new_rate < PARTOL || new_rate > 1.0 - PARTOL);
 
   new_llk =
-    tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob, new_rate,
+    tree_loglikelihood_deriv_rate(subtree_sizes, pi0, new_rate,
                                   branches, states, deriv_rate);
   while (new_llk < prev_llk && abs(new_rate - prev_rate) > PARTOL) {
     fac = fac*0.5;
     new_rate = max(PARTOL, min(prev_rate + STEPSIZE*sign(deriv_rate)*fac,
-                                  1.0 - PARTOL));
+                               1.0 - PARTOL));
     new_llk =
-      tree_loglikelihood_deriv_rate(subtree_sizes, root_unmeth_prob,
+      tree_loglikelihood_deriv_rate(subtree_sizes, pi0,
                                     new_rate, branches, states, deriv_rate);
   }
 
@@ -954,14 +783,14 @@ optimize_branch(const bool VERBOSE,
                 const double PARTOL,
                 const double STEPSIZE,
                 const vector<size_t> &subtree_sizes,
-                const double root_unmeth_prob,
+                const double pi0,
                 const vector<vector<double> > &states,
                 const double rate, const size_t which_branch,
                 vector<double> &branches) {
 
   double deriv_branch;
   double prev_llk =
-    tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
+    tree_loglikelihood_deriv_branch(subtree_sizes, pi0, rate,
                                     branches, states, which_branch,
                                     deriv_branch);
   double prev_val = branches[which_branch];
@@ -975,7 +804,7 @@ optimize_branch(const bool VERBOSE,
 
   branches[which_branch] = new_val;
   new_llk =
-    tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
+    tree_loglikelihood_deriv_branch(subtree_sizes, pi0, rate,
                                     branches, states, which_branch,
                                     deriv_branch);
   while (new_llk < prev_llk && abs(new_val - prev_val) > PARTOL) {
@@ -984,7 +813,7 @@ optimize_branch(const bool VERBOSE,
                   prev_val + STEPSIZE*sign(deriv_branch)*fac);
     branches[which_branch] = new_val;
     new_llk =
-      tree_loglikelihood_deriv_branch(subtree_sizes, root_unmeth_prob, rate,
+      tree_loglikelihood_deriv_branch(subtree_sizes, pi0, rate,
                                       branches, states, which_branch,
                                       deriv_branch);
   }
@@ -1003,14 +832,14 @@ optimize_branches(const bool VERBOSE,
                   const double PARTOL,
                   const double STEPSIZE,
                   const vector<size_t> &subtree_sizes,
-                  const double root_unmeth_prob,
+                  const double pi0,
                   const vector<vector<double> > &states,
                   const double rate,
                   vector<double> &branches) {
   double deriv_root_dist;
   double deriv_rate;
   vector<double> deriv_branches;
-  double prev_llk = tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+  double prev_llk = tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                                              branches, states, deriv_root_dist,
                                              deriv_rate, deriv_branches);
   double denom = 0.0;
@@ -1037,7 +866,7 @@ optimize_branches(const bool VERBOSE,
   double new_deriv_rate;
   vector<double> new_deriv_branches;
   new_llk =
-    tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+    tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                              new_branches, states, new_deriv_root_dist,
                              new_deriv_rate, new_deriv_branches);
   while (new_llk < prev_llk && fac > PARTOL) {
@@ -1047,7 +876,7 @@ optimize_branches(const bool VERBOSE,
       new_branches[i] = prev_branches[i] + deriv_branches[i]*fac/denom;
     }
     new_llk =
-      tree_loglikelihood_deriv(subtree_sizes, root_unmeth_prob, rate,
+      tree_loglikelihood_deriv(subtree_sizes, pi0, rate,
                                new_branches, states, new_deriv_root_dist,
                                new_deriv_rate, new_deriv_branches);
   }
@@ -1071,12 +900,12 @@ double
 optimize(const bool VERBOSE, const size_t MAXITER, const double LIKTOL,
          const double PARTOL, const double stepsize,
          const vector<size_t> &subtree_sizes,
-         double &root_unmeth_prob,
-         double &lam,
+         double &pi0,
+         double &rate0,
          vector<double> &branches,
          vector<vector<double> > &states){
 
-  double llk = tree_loglikelihood(subtree_sizes, root_unmeth_prob, lam,
+  double llk = tree_loglikelihood(subtree_sizes, pi0, rate0,
                                   branches, states);
   if (VERBOSE) cerr << "BEGIN llk=" << llk << endl;
   double prev_llk;
@@ -1087,20 +916,20 @@ optimize(const bool VERBOSE, const size_t MAXITER, const double LIKTOL,
     prev_llk = llk;
 
     llk = optimize_rootdist(true, LIKTOL, PARTOL, stepsize, subtree_sizes,
-                            lam, branches, states, root_unmeth_prob);
+                            rate0, branches, states, pi0);
     if (VERBOSE)
-      cerr << "[root_unmeth_prob]\t" << root_unmeth_prob
+      cerr << "[pi0]\t" << pi0
            << "\t[log-likelihood]\t" << llk << endl;
 
     llk = optimize_rate(true, LIKTOL, PARTOL, stepsize, subtree_sizes,
-                        root_unmeth_prob, branches, states, lam);
+                        pi0, branches, states, rate0);
     if (VERBOSE)
-      cerr << "[rate]\t" << lam
+      cerr << "[rate]\t" << rate0
            << "\t[log-likelihood]\t" << llk << endl;
 
     llk = optimize_branches(true, LIKTOL, PARTOL, stepsize,
-                            subtree_sizes, root_unmeth_prob, states,
-                            lam, branches);
+                            subtree_sizes, pi0, states,
+                            rate0, branches);
 
     if (VERBOSE)
       cerr << "[Improved] "<< llk- prev_llk << "(TOL=" << LIKTOL << ")"<< endl;
@@ -1113,8 +942,8 @@ optimize(const bool VERBOSE, const size_t MAXITER, const double LIKTOL,
 
   if (VERBOSE) {
     cerr << "MLE parameters:" << endl
-         << "[root_unmeth_prob]\t" << root_unmeth_prob<< endl
-         << "[rate]\t" << lam << endl;
+         << "[pi0]\t" << pi0<< endl
+         << "[rate]\t" << rate0 << endl;
     for (size_t i = 1; i < branches.size(); ++i)
       cerr << "[branch" << i << "]\t" << branches[i] << endl;
     cerr << "[Log-likelihood]" << "\t" << llk << endl;
@@ -1126,20 +955,20 @@ optimize(const bool VERBOSE, const size_t MAXITER, const double LIKTOL,
 static void
 write_states(std::ostream &out,
              const PhyloTreePreorder &t,
-             const double lam,
-             const double root_unmeth_prob,
+             const double rate0,
+             const double pi0,
              const double llk,
-             const vector<Site> &sites,
+             const vector<MSite> &sites,
              const vector<vector<double> > &states) {
   const size_t nsites = sites.size();
-  const size_t n_species = states.size();
-  out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
-      << "\tRoot unmeth prob = " << root_unmeth_prob
+  const size_t n_species = states[0].size();
+  out << "#" << t.Newick_format() << "\tRate = " << rate0 << ";"
+      << "\tRoot unmeth prob = " << pi0
       << "\tlog-likelihood = " << llk << endl;
   for (size_t i = 0; i < nsites; ++i) {
     out << sites[i].chrom << ":" << sites[i].pos << "\t";
     for (size_t j = 0; j < n_species; ++j)
-      out << ((states[j][i] > 0.5) ? "0" : "1");
+      out << ((states[i][j] > 0.5) ? "0" : "1");
     out << endl;
   }
 }
@@ -1148,20 +977,42 @@ write_states(std::ostream &out,
 static void
 write_patterns(std::ostream &out,
                const PhyloTreePreorder &t,
-               const double lam,
-               const double root_unmeth_prob,
+               const double rate0,
+               const double pi0,
                const double llk,
-               const vector<Site> &sites,
+               const vector<MSite> &sites,
                const vector<string> &patterns) {
   const size_t nsites = sites.size();
-  out << "#" << t.Newick_format() << "\tRate = " << lam << ";"
-      << "\tRoot unmeth prob = " << root_unmeth_prob
+  out << "#" << t.Newick_format() << "\tRate = " << rate0 << ";"
+      << "\tRoot unmeth prob = " << pi0
       << "\tlog-likelihood = " << llk << endl;
   for (size_t i = 0; i < nsites; ++i) {
     out << sites[i].chrom << ":" << sites[i].pos << "\t"
         << patterns[i] << endl;
   }
 }
+
+// fill in internal missing data with value -1.0
+// and flip the value at leaf nodes
+static void
+add_internal_node_probs_flip(const vector<size_t> &subtree_sizes,
+                             vector<vector<double> > &prob_table) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_sites = prob_table.size();
+
+  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
+
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
+
+  for (size_t i = 0; i < n_sites; ++i)
+    for (size_t j = 0; j < leaves_preorder.size(); ++j)
+      expanded_probs[i][leaves_preorder[j]] = 1.0 - prob_table[i][j];
+
+  prob_table.swap(expanded_probs);
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -1176,11 +1027,10 @@ main(int argc, const char **argv) {
   try {
     // run mode flags
     bool VERBOSE = false;
-    bool COUNT = false;
     bool NODEMAP = false;
 
     double LIKTOL = 1e-2;
-    size_t MAXITER = 20;
+    size_t MAXITER = 100;
     double PARTOL = 1e-4;
     double STEP_SIZE = 0.1;
 
@@ -1189,20 +1039,21 @@ main(int argc, const char **argv) {
     /************************* COMMAND LINE OPTIONS ***************************/
     OptionParser opt_parse(strip_path(argv[0]), "test functionality for "
                            "estimating phylo-epigenomic parameters ",
-                           "assuming independent sites"
-                           "<newick> <meth-tab>");
-    opt_parse.add_opt("counts", 'c', "meth-tab contains read counts instead"
-                      "of state probability (default: false)", false, COUNT);
+                           "assuming independent sites "
+                           "<newick> <meth-table>");
     opt_parse.add_opt("params", 'p', "use parameters from file "
                       "and skip optimization", false, paramfile);
-    opt_parse.add_opt("iteration", 'i', "max iteration (default: 10)",
+    opt_parse.add_opt("iteration", 'i', "max iteration (default: "
+                      + to_string(MAXITER) + ")",
                       false, MAXITER);
     opt_parse.add_opt("nodemap", 'n', "output  MAP states at each node"
-                      "instead of most likely methylation patterns"
-                      "(default: false)", false, NODEMAP);
+                      "instead of most likely methylation patterns (default: "
+                      + string(NODEMAP ? "true" : "false") + ")",
+                      false, NODEMAP);
     opt_parse.add_opt("out", 'o', "output file (default: stdout)",
                       false, outfile);
-    opt_parse.add_opt("verbose", 'v', "print more run info (default: false)",
+    opt_parse.add_opt("verbose", 'v', "print more run info (default:"
+                      + string(VERBOSE ? "true" : "false") + ")",
                       false, VERBOSE);
     vector<string> leftover_args;
     opt_parse.parse(argc, argv, leftover_args);
@@ -1254,29 +1105,24 @@ main(int argc, const char **argv) {
 
     /**************************************************************************/
     /******************** LOAD METHYLATION DATA *******************************/
-    vector<Site> sites;
-    vector<string> meth_table_species;
-    vector<vector<pair<size_t, size_t> > > meth_count_table;
-    vector<vector<double> > meth_prob_table;
-    if (COUNT) {
-      load_meth_table(meth_table_file, sites, meth_count_table,
-                      meth_table_species);
-    }
-    else {
-      load_meth_table(meth_table_file, sites, meth_prob_table,
-                      meth_table_species);
-    }
+
     if (VERBOSE)
-      cerr << "loaded meth table (species="
-           << meth_table_species.size() << ")" << endl;
+      cerr << "[reading methylation data]" << endl;
 
+    vector<MSite> sites;
+    vector<vector<double> > tree_probs; //methylation probs at leaves: n_sites x n_sp
+    vector<string> meth_table_species;
+    read_meth_table(meth_table_file, sites, meth_table_species, tree_probs);
 
-    /**************************************************************************/
-    /**********  ENSURE METH DATA AND TREE INFO IS IN SYNC ********************/
+    // make sure meth data and tree info is in sync
     if (meth_table_species.size() != n_leaves)
       throw SMITHLABException("inconsistent species counts");
     if (!has_same_species_order(t, meth_table_species))
       throw SMITHLABException("inconsistent species names or order");
+
+    add_internal_node_probs_flip(subtree_sizes, tree_probs);
+    //now tree_probs contains hypo probs for entire tree
+
     vector<size_t> species_in_order;
     subtree_sizes_to_leaves_preorder(subtree_sizes, species_in_order);
     for (size_t i = 0; i < species_in_order.size(); ++i) {
@@ -1286,51 +1132,23 @@ main(int argc, const char **argv) {
 
     /**************************************************************************/
     /**********  OPTIMIZATION *************************************************/
-    const size_t nsites = sites.size();
-    const size_t nleaf = meth_table_species.size();
-    vector<vector<double> > states(subtree_sizes.size(),
-                                   vector<double>(nsites, -1.0));
-    double root_unmeth_prob = 0.0;
-    for (size_t i = 0; i < meth_table_species.size(); ++i) {
-      vector<double> statepost;
-      if (COUNT) {
-        meth_to_posterior(meth_count_table, i, statepost, root_unmeth_prob);
-      } else {
-        meth_to_posterior(meth_prob_table, i, statepost, root_unmeth_prob);
-      }
-      states[species_in_order[i]] = statepost;
-    }
-    root_unmeth_prob = root_unmeth_prob/(nleaf*nsites);
-
-
-    for (size_t i = 0; i < 10; ++i) {
-      for (size_t j = 0; j < meth_table_species.size(); ++j) {
-        cerr << states[species_in_order[j]][i] << "\t";
-      }
-      cerr << endl;
-    }
-
-
+    double pi0 = 0.3; //MAGIC
+    double rate0 = 0.4; //MAGIC
     double llk;
-    double lam;
     if (paramfile.empty()) {
       // initialize rate between (0,1)
-      lam = 0.4;
       llk = optimize(VERBOSE, MAXITER, LIKTOL, PARTOL, STEP_SIZE,
-                     subtree_sizes, root_unmeth_prob, lam, branches, states);
+                     subtree_sizes, pi0, rate0, branches, tree_probs);
       t.set_branch_lengths(branches);
     } else {
-      read_params(VERBOSE, paramfile, root_unmeth_prob, lam, t);
+      read_params(VERBOSE, paramfile, pi0, rate0, t);
       branches.clear();
       t.get_branch_lengths(branches);
-      for (size_t i = 0; i< branches.size(); ++i) {
-        cerr << branches[i] << endl;
-      }
-      llk = tree_loglikelihood(subtree_sizes, root_unmeth_prob, lam,
-                               branches, states);
+      llk = tree_loglikelihood(subtree_sizes, pi0, rate0,
+                               branches, tree_probs);
       if (VERBOSE)
-        cerr << "#" << t.Newick_format() << "\tRate = " << lam << ";"
-             << "\tRoot unmeth prob = " << root_unmeth_prob
+        cerr << "#" << t.Newick_format() << "\tRate = " << rate0 << ";"
+             << "\tRoot unmeth prob = " << pi0
              << "\tlog-likelihood = " << llk << endl;
     }
 
@@ -1347,16 +1165,16 @@ main(int argc, const char **argv) {
         cerr << "[COMPUTING MOST LIKELY PATTERNS]" << endl;
       vector<string> bestpatterns;
       tree_pattern_probs_best(safecutoff, safetol,
-                              subtree_sizes, root_unmeth_prob, lam,
-                              branches, states, bestpatterns);
-      write_patterns(out, t, lam, root_unmeth_prob, llk, sites, bestpatterns);
+                              subtree_sizes, pi0, rate0,
+                              branches, tree_probs, bestpatterns);
+      write_patterns(out, t, rate0, pi0, llk, sites, bestpatterns);
     } else {
       if (VERBOSE)
         cerr << "[COMPUTING MAXIMUM A POSTERIORI STATES AT EACH NODE]" << endl;
       tree_pattern_probs(safecutoff, safetol,
-                         subtree_sizes, root_unmeth_prob,
-                         lam, branches, states);
-      write_states(out, t, lam, root_unmeth_prob, llk, sites, states);
+                         subtree_sizes, pi0,
+                         rate0, branches, tree_probs);
+      write_states(out, t, rate0, pi0, llk, sites, tree_probs);
     }
 
   }
@@ -1378,12 +1196,12 @@ main(int argc, const char **argv) {
    xx Make variable names more sensible and typically longer
    xx No const references for primitive types
    -- Make sure ordering of parameters to functions makes sense and is
-      always consistent
+   always consistent
    -- What are the semantics of TOLERANCE? Should it be both a
-      precision value for estimates and also used for convergence?
+   precision value for estimates and also used for convergence?
    xx Make sure convergence criteria is based on only one value
- */
+*/
 
 /* TO-DO:
    xx Let size of deriv_branches be variable according to the subtree size.
- */
+*/
