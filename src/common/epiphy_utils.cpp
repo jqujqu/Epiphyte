@@ -80,11 +80,11 @@ read_meth_table(const string &table_file,
   do not contribute to sufficient statistics and data likelihood.
 */
 void
-mark_sites(const vector<size_t> &subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size, const size_t node_id,
-           vector<vector<bool> > &marks) {
+mark_useable_sites(const vector<size_t> &subtree_sizes,
+                   const vector<MSite> &sites,
+                   const vector<vector<double> > &tree_probs,
+                   const size_t desert_size, const size_t node_id,
+                   vector<vector<bool> > &marks) {
 
   if (is_leaf(subtree_sizes[node_id])) {
     size_t prev_obs = numeric_limits<size_t>::max();

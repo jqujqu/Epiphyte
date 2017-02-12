@@ -85,11 +85,11 @@ read_meth_table(const std::string &table_file,
                 std::vector<std::vector<double> > &states);
 
 void
-mark_sites(const std::vector<size_t> subtree_sizes,
-           const std::vector<MSite> &sites,
-           const std::vector<std::vector<double> > &tree_probs,
-           const size_t desert_size,
-           std::vector<std::vector<bool> > &marks);
+mark_useable_sites(const std::vector<size_t> subtree_sizes,
+                   const std::vector<MSite> &sites,
+                   const std::vector<std::vector<double> > &tree_probs,
+                   const size_t desert_size,
+                   std::vector<std::vector<bool> > &marks);
 
 
 #endif
