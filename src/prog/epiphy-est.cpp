@@ -144,6 +144,48 @@ kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
   kl_divergence(P.triad_distr, Q.triad_distr, kld);
 }
 
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+
+template <class T> static void
+sample_initial_states(const size_t rng_seed,
+                      const vector<vector<double> > &tree_probs,
+                      vector<vector<T> > &sampled_states) {
+
+  std::random_device rd; // random devide to generate seed
+  std::mt19937_64 gen(rng_seed == numeric_limits<size_t>::max() ? rd() : rng_seed);
+
+  std::uniform_real_distribution<> dis(0, 1);
+
+  for (size_t i = 0; i < tree_probs.size(); ++i)
+    for (size_t j = 0; j < tree_probs[i].size(); ++j)
+      sampled_states[i][j] =
+        (dis(gen) > (missing_meth_value(tree_probs[i][j]) ? 0.5 :
+                     tree_probs[i][j])) ? 0 : 1;
+}
+
+
+static void
+add_internal_node_probs(const vector<size_t> &subtree_sizes,
+                        vector<vector<double> > &prob_table) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_sites = prob_table.size();
+
+  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
+
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
+
+  for (size_t i = 0; i < n_sites; ++i)
+    for (size_t j = 0; j < leaves_preorder.size(); ++j)
+      expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
+
+  prob_table.swap(expanded_probs);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 /////////////// EXPECTATION MAXIMIZATION ///////////////////////////////////////
@@ -195,9 +237,6 @@ maximization_step(const bool VERBOSE,
                         root_start_counts, root_counts, start_counts,
                         triad_counts, ps);
 }
-
-
-
 
 template <class T>
 static void
@@ -296,6 +335,8 @@ expectation_step(const bool VERBOSE,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
+                         const bool restart_chain,
+                         const size_t rng_seed,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
@@ -354,9 +395,11 @@ expectation_maximization(const bool VERBOSE,
            << "maxQ=" << maxQ << ", "
            << "max_param_delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
+
+    if (restart_chain)
+      sample_initial_states(rng_seed, tree_probs, sampled_states);
   }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////      EM for general case      /////////////////////////////
@@ -479,6 +522,8 @@ expectation_step(const bool VERBOSE,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
+                         const bool restart_chain,
+                         const size_t rng_seed,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
@@ -543,53 +588,11 @@ expectation_maximization(const bool VERBOSE,
            << "maxQ =" << maxQ << ", "
            << "max_param_delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
+
+    if (restart_chain)
+      sample_initial_states(rng_seed, tree_probs, sampled_states);
   }
 }
-
-
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-
-
-template <class T> static void
-sample_initial_states(const size_t rng_seed,
-                      const vector<vector<double> > &tree_probs,
-                      vector<vector<T> > &sampled_states) {
-
-  std::random_device rd; // random devide to generate seed
-  std::mt19937_64 gen(rng_seed == numeric_limits<size_t>::max() ? rd() : rng_seed);
-
-  std::uniform_real_distribution<> dis(0, 1);
-
-  for (size_t i = 0; i < tree_probs.size(); ++i)
-    for (size_t j = 0; j < tree_probs[i].size(); ++j)
-      sampled_states[i][j] =
-        (dis(gen) > (missing_meth_value(tree_probs[i][j]) ? 0.5 :
-                     tree_probs[i][j])) ? 0 : 1;
-}
-
-
-static void
-add_internal_node_probs(const vector<size_t> &subtree_sizes,
-                        vector<vector<double> > &prob_table) {
-
-  const size_t n_nodes = subtree_sizes.size();
-  const size_t n_sites = prob_table.size();
-
-  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
-
-  vector<size_t> leaves_preorder;
-  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
-
-  for (size_t i = 0; i < n_sites; ++i)
-    for (size_t j = 0; j < leaves_preorder.size(); ++j)
-      expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
-
-  prob_table.swap(expanded_probs);
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -601,7 +604,6 @@ int
 main(int argc, const char **argv) {
 
   try {
-
     size_t rng_seed = numeric_limits<size_t>::max();
 
     string outfile("/dev/stdout");
@@ -613,7 +615,6 @@ main(int argc, const char **argv) {
     size_t mh_max_iterations = 500;         // MAGIC
     size_t keep = 100;   // #samples per chain used to get average statistics
     size_t burnin = 100;
-
 
     // run mode flags
     bool VERBOSE = false;
@@ -709,13 +710,11 @@ main(int argc, const char **argv) {
     for (size_t i = 0; i < branches.size(); ++i)
       branches[i] = 1.0 - 1.0/exp(branches[i]);
 
-    static const double pi0_init   = 0.5; // MAGIC
-    static const double rate0_init = 0.5; // MAGIC
+    static const double pi0_init   = 0.2; // MAGIC
+    static const double rate0_init = 0.8; // MAGIC
     static const double g0_init    = 0.9; // MAGIC
     static const double g1_init    = 0.9; // MAGIC
     param_set params(pi0_init, rate0_init, g0_init, g1_init, branches);
-    if (VERBOSE)
-      cerr << "[starting params={" << params << "}]" << endl;
 
     /******************* READ THE METHYLATION DATA *****************************/
     if (VERBOSE)
@@ -766,9 +765,23 @@ main(int argc, const char **argv) {
     vector<vector<bool> > marks;
     mark_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
 
+    if (VERBOSE) {
+      vector<size_t> counts(subtree_sizes.size());
+      for (size_t i = 0; i < marks.size(); ++i) {
+        for (size_t j = 0; j < subtree_sizes.size(); ++j) {
+          if (marks[i][j]) ++counts[j];
+        }
+      }
+      for (size_t j = 0; j < subtree_sizes.size(); ++j)
+        cerr << "node " << j << " has " << counts[j] << " sites;" << endl;
+    }
+
     // heuristic starting points for G and pi
     estimate_g0_g1(tree_probs, params.g0, params.g1);
     params.pi0 = estimate_pi0(tree_probs);
+
+    if (VERBOSE)
+      cerr << "[starting params={" << params << "}]" << endl;
 
     vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes, false));
     // for complete data, the sampling will have probability 1 or 0
@@ -790,19 +803,17 @@ main(int argc, const char **argv) {
       const epiphy_mcmc sampler(mh_max_iterations, 0);
       const bool use_marks = true;
 
-      if (restart_chain)
-        sample_initial_states(rng_seed, tree_probs, tree_states);
-
       if (!use_marks) {
-        expectation_maximization(VERBOSE, em_max_iterations,
-                                 opt_max_iterations,
+        expectation_maximization(VERBOSE, restart_chain, rng_seed,
+                                 em_max_iterations, opt_max_iterations,
                                  mh_max_iterations, burnin, sampler,
                                  subtree_sizes, parent_ids,
                                  tree_probs, blocks, params,
                                  root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
       } else {
-        expectation_maximization(VERBOSE, em_max_iterations, opt_max_iterations,
+        expectation_maximization(VERBOSE, restart_chain, rng_seed,
+                                 em_max_iterations, opt_max_iterations,
                                  mh_max_iterations, sampler,
                                  burnin, keep, first_only,
                                  subtree_sizes, parent_ids, tree_probs, marks,
