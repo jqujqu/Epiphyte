@@ -109,7 +109,7 @@ mark_useable_sites(const vector<size_t> &subtree_sizes,
     }
   } else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
-      mark_sites(subtree_sizes, sites, tree_probs,
+      mark_useable_sites(subtree_sizes, sites, tree_probs,
                  desert_size, node_id + count, marks);
       // non-desert sites in an internal node
       // is the intersection of non-deserts of all its children
@@ -126,14 +126,14 @@ mark_useable_sites(const vector<size_t> &subtree_sizes,
 }
 
 void
-mark_sites(const vector<size_t> subtree_sizes,
+mark_useable_sites(const vector<size_t> subtree_sizes,
            const vector<MSite> &sites,
            const vector<vector<double> > &tree_probs,
            const size_t desert_size,
            vector<vector<bool> > &marks) {
   marks = vector<vector<bool> >(tree_probs.size(),
                                 vector<bool>(subtree_sizes.size(), false));
-  mark_sites(subtree_sizes, sites, tree_probs, desert_size, 0, marks);
+  mark_useable_sites(subtree_sizes, sites, tree_probs, desert_size, 0, marks);
 }
 
 

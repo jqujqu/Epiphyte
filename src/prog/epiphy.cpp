@@ -990,7 +990,7 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[marking sites]" << endl;
     vector<vector<bool> > marks;
-    mark_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
+    mark_useable_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
 
     if (paramfile.empty()) {
       // heuristic starting points for G and pi
