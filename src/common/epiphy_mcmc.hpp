@@ -157,8 +157,7 @@ MB_state_middle(const std::vector<size_t> &subtree_sizes,
     const size_t prev_self_state = meth_prev[node_id];
     lp0 += logG(prev_self_state, 0);
     lp1 += logG(prev_self_state, 1);
-  }
-  else {
+  } else {
     const T curr_parent_state = meth_curr[parent];
     const T prev_self_state = meth_prev[node_id];
     lp0 += logGP[node_id](prev_self_state, curr_parent_state, 0);
@@ -182,8 +181,7 @@ MB_state_middle(const std::vector<size_t> &subtree_sizes,
     const T next_self_state = meth_next[node_id];
     lp0 += logG(0, next_self_state);
     lp1 += logG(1, next_self_state);
-  }
-  else {
+  } else {
     const T next_parent_state = meth_next[parent];
     const T next_self_state = meth_next[node_id];
     lp0 += logGP[node_id](0, next_parent_state, next_self_state);
@@ -208,8 +206,7 @@ MB_state_end(const std::vector<size_t> &subtree_sizes,
     const size_t prev_self_state = meth_prev[node_id];
     lp0 += logG(prev_self_state, 0);
     lp1 += logG(prev_self_state, 1);
-  }
-  else {
+  } else {
     const T curr_parent_state = meth_curr[parent_ids[node_id]];
     const T prev_self_state = meth_prev[node_id];
     lp0 += logGP[node_id](prev_self_state, curr_parent_state, 0);
@@ -248,8 +245,7 @@ MB_state_start(const std::vector<size_t> &subtree_sizes,
   if (is_root(node_id)) {
     lp0 += log_pi.first;
     lp1 += log_pi.second;
-  }
-  else {
+  } else {
     const T curr_parent_state = meth_curr[parent];
     lp0 += logP[node_id](curr_parent_state, 0);
     lp1 += logP[node_id](curr_parent_state, 1);
@@ -269,8 +265,7 @@ MB_state_start(const std::vector<size_t> &subtree_sizes,
     const T next_self_state = meth_next[node_id];
     lp0 += logG(0, next_self_state);
     lp1 += logG(1, next_self_state);
-  }
-  else {
+  } else {
     const T next_parent_state = meth_next[parent];
     const T next_self_state = meth_next[node_id];
     lp0 += logGP[node_id](0, next_parent_state, next_self_state);
@@ -296,8 +291,7 @@ MB_state_indep(const std::vector<size_t> &subtree_sizes,
   if (is_root(node_id)) {
     lp0 += log_pi.first;
     lp1 += log_pi.second;
-  }
-  else {
+  } else {
     const T curr_parent_state = meth_curr[parent];
     lp0 += logP[node_id](curr_parent_state, 0);
     lp1 += logP[node_id](curr_parent_state, 1);
@@ -402,9 +396,10 @@ epiphy_mcmc::accept_or_reject_proposal(const double log_ratio, const size_t idx,
                                        std::vector<T> &states) const {
   const T tmp_state = states[idx];
   const double ratio = (!tmp_state) ? exp(-log_ratio) : exp(log_ratio);
-  if (dis(gen) < ratio)
+  if (dis(gen) < ratio)  {
     // ADS: need to make sure the "!" is defined the type T
     states[idx] = !tmp_state; // = (1 - tmp_state)
+  }
 }
 
 
@@ -424,10 +419,9 @@ epiphy_mcmc::sample_states_middle(const std::vector<size_t> &subtree_sizes,
   // a leaf, because we only have data at leaf nodes. So the check for
   // missing data might be enough.
   if (is_leaf(subtree_sizes[node_id]) &&
-      !missing_meth_value(marginals[node_id]))
+      !missing_meth_value(marginals[node_id])) {
     states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
-
-  else { // this happens if internal node or missing data at leaf
+  } else { // this happens if internal node or missing data at leaf
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       const size_t child_id = node_id + count;
       sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals,
