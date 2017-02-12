@@ -73,7 +73,12 @@ read_meth_table(const string &table_file,
         throw std::runtime_error("bad table file line: " + line);
 }
 
-
+/*
+  Sites that either contain observed information,
+  or are close to enough observations from all of its descendants,
+  are marked true. Other sites are skipped in MCMC sampling, and
+  do not contribute to sufficient statistics and data likelihood.
+*/
 void
 mark_sites(const vector<size_t> &subtree_sizes,
            const vector<MSite> &sites,
