@@ -58,17 +58,13 @@ public:
                 const std::vector<std::pair<size_t, size_t> > &blocks,
                 std::vector<std::vector<T> > &states) const;
 
-  //for general case
   template <class T> void
-  sample_states(const std::vector<size_t> &subtree_sizes,
-                const std::vector<size_t> &parent_ids,
-                const std::vector<MSite> &sites,
-                const size_t desert_size,
-                const param_set &params,
-                const std::vector<std::vector<double> > &marginals,
-                const std::vector<std::vector<bool> > &marks,
-                std::vector<std::vector<T> > &states) const;
-
+  sample_states_sym(const std::vector<size_t> &subtree_sizes,
+                    const std::vector<size_t> &parent_ids,
+                    const param_set &params,
+                    const std::vector<std::vector<double> > &marginals,
+                    const std::vector<std::pair<size_t, size_t> > &blocks,
+                    std::vector<std::vector<T> > &states) const;
 
   template <class T> void
   sample_states(const std::vector<size_t> &subtree_sizes,
@@ -81,6 +77,17 @@ public:
                 const std::vector<std::pair<size_t, size_t> > &blocks,
                 std::vector<std::vector<T> > &states) const;
 
+  //for general case
+  template <class T> void
+  sample_states(const std::vector<size_t> &subtree_sizes,
+                const std::vector<size_t> &parent_ids,
+                const std::vector<MSite> &sites,
+                const size_t desert_size,
+                const param_set &params,
+                const std::vector<std::vector<double> > &marginals,
+                const std::vector<std::vector<bool> > &marks,
+                std::vector<std::vector<T> > &states) const;
+  
 private:
 
   template <class T> void
@@ -119,6 +126,41 @@ private:
                       const std::vector<T> &states_next,
                       const size_t node_id) const;
 
+  template <class T> void
+  sample_states_middle_sym(const std::vector<size_t> &subtree_sizes,
+                           const std::vector<size_t> &parent_ids,
+                           const pair_state &logG,
+                           const std::vector<triple_state> &logGP,
+                           const std::vector<double> &marginals,
+                           const std::vector<T> &states_prev,
+                           std::vector<T> &states_curr,
+                           const std::vector<T> &states_next,
+                           const size_t node_id) const;
+
+  template <class T> void
+  sample_states_end_sym(const std::vector<size_t> &subtree_sizes,
+                        const std::vector<size_t> &parent_ids,
+                        const std::pair<double, double> &log_pi,
+                        const pair_state &logG,
+                        const std::vector<pair_state> &logP,
+                        const std::vector<triple_state> &logGP,
+                        const std::vector<double> &marginals,
+                        const std::vector<T> &states_prev,
+                        std::vector<T> &states_curr,
+                        const size_t node_id) const;
+  
+  template <class T> void
+  sample_states_start_sym(const std::vector<size_t> &subtree_sizes,
+                          const std::vector<size_t> &parent_ids,
+                          const std::pair<double, double> &log_pi,
+                          const pair_state &logG,
+                          const std::vector<pair_state> &logP,
+                          const std::vector<triple_state> &logGP,
+                          const std::vector<double> &marginals,
+                          std::vector<T> &states_curr,
+                          const std::vector<T> &states_next,
+                          const size_t node_id) const;
+  
   template <class T> void
   sample_states_indep(const std::vector<size_t> &subtree_sizes,
                       const std::vector<size_t> &parent_ids,
@@ -499,6 +541,121 @@ epiphy_mcmc::sample_states_start(const std::vector<size_t> &subtree_sizes,
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////  symmetric sampling  /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+template <class T>
+void
+epiphy_mcmc::sample_states_middle_sym(const std::vector<size_t> &subtree_sizes,
+                                      const std::vector<size_t> &parent_ids,
+                                      const pair_state &logG,
+                                      const std::vector<triple_state> &logGP,
+                                      const std::vector<double> &marginals,
+                                      const std::vector<T> &states_prev,
+                                      std::vector<T> &states_curr,
+                                      const std::vector<T> &states_next,
+                                      const size_t node_id) const {
+
+  // ADS: this test might not need to check whether or not the node is
+  // a leaf, because we only have data at leaf nodes. So the check for
+  // missing data might be enough.
+  if (is_leaf(subtree_sizes[node_id]) &&
+      !missing_meth_value(marginals[node_id])) {
+    states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
+  } else { // this happens if internal node or missing data at leaf
+    for (size_t count = 1; count < subtree_sizes[node_id];) {
+      const size_t child_id = node_id + count;
+      sample_states_middle(subtree_sizes, parent_ids, logG, logGP, marginals,
+                           states_prev, states_curr, states_next, child_id);
+      count += subtree_sizes[child_id];
+    }
+    const double log_ratio =
+      MB_state_middle(subtree_sizes, parent_ids, logG, logGP,
+                      states_prev, states_curr, states_next, node_id);
+    const double log_ratio_sym = log_ratio +
+      MB_state_middle(subtree_sizes, parent_ids, logG, logGP,
+                      states_next, states_curr, states_prev, node_id);
+
+    accept_or_reject_proposal(log_ratio_sym, node_id, states_curr);
+  }
+}
+
+template <class T>
+void
+epiphy_mcmc::sample_states_end_sym(const std::vector<size_t> &subtree_sizes,
+                                   const std::vector<size_t> &parent_ids,
+                                   const std::pair<double, double> &log_pi,
+                                   const pair_state &logG,
+                                   const std::vector<pair_state> &logP,
+                                   const std::vector<triple_state> &logGP,
+                                   const std::vector<double> &marginals,
+                                   const std::vector<T> &states_prev,
+                                   std::vector<T> &states_curr,
+                                   const size_t node_id) const {
+  
+  if (is_leaf(subtree_sizes[node_id]) &&
+      !missing_meth_value(marginals[node_id])) {
+    states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
+  } else {
+    for (size_t count = 1; count < subtree_sizes[node_id];) {
+      const size_t child_id = node_id + count;
+      sample_states_end(subtree_sizes, parent_ids, logG, logGP,
+                        marginals, states_prev, states_curr, child_id);
+      count += subtree_sizes[child_id];
+    }
+    const double log_ratio =
+      MB_state_end(subtree_sizes, parent_ids, logG, logGP,
+                   states_prev, states_curr, node_id);
+
+    const double log_ratio_sym = log_ratio + 
+      MB_state_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                     states_curr, states_prev, node_id);
+    accept_or_reject_proposal(log_ratio_sym, node_id, states_curr);
+  }
+}
+
+
+template <class T>
+void
+epiphy_mcmc::sample_states_start_sym(const std::vector<size_t> &subtree_sizes,
+                                     const std::vector<size_t> &parent_ids,
+                                     const std::pair<double, double> &log_pi,
+                                     const pair_state &logG,
+                                     const std::vector<pair_state> &logP,
+                                     const std::vector<triple_state> &logGP,
+                                     const std::vector<double> &marginals,
+                                     std::vector<T> &states_curr,
+                                     const std::vector<T> &states_next,
+                                     const size_t node_id) const {
+  
+  if (is_leaf(subtree_sizes[node_id]) &&
+      !missing_meth_value(marginals[node_id])) {
+    states_curr[node_id] = dis(gen) > marginals[node_id] ? 0 : 1;
+  } else {
+    for (size_t count = 1; count < subtree_sizes[node_id]; ) {
+      const size_t child_id = node_id + count;
+      sample_states_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                          marginals, states_curr, states_next, child_id);
+      count += subtree_sizes[child_id];
+    }
+    const double log_ratio =
+      MB_state_start(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                     states_curr, states_next, node_id);
+    const double log_ratio_sym = log_ratio +
+      MB_state_end(subtree_sizes, parent_ids, logG, logGP,
+                   states_next, states_curr, node_id);
+  
+    accept_or_reject_proposal(log_ratio_sym, node_id, states_curr);
+  }
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+///////////////////////////// independent sampling /////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
 template <class T>
 void
 epiphy_mcmc::sample_states_indep(const std::vector<size_t> &subtree_sizes,
@@ -570,6 +727,48 @@ epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
 }
 
 
+template <class T>
+void
+epiphy_mcmc::sample_states_sym(const std::vector<size_t> &subtree_sizes,
+                               const std::vector<size_t> &parent_ids,
+                               const param_set &params,
+                               const std::vector<std::vector<double> > &marginals,
+                               const std::vector<std::pair<size_t, size_t> > &blocks,
+                               std::vector<std::vector<T> > &states) const {
+  
+  std::pair<double, double> log_pi(std::make_pair(log(params.pi0),
+                                                  log(1.0 - params.pi0)));
+  pair_state logG(params.g0, 1.0 - params.g0, 1.0 - params.g1, params.g1);
+  logG.make_logs();
+
+  std::vector<pair_state> logP;
+  std::vector<triple_state> logGP;
+  get_transition_matrices(params, logP, logGP);
+  for (size_t i = 0; i < logP.size(); ++i) {
+    logP[i].make_logs();
+    logGP[i].make_logs();
+  }
+
+  for (size_t i = 0; i < blocks.size(); ++i) {
+    const size_t start = blocks[i].first;
+    const size_t end = blocks[i].second;
+    if (start < end) {
+      sample_states_start_sym(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                              marginals[start], states[start], states[start + 1], 0);
+      for (size_t pos = start + 1; pos < end; ++pos)
+        sample_states_middle_sym(subtree_sizes, parent_ids, logG, logGP,
+                                 marginals[pos], states[pos - 1], states[pos],
+                                 states[pos + 1], 0);
+      sample_states_end_sym(subtree_sizes, parent_ids, log_pi, logG, logP, logGP,
+                            marginals[end], states[end - 1], states[end], 0);
+    } else {
+      sample_states_indep(subtree_sizes, parent_ids, log_pi, logP,
+                          marginals[start], states[start], 0);
+    }
+  }
+}
+
+// construct transition probabilities directly from sufficient statistics
 template <class T>
 void
 epiphy_mcmc::sample_states(const std::vector<size_t> &subtree_sizes,
