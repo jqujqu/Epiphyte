@@ -26,7 +26,7 @@
 #include <fstream>
 #include <numeric>
 #include <random>
-#include <algorithm>  //std::max, min
+#include <algorithm>  //std::max, min, random_shuffle
 #include <cmath>      //std::abs
 #include <limits>     //std::numeric_limits
 #include <iterator>   //std::distance
@@ -192,6 +192,150 @@ build_domain(const size_t minCpG, const size_t desert_size,
   }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////   Build domains for each species    /////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// keep foreground domain scores (sum of 1-methprob)
+static void
+get_domain_scores(const vector<size_t> &subtree_sizes,
+                  const vector<vector<double> > &meth_probs,
+                  const vector<pair<size_t, size_t> > &blocks,
+                  vector<vector<double> > &domain_scores) {
+  vector<vector<bool> > classes(subtree_sizes.size());
+
+  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id) {
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      const size_t start = blocks[i].first;
+      const size_t end = blocks[i].second;
+      for (size_t pos = start; pos <= end; ++pos) {
+        double p = meth_probs[pos][node_id];
+        bool state = p > 0.5;
+        if (pos == start) {
+          classes[node_id].push_back(state);
+          if (!state)
+            domain_scores[node_id].push_back(1.0 - p);
+        } else {
+          if (classes[node_id].back() == state) {
+            if (!state)
+              domain_scores[node_id].back() += 1.0 - p;
+          } else {
+            classes[node_id].push_back(state);
+            if (!state)
+              domain_scores[node_id].push_back(1.0 - p);
+          }
+        }
+      }
+    }
+  }
+}
+
+static void
+shuffle_cpgs(const size_t seed,
+             const vector<size_t> &subtree_sizes,
+             const vector<pair<size_t, size_t> > &blocks,
+             vector<vector<double> > meth_probs,
+             vector<double> &random_scores) {
+  vector<vector<double> > domain_scores(subtree_sizes.size());
+  cerr << "---- shuffle cpgs ---" << endl;
+  srand(seed);
+  random_shuffle(meth_probs.begin(), meth_probs.end());
+  vector<double> scores;
+  get_domain_scores(subtree_sizes, meth_probs, blocks, domain_scores);
+
+  bool DEBUG = false;
+  if (DEBUG) {
+    string outfile = "shuffled_scores_tmp.txt";
+    std::ofstream of;
+    of.open(outfile.c_str());
+    std::ostream out(of.rdbuf());
+    for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id)
+      for (size_t i = 0; i < domain_scores[node_id].size(); ++i)
+        out << node_id << "\t" << domain_scores[node_id][i] << endl;
+  }
+
+  for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id)
+    random_scores.insert(random_scores.end(), domain_scores[node_id].begin(),
+                         domain_scores[node_id].end());
+  sort(random_scores.begin(), random_scores.end());
+}
+
+
+static void
+assign_p_values(const vector<double> &random_scores,
+                const vector<vector<double> >&observed_scores,
+                vector<vector<double> >&p_values) {
+  const double n_randoms =
+    random_scores.size() == 0 ? 1 : random_scores.size();
+  for (size_t node_id = 0; node_id < observed_scores.size(); ++node_id)
+    for (size_t i = 0; i < observed_scores[node_id].size(); ++i) {
+      double pval = (random_scores.end() -
+                     upper_bound(random_scores.begin(), random_scores.end(),
+                                 observed_scores[node_id][i]))/n_randoms;
+      p_values[node_id].push_back(pval);
+    }
+}
+
+double
+get_fdr_cutoff(const vector<vector<double> > &scores, const double fdr) {
+  if (fdr <= 0)
+    return numeric_limits<double>::max();
+  else if (fdr > 1)
+    return numeric_limits<double>::min();
+  vector<double> local;
+  for (size_t node_id = 0; node_id < scores.size(); ++ node_id)
+    local.insert(local.end(), scores[node_id].begin(),scores[node_id].end());
+  std::sort(local.begin(), local.end());
+  size_t i = 0;
+  for (; i < local.size() - 1 &&
+         local[i+1] < fdr*static_cast<double>(i+1)/local.size(); ++i);
+  return local[i];
+}
+
+static void
+build_domain(const vector<MSite> &sites,
+             const vector<pair<size_t, size_t> > &blocks,
+             const vector<vector<double> > &meth_probs,
+             const vector<string> &node_names,
+             vector<vector<GenomicRegion> > &domains) {
+
+  for (size_t node_id = 0; node_id < node_names.size(); ++node_id) {
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      size_t start = blocks[i].first;
+      size_t end = blocks[i].second;
+      vector<bool> classes;
+      for (size_t pos = start; pos <= end; ++pos) {
+        double p = meth_probs[pos][node_id];
+        bool state = p > 0.5;
+        if (pos == start) {
+          classes.push_back(state);
+          if (!state) {
+            //domain_scores[node_id].push_back(1.0 - p);
+            domains[node_id].push_back(GenomicRegion(sites[pos].chrom, sites[pos].pos,
+                                                     sites[pos].pos + 1, node_names[node_id], 1.0, '+'));
+          }
+        } else {
+          if (classes.back() == state) {
+            if (!state) {
+              //domain_scores[node_id].back() += 1.0 - p;
+              domains[node_id].back().set_end(sites[pos].pos + 1);
+              domains[node_id].back().set_score(domains[node_id].back().get_score() + 1);
+            }
+          } else {
+            classes.push_back(state);
+            if (!state) {
+              //domain_scores[node_id].push_back(1.0 - p);
+              domains[node_id].push_back(GenomicRegion(sites[pos].chrom, sites[pos].pos,
+                                                       sites[pos].pos + 1, node_names[node_id], 1.0, '+'));
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -209,21 +353,15 @@ main(int argc, const char **argv) {
     string outfile;
 
     size_t desert_size = 1000;
-    size_t min_sites_per_frag = 5;  // ADS: should this be a
-                                    // post-processing filter step in
-                                    // a separate program?
-    // size_t minCpG = 10;                     // MAGIC
 
     // run mode flags
     bool VERBOSE = false;
+    double fdr_cutoff = numeric_limits<double>::max();
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "segment epigenomic states for "
                            "species with specified evolutionary relationships",
                            "<param-file> <meth-table>");
-    opt_parse.add_opt("min-fragsize", 'f', "min CpG in fragments to output "
-                      "(default: " + toa(min_sites_per_frag) + ")", false,
-                      min_sites_per_frag);
     opt_parse.add_opt("seed", 's', "rng seed (default: none)",
                       false, rng_seed);
     opt_parse.add_opt("verbose", 'v', "print more run info "
@@ -306,14 +444,36 @@ main(int argc, const char **argv) {
       cerr << "number of blocks: " << blocks.size() << endl;
 
     /************************** Output states ********************************/
+
+    vector<double> shuffled_domain_scores(subtree_sizes.size());
+    shuffle_cpgs(rng_seed, subtree_sizes, blocks, tree_probs, shuffled_domain_scores);
+
+    vector<vector<double> > domain_scores(subtree_sizes.size());
+    get_domain_scores(subtree_sizes, tree_probs, blocks, domain_scores);
+
+    vector<vector<double> > p_values(subtree_sizes.size());
+    assign_p_values(shuffled_domain_scores, domain_scores, p_values);
+
+    bool DEBUG = false;
+    if (DEBUG) {
+      string tmpoutfile = "scores.txt";
+      std::ofstream of;
+      of.open(tmpoutfile.c_str());
+      std::ostream out(of.rdbuf());
+      for (size_t node_id = 0; node_id < subtree_sizes.size(); ++node_id)
+        for (size_t i = 0; i < domain_scores[node_id].size(); ++i)
+          out << node_id << "\t" << domain_scores[node_id][i] << "\t"
+              << p_values[node_id][i] << endl;
+    }
+
+    if (fdr_cutoff == numeric_limits<double>::max())
+      fdr_cutoff = get_fdr_cutoff(p_values, 0.01);
+
     if (VERBOSE)
-      cerr << "[building domains of contiguous state]" << endl;
-    vector<string> states;
-    vector<GenomicRegion> domains;
-    tree_prob_to_states(rng_seed, subtree_sizes, tree_probs, states);
-    build_domain(min_sites_per_frag, desert_size, sites, states, domains);
-    if (VERBOSE)
-      cerr << "total domains: " << domains.size() << endl;
+      cerr << "[building hypomehtylated domains in each species]" << endl;
+    vector<vector<GenomicRegion> > domains(subtree_sizes.size());
+    build_domain(sites, blocks, tree_probs, node_names, domains);
+
 
     // output the domains as contiguous intervals
     std::ofstream of;
@@ -321,8 +481,14 @@ main(int argc, const char **argv) {
     std::ostream out(outfile.empty() ? std::cout.rdbuf() : of.rdbuf());
     if (!out)
       throw SMITHLABException("bad output file: " + outfile);
-    copy(domains.begin(), domains.end(),
-         ostream_iterator<GenomicRegion>(out, "\n"));
+    for (size_t node_id = 0; node_id < domains.size(); ++node_id) {
+      size_t good_hmr_count = 0;
+      for (size_t i = 0; i < domains[node_id].size(); ++i)
+        if (p_values[node_id][i] < fdr_cutoff) {
+          domains[node_id][i].set_name(node_names[node_id] + "_HYPO" + smithlab::toa(good_hmr_count++));
+          out << domains[node_id][i] << '\n';
+        }
+    }
   }
   catch (SMITHLABException &e) {
     cerr << "ERROR:\t" << e.what() << endl;
