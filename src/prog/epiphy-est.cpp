@@ -272,6 +272,7 @@ expectation_step(const bool VERBOSE,
   mcmc_stat sumwin2;
   bool converged = false;
   size_t mh_iter = 0;
+
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
@@ -358,6 +359,7 @@ expectation_maximization(const bool VERBOSE,
                          const size_t mh_max_iterations,
                          const size_t burnin,
                          const size_t keepsize,
+                         const size_t first_only,
                          const epiphy_mcmc &sampler,
                          const vector<size_t> &subtree_sizes,
                          const vector<size_t> &parent_ids,
@@ -379,7 +381,9 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     double datllk;
-    expectation_step(VERBOSE, mh_max_iterations, burnin, keepsize,
+    const size_t burn = (first_only && iter > 0)? 0 : burnin;
+
+    expectation_step(VERBOSE, mh_max_iterations, burn, keepsize,
                      sampler, subtree_sizes, parent_ids, tree_probs,
                      blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts,
@@ -825,7 +829,7 @@ main(int argc, const char **argv) {
       if (!use_marks) {
         expectation_maximization(VERBOSE, restart_chain, rng_seed,
                                  em_max_iterations, opt_max_iterations,
-                                 mh_max_iterations, burnin, keep, sampler,
+                                 mh_max_iterations, burnin, keep, first_only, sampler,
                                  subtree_sizes, parent_ids,
                                  tree_probs, blocks, params,
                                  root_start_counts, root_counts,
