@@ -24,7 +24,7 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <numeric>    // std::accumulate
+#include <numeric>
 #include <random>
 #include <algorithm>  //std::max, min
 #include <cmath>      //std::abs
@@ -66,7 +66,7 @@ using std::bind;
 using std::plus;
 
 static const double PROBABILITY_GUARD = 1e-10;
-static const double KL_CONV_TOL = 1e-6;    //MAGIC
+static const double KL_CONV_TOL = 1e-5;    //MAGIC
 
 
 static void
@@ -144,48 +144,6 @@ kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
   kl_divergence(P.triad_distr, Q.triad_distr, kld);
 }
 
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////
-
-template <class T> static void
-sample_initial_states(const size_t rng_seed,
-                      const vector<vector<double> > &tree_probs,
-                      vector<vector<T> > &sampled_states) {
-
-  std::random_device rd; // random devide to generate seed
-  std::mt19937_64 gen(rng_seed == numeric_limits<size_t>::max() ? rd() : rng_seed);
-
-  std::uniform_real_distribution<> dis(0, 1);
-
-  for (size_t i = 0; i < tree_probs.size(); ++i)
-    for (size_t j = 0; j < tree_probs[i].size(); ++j)
-      sampled_states[i][j] =
-        (dis(gen) > (missing_meth_value(tree_probs[i][j]) ? 0.5 :
-                     tree_probs[i][j])) ? 0 : 1;
-}
-
-
-static void
-add_internal_node_probs(const vector<size_t> &subtree_sizes,
-                        vector<vector<double> > &prob_table) {
-
-  const size_t n_nodes = subtree_sizes.size();
-  const size_t n_sites = prob_table.size();
-
-  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
-
-  vector<size_t> leaves_preorder;
-  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
-
-  for (size_t i = 0; i < n_sites; ++i)
-    for (size_t j = 0; j < leaves_preorder.size(); ++j)
-      expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
-
-  prob_table.swap(expanded_probs);
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 /////////////// EXPECTATION MAXIMIZATION ///////////////////////////////////////
@@ -217,7 +175,9 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
 
     max_likelihood_pi0(VERBOSE, root_start_counts, ps);
 
-    max_likelihood_horiz(VERBOSE, subtree_sizes, root_counts, triad_counts, ps);
+    max_likelihood_f0_f1(VERBOSE, root_counts, ps);
+
+    max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, ps);
 
     diff = param_set::absolute_difference(ps, prev_ps); // convergence criteria
   }
@@ -231,16 +191,22 @@ maximization_step(const bool VERBOSE,
                   const pair_state &root_counts,
                   const vector<pair_state> &start_counts,
                   const vector<triple_state> &triad_counts, param_set &ps) {
+
   // one M-step: optimize parameters
   param_set prev_ps(ps);
+
   max_likelihood_params(VERBOSE, subtree_sizes,
                         root_start_counts, root_counts, start_counts,
                         triad_counts, ps);
 }
 
+
+
+
 template <class T>
 static void
 expectation_step(const bool VERBOSE,
+                 const bool OBS,
                  const size_t mh_max_iterations,
                  const size_t burnin,
                  const size_t keepsize,
@@ -272,14 +238,13 @@ expectation_step(const bool VERBOSE,
   mcmc_stat sumwin2;
   bool converged = false;
   size_t mh_iter = 0;
-
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
            << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
 
     // take the sample
-    sampler.sample_states(subtree_sizes, parent_ids, ps, tree_probs,
+    sampler.sample_states(OBS, subtree_sizes, parent_ids, ps, tree_probs,
                           blocks, sampled_states);
 
     if (mh_iter >= burnin) {
@@ -330,8 +295,7 @@ expectation_step(const bool VERBOSE,
   if (VERBOSE)
     cerr << endl;
 
-  datllk = std::accumulate(datllk_keep.begin(),
-                           datllk_keep.end(), 0.0)/keepsize;
+  datllk = std::accumulate(datllk_keep.begin(), datllk_keep.end(), 0.0)/keepsize;
   root_start_counts.first = sumwin2.root_start_distr.first/keepsize;
   root_start_counts.second = sumwin2.root_start_distr.second/keepsize;
   root_counts = sumwin2.root_distr;
@@ -352,14 +316,12 @@ expectation_step(const bool VERBOSE,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
-                         const bool restart_chain,
-                         const size_t rng_seed,
+                         const bool OBS,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
                          const size_t burnin,
                          const size_t keepsize,
-                         const size_t first_only,
                          const epiphy_mcmc &sampler,
                          const vector<size_t> &subtree_sizes,
                          const vector<size_t> &parent_ids,
@@ -381,11 +343,9 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     double datllk;
-    const size_t burn = (first_only && iter > 0)? 0 : burnin;
-
-    expectation_step(VERBOSE, mh_max_iterations, burn, keepsize,
-                     sampler, subtree_sizes, parent_ids, tree_probs,
-                     blocks, params, root_start_counts,
+    expectation_step(VERBOSE, OBS, mh_max_iterations, burnin, keepsize,
+                     sampler, subtree_sizes, parent_ids,
+                     tree_probs, blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts,
                      sampled_states, datllk);
 
@@ -409,20 +369,17 @@ expectation_maximization(const bool VERBOSE,
     const double diff = param_set::max_abs_difference(prev_ps, params);
     em_converged = (diff < param_set::tolerance);
 
-    const double maxQ = log_likelihood(subtree_sizes, params, root_start_counts,
-                                       root_counts, start_counts, triad_counts);
+    const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
 
     if (VERBOSE)
       cerr << "[EM iter=" << iter << ", "
-           << "log_lik=" << datllk << ", "
-           << "maxQ=" << maxQ << ", "
-           << "max_param_delta=" << diff << ", "
+           << "log_lik=" << llk << ", "
+           << "delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
-
-    if (restart_chain)
-      sample_initial_states(rng_seed, tree_probs, sampled_states);
   }
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////      EM for general case      /////////////////////////////
@@ -433,6 +390,7 @@ expectation_maximization(const bool VERBOSE,
 template <class T>
 static void
 expectation_step(const bool VERBOSE,
+                 const bool OBS,
                  const size_t mh_max_iterations,
                  const size_t burnin,
                  const size_t keepsize,
@@ -448,8 +406,7 @@ expectation_step(const bool VERBOSE,
                  pair_state &root_counts,
                  vector<pair_state> &start_counts,
                  vector<triple_state> &triad_counts,
-                 vector<vector<T> > &sampled_states,
-                 double &datllk) {
+                 vector<vector<T> > &sampled_states) {
 
   const size_t n_nodes = subtree_sizes.size();
 
@@ -457,21 +414,23 @@ expectation_step(const bool VERBOSE,
   triad_counts = vector<triple_state>(n_nodes);
   start_counts = vector<pair_state>(n_nodes);
   root_counts = pair_state();
-  datllk = 0;
-  vector<double> datllk_keep(keepsize);
 
   vector<mcmc_stat> mcmcstats;
-  mcmc_stat sumwin1;
-  mcmc_stat sumwin2;
+
   bool converged = false;
   size_t mh_iter = 0;
+  mcmc_stat sumwin1;
+  mcmc_stat sumwin2;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
+
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
            << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
 
+    cerr << "taking the sample" << endl;
+
     // take the sample
-    sampler.sample_states(subtree_sizes, parent_ids, sites, desert_size,
+    sampler.sample_states(OBS, subtree_sizes, parent_ids, sites, desert_size,
                           ps, tree_probs, marks, sampled_states);
 
     pair<double, double> root_start_counts_samp;
@@ -483,47 +442,37 @@ expectation_step(const bool VERBOSE,
                  root_start_counts_samp, root_counts_samp, start_counts_samp,
                  triad_counts_samp);
 
-
     if (mh_iter >= burnin) {
-      const double llk_samp =
-        log_likelihood(subtree_sizes, ps, root_start_counts_samp,
-                       root_counts_samp, start_counts_samp, triad_counts_samp);
-      datllk_keep[(mh_iter-burnin) % keepsize] = llk_samp;
-
-      if (VERBOSE)
-        cerr << "Sample_loglik=" << llk_samp << ";";
-
       // record stats if past burning stage
-      if (mcmcstats.size() == keepsize*2)
+      if (mcmcstats.size() >= keepsize*2)
         mcmcstats.erase(mcmcstats.begin());
-      mcmcstats.push_back(mcmc_stat(root_start_counts_samp, root_counts_samp,
-                                    start_counts_samp, triad_counts_samp));
+      mcmc_stat m(root_start_counts_samp, root_counts_samp,
+                  start_counts_samp, triad_counts_samp);
+      mcmcstats.push_back(m);
+    }
 
-      if (mcmcstats.size() == keepsize*2) {
-        vector<double> divergence;
-        vector<mcmc_stat> win1(keepsize), win2(keepsize);
-        copy(mcmcstats.begin(), mcmcstats.begin() + keepsize, win1.begin());
-        copy(mcmcstats.begin() + keepsize, mcmcstats.end(), win2.begin());
+    if (mcmcstats.size() >= keepsize*2) {
 
-        // sum statistics from two neighboring windows
-        sum(win1, sumwin1);
-        sum(win2, sumwin2);
+      vector<double> divergence;
+      vector<mcmc_stat> win1(keepsize), win2(keepsize);
+      copy(mcmcstats.begin(), mcmcstats.begin() + keepsize, win1.begin());
+      copy(mcmcstats.begin() + keepsize, mcmcstats.end(), win2.begin());
 
-        // check how far the proportions have moved;
-        kl_divergence(sumwin1, sumwin2, divergence);
+      // sum statistics from two neighboring windows
+      sum(win1, sumwin1);
+      sum(win2, sumwin2);
 
-        // determine convergence based on how far proportions have moved
-        const double kl = *max_element(divergence.begin(), divergence.end()) ;
-        converged = kl < KL_CONV_TOL;
-        if (VERBOSE)
-          cerr << "KL=" << kl << ";" ;
-      }
+      // check how far the proportions have moved;
+      kl_divergence(sumwin1, sumwin2, divergence);
+
+      // determine convergence based on how far proportions have moved
+      const double kl = *max_element(divergence.begin(), divergence.end()) ;
+      converged = kl < KL_CONV_TOL;
     }
   }
   if (VERBOSE)
     cerr << endl;
 
-  datllk = std::accumulate(datllk_keep.begin(), datllk_keep.end(), 0.0)/keepsize;
   root_start_counts.first = sumwin2.root_start_distr.first/keepsize;
   root_start_counts.second = sumwin2.root_start_distr.second/keepsize;
   root_counts = sumwin2.root_distr;
@@ -545,8 +494,7 @@ expectation_step(const bool VERBOSE,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
-                         const bool restart_chain,
-                         const size_t rng_seed,
+                         const bool OBS,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
@@ -575,13 +523,13 @@ expectation_maximization(const bool VERBOSE,
            << "]=======================" << endl;
 
     const param_set prev_ps(params);
+
     const size_t burn = (first_only && iter > 0)? 0 : burnin;
-    double datllk = 0.0;
-    expectation_step(VERBOSE, mh_max_iterations,
+    expectation_step(VERBOSE, OBS, mh_max_iterations,
                      burn, keepsize, sampler, subtree_sizes,
                      parent_ids, tree_probs, marks, sites, desert_size,
                      params, root_start_counts, root_counts, start_counts,
-                     triad_counts, sampled_states, datllk);
+                     triad_counts, sampled_states);
 
     if (VERBOSE) {
       cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
@@ -591,7 +539,7 @@ expectation_maximization(const bool VERBOSE,
 
     /****************** M-step: optimize parameters ************************/
     /*optimize parameters one by one, at most opt_max_iterations*/
-    maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+    maximization_step(false, opt_max_iterations, subtree_sizes,
                       root_start_counts, root_counts, start_counts,
                       triad_counts, params);
 
@@ -602,20 +550,61 @@ expectation_maximization(const bool VERBOSE,
     const double diff = param_set::max_abs_difference(prev_ps, params);
     em_converged = (diff < param_set::tolerance);
 
-    const double maxQ = log_likelihood(subtree_sizes, params, root_start_counts,
-                                       root_counts, start_counts, triad_counts);
+    const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
+                                      root_counts, start_counts, triad_counts);
 
     if (VERBOSE)
       cerr << "[EM iter=" << iter << ", "
-           << "log_lik=" << datllk << ", "
-           << "maxQ =" << maxQ << ", "
-           << "max_param_delta=" << diff << ", "
+           << "log_lik=" << llk << ", "
+           << "delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
-
-    if (restart_chain)
-      sample_initial_states(rng_seed, tree_probs, sampled_states);
   }
 }
+
+
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////
+
+
+template <class T> static void
+sample_initial_states(const size_t rng_seed,
+                      const vector<vector<double> > &tree_probs,
+                      vector<vector<T> > &sampled_states) {
+
+  std::random_device rd; // random devide to generate seed
+  std::mt19937_64 gen(rng_seed == numeric_limits<size_t>::max() ? rd() : rng_seed);
+
+  std::uniform_real_distribution<> dis(0, 1);
+
+  for (size_t i = 0; i < tree_probs.size(); ++i)
+    for (size_t j = 0; j < tree_probs[i].size(); ++j)
+      sampled_states[i][j] =
+        (dis(gen) > (missing_meth_value(tree_probs[i][j]) ? 0.5 :
+                     tree_probs[i][j])) ? 0 : 1;
+}
+
+
+static void
+add_internal_node_probs(const vector<size_t> &subtree_sizes,
+                        vector<vector<double> > &prob_table) {
+
+  const size_t n_nodes = subtree_sizes.size();
+  const size_t n_sites = prob_table.size();
+
+  vector<vector<double> > expanded_probs(n_sites, vector<double>(n_nodes, -1.0));
+
+  vector<size_t> leaves_preorder;
+  subtree_sizes_to_leaves_preorder(subtree_sizes, leaves_preorder);
+
+  for (size_t i = 0; i < n_sites; ++i)
+    for (size_t j = 0; j < leaves_preorder.size(); ++j)
+      expanded_probs[i][leaves_preorder[j]] = prob_table[i][j];
+
+  prob_table.swap(expanded_probs);
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -627,23 +616,26 @@ int
 main(int argc, const char **argv) {
 
   try {
+
     size_t rng_seed = numeric_limits<size_t>::max();
 
     string outfile("/dev/stdout");
 
     size_t desert_size = 1000;
 
-    size_t opt_max_iterations = 100;        // iterations inside the M-step
+    size_t opt_max_iterations = 500;        // iterations inside the M-step
     size_t em_max_iterations = 100;         // rounds of EM iterations
     size_t mh_max_iterations = 500;         // MAGIC
     size_t keep = 100;   // #samples per chain used to get average statistics
     size_t burnin = 100;
 
+
     // run mode flags
     bool VERBOSE = false;
+    bool OBS = true;
     bool assume_complete_data = false;
     bool first_only = false;
-    bool restart_chain = false;
+    bool restart = false;
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
@@ -669,7 +661,7 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("first-only", 'f', "only burn-in in first EM iteration",
                       false, first_only);
     opt_parse.add_opt("restart", 'r', "restart MCMC chain in each EM iteration",
-                      false, restart_chain);
+                      false, restart);
     opt_parse.add_opt("seed", 's', "rng seed (default: none)",
                       false, rng_seed);
     opt_parse.add_opt("verbose", 'v', "print more run info "
@@ -701,7 +693,7 @@ main(int argc, const char **argv) {
     const string meth_table_file = leftover_args.back();
     /******************** END COMMAND LINE OPTIONS ********************/
 
-    mh_max_iterations = std::max(burnin + 3*keep, mh_max_iterations);
+    mh_max_iterations = std::max(burnin + 2*keep, mh_max_iterations);
 
     /******************** LOAD PHYLOGENETIC TREE ******************************/
     std::ifstream tree_in(tree_file.c_str());
@@ -733,13 +725,18 @@ main(int argc, const char **argv) {
     for (size_t i = 0; i < branches.size(); ++i)
       branches[i] = 1.0 - 1.0/exp(branches[i]);
 
-    static const double pi0_init   = 0.2; // MAGIC
-    static const double rate0_init = 0.8; // MAGIC
-    static const double g0_init    = 0.9; // MAGIC
-    static const double g1_init    = 0.9; // MAGIC
-    param_set params(pi0_init, rate0_init, g0_init, g1_init, branches);
+    static const double pi0_init   = 0.5; // MAGIC
+    static const double rate0_init = 0.5; // MAGIC
+    static const double f0_init    = 0.9; // MAGIC
+    static const double f1_init    = 0.9; // MAGIC
+    static const double g0_init    = 0.6; // MAGIC
+    static const double g1_init    = 0.6; // MAGIC
+    param_set params(pi0_init, rate0_init, f0_init, f1_init,
+                     g0_init, g1_init, branches);
+    if (VERBOSE)
+      cerr << "[starting params={" << params << "}]" << endl;
 
-    /******************* READ THE METHYLATION DATA *****************************/
+    /******************* READ THE METHYLATION DATA ****************************/
     if (VERBOSE)
       cerr << "[reading methylation data (mode="
            << (assume_complete_data ? "complete" : "missing") << ")]" << endl;
@@ -782,29 +779,15 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "number of blocks: " << blocks.size() << endl;
 
-    // mark sites usable for training
+    // // mark sites usable for training
     if (VERBOSE)
       cerr << "[marking sites]" << endl;
     vector<vector<bool> > marks;
     mark_useable_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
 
-    if (VERBOSE) {
-      vector<size_t> counts(subtree_sizes.size());
-      for (size_t i = 0; i < marks.size(); ++i) {
-        for (size_t j = 0; j < subtree_sizes.size(); ++j) {
-          if (marks[i][j]) ++counts[j];
-        }
-      }
-      for (size_t j = 0; j < subtree_sizes.size(); ++j)
-        cerr << "node " << j << " has " << counts[j] << " useable sites;" << endl;
-    }
-
     // heuristic starting points for G and pi
-    estimate_g0_g1(tree_probs, params.g0, params.g1);
+    estimate_g0_g1(tree_probs, params.f0, params.f1);
     params.pi0 = estimate_pi0(tree_probs);
-
-    if (VERBOSE)
-      cerr << "[starting params={" << params << "}]" << endl;
 
     vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes, false));
     // for complete data, the sampling will have probability 1 or 0
@@ -824,18 +807,21 @@ main(int argc, const char **argv) {
                         triad_counts, params);
     } else {
       const epiphy_mcmc sampler(mh_max_iterations, 0);
-      const bool use_marks = false;
+      bool MARK = false;
 
-      if (!use_marks) {
-        expectation_maximization(VERBOSE, restart_chain, rng_seed,
-                                 em_max_iterations, opt_max_iterations,
-                                 mh_max_iterations, burnin, keep, first_only, sampler,
+      if (restart)
+        sample_initial_states(rng_seed, tree_probs, tree_states);
+
+      if (!MARK) {
+        expectation_maximization(VERBOSE, OBS, em_max_iterations,
+                                 opt_max_iterations,
+                                 mh_max_iterations, burnin, keep, sampler,
                                  subtree_sizes, parent_ids,
                                  tree_probs, blocks, params,
                                  root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
       } else {
-        expectation_maximization(VERBOSE, restart_chain, rng_seed,
+        expectation_maximization(VERBOSE, OBS,
                                  em_max_iterations, opt_max_iterations,
                                  mh_max_iterations, sampler,
                                  burnin, keep, first_only,
@@ -872,10 +858,6 @@ main(int argc, const char **argv) {
   }
   catch (std::bad_alloc &ba) {
     cerr << "ERROR: could not allocate memory" << endl;
-    return EXIT_FAILURE;
-  }
-  catch (const std::exception &e) {
-    cerr << e.what() << endl;
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;

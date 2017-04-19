@@ -175,7 +175,6 @@ EPSR(vector<vector<mcmc_stat> > &mcmcstats,
     y.push_back(chain);
   }
 
-  const size_t n_chain = y.size();
   const size_t n_samp = y[0].size();
   const size_t n_var = y[0][0].size();
 

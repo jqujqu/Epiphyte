@@ -54,8 +54,10 @@ using std::min;
 using std::pair;
 
 /*
-  g0: u->u transition probability
-  g1: m->m transition probability
+  f0: u->u transition probability in G
+  f1: m->m transition probability in G
+  g0: u->u transition probability in GP
+  g1: m->m transition probability in GP
   pi0: initial probability of u
   states: u=0 m=1
  */
@@ -306,12 +308,12 @@ int main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[computing transition matrices]" << endl;
 
-    pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+    pair_state F(ps.f0, 1.0 - ps.f0, 1.0 - ps.f1, ps.f1);
     vector<pair_state> P;
     vector<triple_state> GP;
     get_transition_matrices(ps, P, GP);
 
-    single_edge_sampler Gsamp(G);
+    single_edge_sampler Gsamp(F);
     vector<single_edge_sampler> Psamp;
     vector<two_edge_sampler> GPsamp;
     for (size_t i = 0; i < n_nodes; ++i) {
@@ -442,10 +444,6 @@ int main(int argc, const char **argv) {
   }
   catch (std::bad_alloc &ba) {
     cerr << "ERROR: could not allocate memory" << endl;
-    return EXIT_FAILURE;
-  }
-  catch (const std::exception &e) {
-    cerr << e.what() << endl;
     return EXIT_FAILURE;
   }
   return EXIT_SUCCESS;

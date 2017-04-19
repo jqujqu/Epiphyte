@@ -29,15 +29,14 @@ ifndef METHPIPE_DIR
 METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
 endif
 
-PROGS = indep-epi-phylo simulation indep-sites-hypo \
-	epiphyte epiphy epiphy-sim epiphy-test epiphy-est epiphy-est-multichain\
+PROGS = indep-epi-phylo epiphy-sim epiphy-est \
 	epiphy-post epiphy-seg
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
 OPTFLAGS = -O2
 DEBUGFLAGS = -g
-LIBS = -lgsl -lgslcblas
+LIBS = -lgsl -lgslcblas -L/usr/local/lib 
 
 ifdef DEBUG
 CXXFLAGS += $(DEBUGFLAGS)
@@ -48,7 +47,7 @@ CXXFLAGS += $(OPTFLAGS)
 endif
 
 COMMON_DIR = $(realpath ../common)
-INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL} $(METHPIPE_DIR)
+INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL} $(METHPIPE_DIR) /usr/local/include
 INCLUDEARGS = $(addprefix -I, $(INCLUDEDIRS))
 
 all: $(PROGS)
@@ -70,7 +69,7 @@ indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
 	$(addprefix $(TREETOOL)/, PhyloTree.o ) \
 	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o)
 
-epiphy epiphy-est epiphy-post epiphy-seg epiphy-est-multichain: \
+epiphy-est epiphy-post epiphy-seg: \
 	$(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
 	param_set.o PhyloTreePreorder.o sufficient_statistics_helpers.o \
 	optimize_params.o epiphy_utils.o epiphy_mcmc.o) \
@@ -88,9 +87,6 @@ epiphy-test: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o \
 	optimize_params.o) \
 	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o)
-
-epiphyte: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o) \
-        $(addprefix $(TREETOOL)/, PhyloTree.o )
 
 indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o)
 

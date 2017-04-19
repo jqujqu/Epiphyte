@@ -55,8 +55,8 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
   double llk =
     (root_start_counts.first*log(ps.pi0) +
      root_start_counts.second*log(1.0 - ps.pi0)) + // ADS: is this right?
-    (root_counts(0, 0)*log(ps.g0) + root_counts(0, 1)*log(1.0 - ps.g0) +
-     root_counts(1, 0)*log(1.0 - ps.g1) + root_counts(1, 1)*log(ps.g1));
+    (root_counts(0, 0)*log(ps.f0) + root_counts(0, 1)*log(1.0 - ps.f0) +
+     root_counts(1, 0)*log(1.0 - ps.f1) + root_counts(1, 1)*log(ps.f1));
 
   for (size_t node = 1; node < subtree_sizes.size(); ++node)
     for (size_t j = 0; j < 2; ++j)
@@ -69,6 +69,7 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
 }
 
 
+// where is this used?
 double
 log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
                const pair<double, double> &root_start_counts,
@@ -93,6 +94,7 @@ log_likelihood(const vector<size_t> &subtree_sizes, const param_set &ps,
 }
 
 
+// where is this used?
 double
 log_likelihood(const vector<size_t> &subtree_sizes,
                const pair<double, double> &root_start_counts,
@@ -190,9 +192,9 @@ btwn_01_eps(const param_set &ps, const double &epsilon,
   return valid;
 }
 
-static double 
+static double
 bound_01_eps(const double x, const double epsilon) {
-  return std::min(std::max(x, epsilon), 1.0-epsilon); 
+  return std::min(std::max(x, epsilon), 1.0-epsilon);
 }
 
 static double
@@ -355,7 +357,7 @@ max_likelihood_rate(const bool VERBOSE, const vector<size_t> &subtree_sizes,
 
 static void
 objective_horiz(const vector<size_t> &subtree_sizes, const param_set &ps,
-                const pair_state &root_counts,
+                //const pair_state &root_counts,
                 const vector<triple_state> &triad_counts,
                 const vector<triple_state> &GP,
                 const vector<triple_state> &GP_dg0,
@@ -382,14 +384,14 @@ objective_horiz(const vector<size_t> &subtree_sizes, const param_set &ps,
       }
   }
 
-  const pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  // const pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
 
-  for (size_t i = 0; i < 2; ++i)
-    for (size_t j = 0; j < 2; ++j)
-      F += root_counts(i, j)*log(G(i, j));
+  // for (size_t i = 0; i < 2; ++i)
+  //   for (size_t j = 0; j < 2; ++j)
+  //     F += root_counts(i, j)*log(G(i, j));
 
-  deriv_G.first += root_counts(0, 0)/G(0, 0) - root_counts(0, 1)/G(0, 1);
-  deriv_G.second += -1.0*root_counts(1, 0)/G(1, 0) + root_counts(1, 1)/G(1, 1);
+  // deriv_G.first += root_counts(0, 0)/G(0, 0) - root_counts(0, 1)/G(0, 1);
+  // deriv_G.second += -1.0*root_counts(1, 0)/G(1, 0) + root_counts(1, 1)/G(1, 1);
 }
 
 
@@ -414,7 +416,6 @@ find_next_horiz(const param_set &ps, const pair<double, double> &deriv,
 void
 max_likelihood_horiz(const bool VERBOSE,
                      const vector<size_t> &subtree_sizes,
-                     const pair_state &root_counts,
                      const vector<triple_state> &triad_counts,
                      param_set &ps) {
 
@@ -424,7 +425,7 @@ max_likelihood_horiz(const bool VERBOSE,
 
   double F = 0.0;
   pair<double, double> deriv(0.0, 0.0);
-  objective_horiz(subtree_sizes, ps, root_counts, triad_counts,
+  objective_horiz(subtree_sizes, ps, triad_counts,
                   GP, GP_dg0, GP_dg1, F, deriv);
 
   double step_size = 1.0;
@@ -438,7 +439,7 @@ max_likelihood_horiz(const bool VERBOSE,
 
     double next_F = 0.0;
     pair<double, double> next_deriv;
-    objective_horiz(subtree_sizes, next_ps, root_counts, triad_counts,
+    objective_horiz(subtree_sizes, next_ps, triad_counts,
                     GP, GP_dg0, GP_dg1, next_F, next_deriv);
 
     // update if we have improved, otherwise reduce step size
@@ -460,6 +461,22 @@ max_likelihood_horiz(const bool VERBOSE,
 
 
 void
+max_likelihood_f0_f1(const bool VERBOSE,
+                     const pair_state &root_counts, param_set &ps) {
+  ps.f0 = root_counts(0, 0)/(root_counts(0, 0) + root_counts(0, 1));
+  ps.f1 = root_counts(1, 1)/(root_counts(1, 0) + root_counts(1, 1));
+
+  // lower bound is 0.5; might not be necessary
+  ps.f0 = std::max(0.5, ps.f0);
+  ps.f1 = std::max(0.5, ps.f1);
+
+  if (VERBOSE)
+    cerr << "[max_likelihood_f0_f1: f0=" << ps.f0
+         << "\tf1=" << ps.f1<< ']' << endl;
+}
+
+
+void
 max_likelihood_pi0(const bool VERBOSE,
                    const pair<double, double> &root_start_counts,
                    param_set &ps) {
@@ -472,7 +489,8 @@ max_likelihood_pi0(const bool VERBOSE,
     cerr << "[max_likelihood_pi0: pi0=" << ps.pi0 << ']' << endl;
 }
 
-// may get rid of  subtree_sizes
+
+// may get rid of subtree_sizes
 void
 optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                 const pair<double, double> &root_start_counts,
@@ -488,7 +506,8 @@ optimize_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
 
   max_likelihood_pi0(VERBOSE, root_start_counts, ps);
 
-  max_likelihood_horiz(VERBOSE, subtree_sizes, root_counts, triad_counts, ps);
+  max_likelihood_f0_f1(VERBOSE, root_counts, ps) ;
+  max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, ps);
 }
 
 
@@ -502,7 +521,7 @@ objective_params(const param_set &ps,
                  const pair_state &root_counts,
                  const vector<pair_state> &start_counts,
                  const vector<triple_state> &triad_counts,
-                 const pair_state &G,
+                 const pair_state &root_G,
                  const vector<pair_state> &P,
                  const vector<triple_state> &GP,
                  const vector<pair_state> &P_drate,
@@ -519,6 +538,8 @@ objective_params(const param_set &ps,
   std::fill(deriv.T.begin(), deriv.T.end(), 0.0);
   deriv.pi0 = 0.0;
   deriv.rate0 = 0.0;
+  deriv.f0 = 0.0;
+  deriv.f1 = 0.0;
   deriv.g0 = 0.0;
   deriv.g1 = 0.0;
 
@@ -526,13 +547,14 @@ objective_params(const param_set &ps,
   deriv.pi0 = (root_start_counts.first/ps.pi0 -
                root_start_counts.second/(1.0 - ps.pi0));
 
-  // root_counts countribute to g0, g1
+  // root_counts countribute to f0, f1
   for (size_t i = 0; i < 2; ++i)
     for (size_t j = 0; j < 2; ++j) {
-      F += root_counts(i, j)*log(G(i, j));
+      F += root_counts(i, j)*log(root_G(i, j));
     }
-  deriv.g0 += root_counts(0, 0)/G(0, 0) - root_counts(0, 1)/G(0, 1);
-  deriv.g1 += -1.0*root_counts(1, 0)/G(1, 0) + root_counts(1, 1)/G(1, 1);
+  deriv.f0 += root_counts(0, 0)/root_G(0, 0) - root_counts(0, 1)/root_G(0, 1);
+  deriv.f1 += (-1.0*root_counts(1, 0)/root_G(1, 0) +
+               root_counts(1, 1)/root_G(1, 1));
 
   const size_t n_nodes = ps.T.size();
   for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
@@ -583,6 +605,8 @@ find_next_ps(const param_set &ps,
   next_ps = ps;
   next_ps.pi0 = bound_01_eps(ps.pi0 + step_size*(deriv.pi0/denom), TOL);
   next_ps.rate0 = bound_01_eps(ps.rate0 + step_size*(deriv.rate0/denom), TOL);
+  next_ps.f0 = bound_01_eps(ps.f0 + step_size*(deriv.f0/denom), TOL);
+  next_ps.f1 = bound_01_eps(ps.f1 + step_size*(deriv.f1/denom), TOL);
   next_ps.g0 = bound_01_eps(ps.g0 + step_size*(deriv.g0/denom), TOL);
   next_ps.g1 = bound_01_eps(ps.g1 + step_size*(deriv.g1/denom), TOL);
   for (size_t i = 1; i < ps.T.size(); ++i)
@@ -601,7 +625,7 @@ max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
                       const vector<triple_state> &triad_counts,
                       param_set &ps) {
 
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  pair_state root_G(ps.f0, 1.0 - ps.f0, 1.0 - ps.f1, ps.f1);
   vector<pair_state> P;
   vector<triple_state> GP, GP_drate, GP_dg0, GP_dg1, GP_dT;
   get_transition_matrices_deriv(ps, P, GP, GP_drate, GP_dg0, GP_dg1, GP_dT);
@@ -619,7 +643,7 @@ max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
   double F;
   param_set deriv;
   objective_params(ps, root_start_counts,root_counts, start_counts,
-                   triad_counts, G, P, GP, P_drate, P_dT,
+                   triad_counts, root_G, P, GP, P_drate, P_dT,
                    GP_drate, GP_dg0, GP_dg1, GP_dT, F, deriv);
 
   double step_size = 1.0;
@@ -630,7 +654,8 @@ max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
     step_size = find_next_ps(ps, deriv, step_size, next_ps);
 
     // evaluate auxiliary quantities at next_ps
-    G = pair_state(next_ps.g0, 1.0 - next_ps.g0, 1.0 - next_ps.g1, next_ps.g1);
+    root_G = pair_state(next_ps.f0, 1.0 - next_ps.f0,
+                        1.0 - next_ps.f1, next_ps.f1);
     get_transition_matrices_deriv(next_ps, P, GP, GP_drate,
                                   GP_dg0, GP_dg1, GP_dT);
     for (size_t node_id = 1; node_id < n_nodes; ++node_id) {
@@ -645,7 +670,7 @@ max_likelihood_params(const bool VERBOSE, const vector<size_t> &subtree_sizes,
     double next_F = 0.0;
     param_set next_deriv;
     objective_params(next_ps, root_start_counts,root_counts, start_counts,
-                     triad_counts, G, P, GP, P_drate, P_dT,
+                     triad_counts, root_G, P, GP, P_drate, P_dT,
                      GP_drate, GP_dg0, GP_dg1, GP_dT, next_F, next_deriv);
 
     if (next_F > F) {

@@ -73,12 +73,7 @@ read_meth_table(const string &table_file,
         throw std::runtime_error("bad table file line: " + line);
 }
 
-/*
-  Sites that either contain observed information,
-  or are close to enough observations from all of its descendants,
-  are marked true. Other sites are skipped in MCMC sampling, and
-  do not contribute to sufficient statistics and data likelihood.
-*/
+
 void
 mark_useable_sites(const vector<size_t> &subtree_sizes,
                    const vector<MSite> &sites,
@@ -110,7 +105,7 @@ mark_useable_sites(const vector<size_t> &subtree_sizes,
   } else {
     for (size_t count = 1; count < subtree_sizes[node_id];) {
       mark_useable_sites(subtree_sizes, sites, tree_probs,
-                 desert_size, node_id + count, marks);
+                         desert_size, node_id + count, marks);
       // non-desert sites in an internal node
       // is the intersection of non-deserts of all its children
       if (count == 1) {
@@ -127,9 +122,9 @@ mark_useable_sites(const vector<size_t> &subtree_sizes,
 
 void
 mark_useable_sites(const vector<size_t> subtree_sizes,
-           const vector<MSite> &sites,
-           const vector<vector<double> > &tree_probs,
-           const size_t desert_size,
+                   const vector<MSite> &sites,
+                   const vector<vector<double> > &tree_probs,
+                   const size_t desert_size,
            vector<vector<bool> > &marks) {
   marks = vector<vector<bool> >(tree_probs.size(),
                                 vector<bool>(subtree_sizes.size(), false));

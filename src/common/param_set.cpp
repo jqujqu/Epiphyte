@@ -50,6 +50,8 @@ param_set::read(const string &paramfile, PhyloTreePreorder &t) {
   in >> dummy_label >> t;
   in >> dummy_label >> pi0;
   in >> dummy_label >> rate0;
+  in >> dummy_label >> f0;
+  in >> dummy_label >> f1;
   in >> dummy_label >> g0;
   in >> dummy_label >> g1;
 
@@ -82,6 +84,8 @@ param_set::write(PhyloTreePreorder t, const string &paramfile) {
   out << "tree\t" << t << std::endl;
   out << "pi0\t" << pi0 << std::endl;
   out << "rate0\t" << rate0 << std::endl;
+  out << "f0\t" << f0 << std::endl;
+  out << "f1\t" << f1 << std::endl;
   out << "g0\t" << g0 << std::endl;
   out << "g1\t" << g1 << std::endl;
 }
@@ -91,6 +95,8 @@ param_set::tostring() const {
   std::ostringstream oss;
   oss << "pi0=" << pi0 << ", "
       << "rate0=" << rate0 << ", "
+      << "f0=" << f0 << ", "
+      << "f1=" << f1 << ", "
       << "g0=" << g0 << ", "
       << "g1=" << g1 << ", "
       << "T=(";

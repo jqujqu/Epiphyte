@@ -59,13 +59,18 @@ max_likelihood_pi0(const bool VERBOSE,
                    param_set &ps);
 
 void
-max_likelihood_horiz(const bool VERBOSE, const std::vector<size_t> &subtree_sizes,
-                     const pair_state &root_counts,
+max_likelihood_f0_f1(const bool VERBOSE,
+                     const pair_state &root_counts, param_set &ps);
+
+void
+max_likelihood_horiz(const bool VERBOSE,
+                     const std::vector<size_t> &subtree_sizes,
                      const std::vector<triple_state> &triad_counts,
                      param_set &ps);
 
 void
-max_likelihood_rate(const bool VERBOSE, const std::vector<size_t> &subtree_sizes,
+max_likelihood_rate(const bool VERBOSE,
+                    const std::vector<size_t> &subtree_sizes,
                     const std::vector<pair_state> &start_counts,
                     const std::vector<triple_state> &triad_counts,
                     param_set &ps);
