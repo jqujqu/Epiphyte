@@ -30,7 +30,7 @@ METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
 endif
 
 PROGS = indep-epi-phylo epiphy-sim epiphy-est \
-	epiphy-post epiphy-seg
+	epiphy-post epiphy-seg epiphy-test
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11

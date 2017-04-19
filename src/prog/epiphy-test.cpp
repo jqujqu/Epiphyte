@@ -113,6 +113,7 @@ int main(int argc, const char **argv) {
 
     bool test_pi0 = false;
     bool test_G = false;
+    bool test_root_G = false;
     bool test_lambda = false;
     size_t test_branch = 0;
 
@@ -129,6 +130,8 @@ int main(int argc, const char **argv) {
                       false, test_pi0);
     opt_parse.add_opt("horiz", 'G', "optimize horizontal transitions G",
                       false, test_G);
+    opt_parse.add_opt("f0f1", 'f', "optimize root horizontal transitions f0 f1",
+                      false, test_root_G);
     opt_parse.add_opt("lambda", 'l', "optimize vertical rate lambda",
                       false, test_lambda);
     opt_parse.add_opt("branch", 'b', "optimize this branch",
@@ -189,8 +192,6 @@ int main(int argc, const char **argv) {
     vector<size_t> parent_ids;
     get_parent_id(subtree_sizes, parent_ids);
 
-    const size_t n_nodes = t.get_size();
-
     if (VERBOSE)
       cerr << "[reading states]" << endl;
 
@@ -234,6 +235,18 @@ int main(int argc, const char **argv) {
         cerr << optimized_ps << endl;
     }
 
+    if (test_root_G) {
+      // sample arbitrary value (but making it > 0.5)
+      optimized_ps.f0 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+      optimized_ps.f1 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+      if (VERBOSE)
+        cerr << "optimizing root_G" << endl
+             << "initial params: " << optimized_ps << endl;
+      max_likelihood_f0_f1(VERBOSE, root_counts, optimized_ps);
+      if (VERBOSE)
+        cerr << optimized_ps << endl;
+    }
+
     if (test_G) {
       // sample arbitrary value (but making it > 0.5)
       optimized_ps.g0 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
@@ -241,8 +254,7 @@ int main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "optimizing G" << endl
              << "initial params: " << optimized_ps << endl;
-      max_likelihood_horiz(VERBOSE, subtree_sizes,
-                           root_counts, triad_counts, optimized_ps);
+      max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, optimized_ps);
       if (VERBOSE)
         cerr << optimized_ps << endl;
     }
