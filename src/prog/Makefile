@@ -30,7 +30,7 @@ METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
 endif
 
 PROGS = indep-epi-phylo epiphy-sim epiphy-est \
-	epiphy-post epiphy-seg epiphy-test
+	epiphy-post epiphy-seg epiphy-test epiphy-est-multichain
 
 CXX = g++
 CXXFLAGS = -Wall -fmessage-length=50 -std=c++11
@@ -61,15 +61,12 @@ all: $(PROGS)
 $(PROGS): $(addprefix $(SMITHLAB_CPP)/, GenomicRegion.o smithlab_os.o \
 	smithlab_utils.o OptionParser.o)
 
-simulation: $(addprefix $(COMMON_DIR)/, PhyloTreePreorder.o ) \
-	$(addprefix $(TREETOOL)/, PhyloTree.o )
-
 indep-epi-phylo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
 	BetaBin.o PhyloTreePreorder.o epiphy_utils.o ) \
 	$(addprefix $(TREETOOL)/, PhyloTree.o ) \
 	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o)
 
-epiphy-est epiphy-post epiphy-seg: \
+epiphy-est epiphy-post epiphy-seg epiphy-est-multichain: \
 	$(addprefix $(COMMON_DIR)/, MethpipeFiles.o \
 	param_set.o PhyloTreePreorder.o sufficient_statistics_helpers.o \
 	optimize_params.o epiphy_utils.o epiphy_mcmc.o) \

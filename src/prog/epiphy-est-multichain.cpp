@@ -212,6 +212,7 @@ add_internal_node_probs(const vector<size_t> &subtree_sizes,
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+// optimize parameters one by one
 static void
 maximization_step(const bool VERBOSE, const size_t MAXITER,
                   const vector<size_t> &subtree_sizes,
@@ -236,17 +237,20 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
 
     max_likelihood_pi0(VERBOSE, root_start_counts, ps);
 
-    max_likelihood_horiz(VERBOSE, subtree_sizes, root_counts, triad_counts, ps);
+    max_likelihood_f0_f1(VERBOSE, root_counts, ps);
+
+    max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, ps);
 
     diff = param_set::absolute_difference(ps, prev_ps); // convergence criteria
   }
 }
 
-
 // [for multiple chains]
 template <class T>
 static void
-expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
+expectation_step(const bool VERBOSE,
+                 const bool OBS,
+                 const size_t mh_max_iterations,
                  const size_t burnin, const size_t keepsize,
                  const double epsr_tol,
                  const vector<epiphy_mcmc> &samplers,
@@ -279,7 +283,7 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
 
     for (size_t i = 0; i < n_chain; ++i) {
       // take the sample
-      samplers[i].sample_states(subtree_sizes, parent_ids, ps, tree_probs,
+      samplers[i].sample_states(OBS, subtree_sizes, parent_ids, ps, tree_probs,
                                 blocks, sampled_states_para[i]);
 
       pair<double, double> root_start_counts_samp;
@@ -350,6 +354,7 @@ expectation_step(const bool VERBOSE, const size_t mh_max_iterations,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
+                         const bool OBS,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
@@ -395,10 +400,10 @@ expectation_maximization(const bool VERBOSE,
     // only apply burn-in to first iteration
 
     const size_t burn = (first_only && iter > 0)? 0 : burnin;
-    expectation_step(VERBOSE, mh_max_iterations, burn, keepsize, epsr_tol,
-                     samplers,
-                     subtree_sizes, parent_ids, tree_probs, blocks, params,
-                     root_start_counts, root_counts, start_counts,
+    expectation_step(VERBOSE, OBS, mh_max_iterations, burn, keepsize,
+                     epsr_tol, samplers, subtree_sizes, parent_ids,
+                     tree_probs, blocks, params, root_start_counts,
+                     root_counts, start_counts,
                      triad_counts, sampled_states_para);
 
     if (VERBOSE) {
@@ -437,6 +442,7 @@ expectation_maximization(const bool VERBOSE,
 template <class T>
 static void
 expectation_step(const bool VERBOSE,
+                 const bool OBS,
                  const size_t mh_max_iterations,
                  const size_t burnin,
                  const size_t keepsize,
@@ -474,7 +480,7 @@ expectation_step(const bool VERBOSE,
 
     for (size_t i = 0; i < n_chain; ++i) {
       // take the sample
-      samplers[i].sample_states(subtree_sizes, parent_ids, sites, desert_size,
+      samplers[i].sample_states(OBS, subtree_sizes, parent_ids, sites, desert_size,
                                 ps, tree_probs, marks, sampled_states_para[i]);
 
       pair<double, double> root_start_counts_samp;
@@ -544,6 +550,7 @@ expectation_step(const bool VERBOSE,
 template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
+                         const bool OBS,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
@@ -590,7 +597,7 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     const size_t burn = (first_only && iter > 0)? 0 : burnin;
-    expectation_step(VERBOSE, mh_max_iterations,
+    expectation_step(VERBOSE, OBS, mh_max_iterations,
                      burn, keepsize, epsr_tol, samplers,
                      subtree_sizes, parent_ids, tree_probs,
                      marks, sites, desert_size,
@@ -656,6 +663,8 @@ main(int argc, const char **argv) {
     bool VERBOSE = false;
     bool assume_complete_data = false;
     bool first_only = false;
+    bool OBS = true;
+
 
     /********************* COMMAND LINE OPTIONS ***********************/
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
@@ -746,9 +755,12 @@ main(int argc, const char **argv) {
 
     static const double pi0_init   = 0.5; // MAGIC
     static const double rate0_init = 0.5; // MAGIC
-    static const double g0_init    = 0.9; // MAGIC
-    static const double g1_init    = 0.9; // MAGIC
-    param_set params(pi0_init, rate0_init, g0_init, g1_init, branches);
+    static const double f0_init    = 0.9; // MAGIC
+    static const double f1_init    = 0.9; // MAGIC
+    static const double g0_init    = 0.6; // MAGIC
+    static const double g1_init    = 0.6; // MAGIC
+    param_set params(pi0_init, rate0_init, f0_init, f1_init,
+                     g0_init, g1_init, branches);
     if (VERBOSE)
       cerr << "[starting params={" << params << "}]" << endl;
 
@@ -840,7 +852,7 @@ main(int argc, const char **argv) {
       for (size_t j = 0; j < n_chain; ++ j)
         samplers.push_back(epiphy_mcmc(mh_max_iterations, j)); // seed j
       if (!MARK) {
-        expectation_maximization(VERBOSE, em_max_iterations,
+        expectation_maximization(VERBOSE, OBS, em_max_iterations,
                                  opt_max_iterations, mh_max_iterations,
                                  burnin, keep, first_only, epsr_tol, samplers,
                                  subtree_sizes, parent_ids,
@@ -849,7 +861,7 @@ main(int argc, const char **argv) {
                                  start_counts, triad_counts,
                                  tree_states_para);
       } else {
-        expectation_maximization(VERBOSE, em_max_iterations,
+        expectation_maximization(VERBOSE, OBS, em_max_iterations,
                                  opt_max_iterations, mh_max_iterations,
                                  burnin, keep, first_only, epsr_tol,
                                  samplers, subtree_sizes, parent_ids,
