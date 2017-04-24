@@ -53,6 +53,7 @@ To see the list of options, use "-?" or "-help".
 Estimate posterior methylation probabilities at ancestral and unobserved sites
 
 Usage: ``epiphy-post [OPTIONS] <param-file> <methprob-table> -o <out.post>``
+
 |Option| Long tag    | Type| Default | Description |
 | ---- | :---------- |:---- | :-------| :---------- |
 | -o   | -outfile    | str  | null    | output file |
