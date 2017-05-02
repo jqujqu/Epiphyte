@@ -1,7 +1,7 @@
 # Copyright (C) 2015 University of Southern California and
 #                    Andrew D. Smith
 #
-# Authors: Jenny Qu, Andrew D. Smith 
+# Authors: Jenny Qu, Andrew D. Smith
 #
 # This code is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,8 +22,19 @@ EPIPHYTE_ROOT = $(shell pwd)
 export PATH := $(shell pwd):$(PATH)
 BINDIR = $(EPIPHYTE_ROOT)/bin
 
-export SMITHLAB_CPP := $(shell pwd)/src/smithlab_cpp
-export TREETOOL := $(shell pwd)/src/adssrc/treetool
+ifndef SMITHLAB_CPP
+SMITHLAB_CPP=$(abspath $(dir $(MAKEFILE_LIST)))/src/smithlab_cpp
+ifeq ("$(wildcard $(SMITHLAB_CPP))","")
+$(error SMITHLAB_CPP variable not set and smithlab_cpp not found)
+endif
+endif
+
+ifndef SMITHLAB_CPP
+TREETOOL=$(abspath $(dir $(MAKEFILE_LIST)))/src/adssrc/treetool
+ifeq ("$(wildcard $(TREETOOL))","")
+$(error could not set TREETOOL variable)
+endif
+endif
 
 all:
 	@make -C src EPIPHYTE_ROOT=$(EPIPHYTE_ROOT) OPT=1
@@ -34,10 +45,9 @@ install:
 
 test:
 	@make -C src OPT=1 test
-.PHONY: test 
+.PHONY: test
 
 clean:
 	@rm -rf $(BINDIR)
 	@make -C src EPIPHYTE_ROOT=$(EPIPHYTE_ROOT) clean
 .PHONY: clean
-
