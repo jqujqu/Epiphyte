@@ -29,7 +29,7 @@ $(error SMITHLAB_CPP variable not set and smithlab_cpp not found)
 endif
 endif
 
-ifndef SMITHLAB_CPP
+ifndef TREETOOL
 TREETOOL=$(abspath $(dir $(MAKEFILE_LIST)))/src/adssrc/treetool
 ifeq ("$(wildcard $(TREETOOL))","")
 $(error could not set TREETOOL variable)
