@@ -29,6 +29,10 @@ ifndef METHPIPE_DIR
 METHPIPE_DIR=$(METHPIPE_ROOT)/src/common
 endif
 
+ifndef BOOST
+BOOST=$(realpath ../boost_1_64_0)
+endif
+
 PROGS = indep-epi-phylo epiphy-sim epiphy-est \
 	epiphy-post epiphy-seg epiphy-test epiphy-est-multichain
 
@@ -47,7 +51,7 @@ CXXFLAGS += $(OPTFLAGS)
 endif
 
 COMMON_DIR = $(realpath ../common)
-INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL} $(METHPIPE_DIR) /usr/local/include
+INCLUDEDIRS = $(SMITHLAB_CPP) $(COMMON_DIR) ${TREETOOL} $(METHPIPE_DIR) ${BOOST} /usr/local/include
 INCLUDEARGS = $(addprefix -I, $(INCLUDEDIRS))
 
 all: $(PROGS)

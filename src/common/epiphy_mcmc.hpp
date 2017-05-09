@@ -22,14 +22,15 @@
 //////////////   MCMC sampling using Markov Blancket    ////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
-#include <epiphy_utils.hpp>
-#include <param_set.hpp>
-#include <sufficient_statistics_helpers.hpp>
-
 #include <vector>
 #include <random>
 #include <iostream>
+#include <boost/math/distributions/students_t.hpp>
+
+#include "epiphy_utils.hpp"
+#include "param_set.hpp"
+#include "sufficient_statistics_helpers.hpp"
+
 
 class epiphy_mcmc {
 public:
@@ -1012,10 +1013,68 @@ struct mcmc_stat{
   void scale();
 };
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////// Other utilities /////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// below are two wrappers of the count_triads function
+template <class T>
+void
+collect_sample_stat(const std::vector<size_t> &subtree_sizes,
+                    const std::vector<size_t> &parent_ids,
+                    const std::vector<std::vector<T> > &tree_states,
+                    const std::vector<std::vector<bool> > &marks,
+                    const vector<MSite> &sites,
+                    const size_t desert_size,
+                    mcmc_stat &sample_stat) {
+  std::pair<double, double> root_start_counts;
+  pair_state root_counts;
+  std::vector<pair_state> start_counts;
+  std::vector<triple_state> triad_counts;
+  count_triads(subtree_sizes, parent_ids, tree_states,marks,
+               sites, desert_size, root_start_counts,
+               root_counts, start_counts,
+               triad_counts);
+  mcmc_stat m(root_start_counts, root_counts,
+              start_counts, triad_counts);
+  sample_stat = m;
+}
+
+template <class T>
+static void
+collect_sample_stat(const std::vector<size_t> &subtree_sizes,
+                    const std::vector<size_t> &parent_ids,
+                    const std::vector<std::vector<T> > &tree_states,
+                    const std::vector<std::pair<size_t, size_t> > &reset_points,
+                    mcmc_stat &sample_stat) {
+  std::pair<double, double> root_start_counts;
+  pair_state root_counts;
+  std::vector<pair_state> start_counts;
+  std::vector<triple_state> triad_counts;
+  count_triads(subtree_sizes, parent_ids, tree_states, reset_points,
+               root_start_counts, root_counts, start_counts,
+               triad_counts);
+  mcmc_stat m(root_start_counts, root_counts,
+              start_counts, triad_counts);
+  sample_stat = m;
+}
+
+
 void
 sum(const std::vector<mcmc_stat> &mcmcstats,
     mcmc_stat &ave_mcmc_stat);
 
+void
+average(const std::vector<mcmc_stat> &mcmcstats,
+        mcmc_stat &ave_mcmc_stat);
+
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////// MCMC output analysis    /////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
 // measure MCMC convergence
 // outter vector for parallel chains
@@ -1023,5 +1082,17 @@ sum(const std::vector<mcmc_stat> &mcmcstats,
 void
 EPSR(std::vector<std::vector<mcmc_stat> > &mcmcstats,
      vector<double> &epsr);
+
+
+void
+MCMC_MSE(const std::vector<mcmc_stat> &mcmcstats,
+         const double CBM_THETA,
+         const double CBM_EPS,
+         double &test_val, size_t &b, size_t &a,
+         bool &stop);
+
+void
+kl_divergence(const mcmc_stat &P, const mcmc_stat &Q,
+              vector<double> &kld);
 
 #endif

@@ -15,22 +15,65 @@
  */
 
 #include "epiphy_mcmc.hpp"
+#include "epiphy_utils.hpp"
 #include "sufficient_statistics_helpers.hpp"
 
 #include <vector>
 #include <random>
 #include <iostream>
 #include <math.h>       /* pow */
-
+#include <algorithm>  //std::max, min
+#include <boost/math/distributions/students_t.hpp>
 
 using std::vector;
 using std::cerr;
 using std::endl;
+using std::max;
+
+
+#include <functional>
+using std::placeholders::_1;
+using std::bind;
+using std::plus;
+
+static const double PROBABILITY_GUARD = 1e-10;
+
+
+void
+sum(const vector<mcmc_stat> &mcmcstats,
+    mcmc_stat &sum_mcmc_stat) {
+  sum_mcmc_stat = mcmcstats[0];
+  for (size_t i = 1; i < mcmcstats.size(); ++i) {
+    sum_mcmc_stat.root_start_distr.first += mcmcstats[i].root_start_distr.first;
+    sum_mcmc_stat.root_start_distr.second += mcmcstats[i].root_start_distr.second;
+    sum_mcmc_stat.root_distr += mcmcstats[i].root_distr;
+    for (size_t j = 0; j < mcmcstats[0].start_distr.size(); ++j) {
+      sum_mcmc_stat.start_distr[j] += mcmcstats[i].start_distr[j];
+      sum_mcmc_stat.triad_distr[j] += mcmcstats[i].triad_distr[j];
+    }
+  }
+}
+
+void
+average(const vector<mcmc_stat> &mcmcstats,
+        mcmc_stat &ave_mcmc_stat) {
+  sum(mcmcstats, ave_mcmc_stat);
+  const size_t N = mcmcstats.size();
+  ave_mcmc_stat.root_start_distr.first /= N;
+  ave_mcmc_stat.root_start_distr.second /= N;
+  ave_mcmc_stat.root_distr.div(N);
+  for (size_t j = 0; j < mcmcstats[0].start_distr.size(); ++j) {
+    ave_mcmc_stat.start_distr[j].div(N);
+    ave_mcmc_stat.triad_distr[j].div(N);
+  }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
-/////////////////////   Measure MCMC convergence    ////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
-
+/////////////////   MCMC output analysis      //////////////////////////////////
+/// multiple chain , EPSR (estimated potential scale reduction factor) /////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 void
 mcmc_stat::scale() {
   double tot = root_start_distr.first + root_start_distr.second;
@@ -201,17 +244,119 @@ EPSR(vector<vector<mcmc_stat> > &mcmcstats,
 }
 
 
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+//////////          MCMC output analysis             ///////////////////////////
+///////// single chain, Batch Mean with increasing batch size //////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 void
-sum(const vector<mcmc_stat> &mcmcstats,
-    mcmc_stat &ave_mcmc_stat) {
-  ave_mcmc_stat = mcmcstats[0];
-  for (size_t i = 1; i < mcmcstats.size(); ++i) {
-    ave_mcmc_stat.root_start_distr.first += mcmcstats[i].root_start_distr.first;
-    ave_mcmc_stat.root_start_distr.second += mcmcstats[i].root_start_distr.second;
-    ave_mcmc_stat.root_distr += mcmcstats[i].root_distr;
-    for (size_t j = 0; j < mcmcstats[0].start_distr.size(); ++j) {
-      ave_mcmc_stat.start_distr[j] += mcmcstats[i].start_distr[j];
-      ave_mcmc_stat.triad_distr[j] += mcmcstats[i].triad_distr[j];
+MCMC_MSE(const vector<mcmc_stat> &mcmcstats,
+         const double CBM_THETA,
+         const double CBM_EPS,
+         double &test_val, size_t &b, size_t &a,
+         bool &stop) {
+  /*whole chain average*/
+  mcmc_stat ave_mcmcstats;
+  average(mcmcstats, ave_mcmcstats);
+  const size_t n = mcmcstats.size();
+  const size_t n_sites = (ave_mcmcstats.root_distr.uu +
+                          ave_mcmcstats.root_distr.um +
+                          ave_mcmcstats.root_distr.mu +
+                          ave_mcmcstats.root_distr.mm);
+
+  /*determine batch number a and batch size b*/
+  b = static_cast<size_t>(floor(pow(n, CBM_THETA)));
+  a = static_cast<size_t>(floor(double(n)/b));
+
+  /*batch means*/
+  vector<mcmc_stat> mcmcstats_batch_means;
+  for (size_t j = 0; j < a; ++j) {
+    vector<mcmc_stat> batch(mcmcstats.end() - (j+1)*b, mcmcstats.end() - j*b);
+    mcmc_stat batch_mean;
+    average(batch, batch_mean);
+    mcmcstats_batch_means.push_back(batch_mean);
+  }
+
+  /*mean squared errors*/
+  mcmc_stat mse = ave_mcmcstats; // (re)initialize
+  const size_t n_nodes = mcmcstats[0].start_distr.size();
+  // only care about root_distr  start_distr and triad_distr
+  for (size_t j = 0; j < a; ++j) {
+    mse.root_distr = ((mcmcstats_batch_means[j].root_distr -
+                       ave_mcmcstats.root_distr) *
+                     (mcmcstats_batch_means[j].root_distr -
+                      ave_mcmcstats.root_distr));
+    mse.root_distr.div(double(a-1)/b);
+    for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+      pair_state start_distr = ((mcmcstats_batch_means[j].start_distr[node_id] -
+                                 ave_mcmcstats.start_distr[node_id]) *
+                                (mcmcstats_batch_means[j].start_distr[node_id] -
+                                 ave_mcmcstats.start_distr[node_id]));
+      start_distr.div(double(a-1)/b);
+      mse.start_distr[node_id] += start_distr;
+      triple_state triad_distr = ((mcmcstats_batch_means[j].triad_distr[node_id] -
+                                   ave_mcmcstats.triad_distr[node_id]) *
+                                  (mcmcstats_batch_means[j].triad_distr[node_id] -
+                                   ave_mcmcstats.triad_distr[node_id]));
+      triad_distr.div(double(a-1)/b);
+      mse.triad_distr[node_id] += triad_distr;
     }
   }
+
+  boost::math::students_t dist(a - 1);
+  double T = boost::math::quantile(complement(dist, 0.05/2));
+
+  double cbm_max_mse = 0;
+  for (size_t i = 0; i < 2; ++i)
+    for (size_t j = 0; j < 2; ++j)
+      cbm_max_mse = max(cbm_max_mse, mse.root_distr(i, j));
+  for (size_t node_id = 0; node_id < n_nodes; ++node_id) {
+    for (size_t i = 0; i < 2; ++i) {
+      for (size_t j = 0; j < 2; ++j) {
+        cbm_max_mse = max(cbm_max_mse, mse.root_distr(i, j));
+        cbm_max_mse = max(cbm_max_mse, mse.start_distr[node_id](i, j));
+        for (size_t k = 0; k < 2; ++k) {
+          cbm_max_mse = max(cbm_max_mse, mse.triad_distr[node_id](i, j, k));
+        }
+      }
+    }
+  }
+  test_val = pow(cbm_max_mse/(a*b), 0.5)*T;
+  stop = (test_val/n_sites < CBM_EPS);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+//////////          MCMC output analysis             ///////////////////////////
+///////// single chain, KL divergence                         //////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+void
+kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
+              vector<double> &kld) {
+  assert(P.size() == Q.size());
+  kld.resize(P.size(), 0.0); // clearing not needed; values not used here
+  for (size_t i = 0; i < P.size(); ++i) {
+    vector<double> p, q;
+    P[i].flatten(p);
+    Q[i].flatten(q);
+    // ADS: this is not the right transformation to put here; we do
+    // not want to add to these probabilities without ensuring they
+    // sum to not more than 1.0
+    // JQU: normalization is done inside kl_divergence(p, q), here
+    // we only want to make sure all elements are positive.
+    transform(p.begin(), p.end(), p.begin(),
+              bind(plus<double>(), _1, PROBABILITY_GUARD));
+    transform(q.begin(), q.end(), q.begin(),
+              bind(plus<double>(), _1, PROBABILITY_GUARD));
+    kld[i] = kl_divergence(p, q);
+  }
+}
+
+void
+kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
+  kl_divergence(P.triad_distr, Q.triad_distr, kld);
 }

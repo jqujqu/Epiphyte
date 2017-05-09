@@ -27,19 +27,23 @@ ifndef TREETOOL
 TREETOOL=$(realpath adssrc/treetool)
 endif
 
+ifndef BOOST
+BOOST=$(realpath boost_1_64_0)
+endif
+
 all:
 	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) OPT=1; \
+	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) BOOST=$(BOOST) OPT=1; \
 	done;
 
 install:
 	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) OPT=1 install; \
+	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=$(TREETOOL) BOOST=$(BOOST) OPT=1 install; \
 	done;
 
 test:
 	@for i in $(app_subdirs); do \
-	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=${TREETOOL} test; \
+	make -C $${i} SMITHLAB_CPP=$(SMITHLAB_CPP) TREETOOL=${TREETOOL} BOOST=$(BOOST) test; \
 	done;
 
 clean:

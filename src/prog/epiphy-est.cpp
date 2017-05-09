@@ -65,8 +65,9 @@ using std::placeholders::_1;
 using std::bind;
 using std::plus;
 
-static const double PROBABILITY_GUARD = 1e-10;
 static const double KL_CONV_TOL = 1e-5;    //MAGIC
+static const double CBM_THETA = 0.5;
+static const double CBM_EPS = 1e-4;
 
 
 static void
@@ -114,34 +115,6 @@ estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
 
   g0 = g00/(g01 + g00);
   g1 = g11/(g11 + g10);
-}
-
-
-static void
-kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
-              vector<double> &kld) {
-  assert(P.size() == Q.size());
-  kld.resize(P.size(), 0.0); // clearing not needed; values not used here
-  for (size_t i = 0; i < P.size(); ++i) {
-    vector<double> p, q;
-    P[i].flatten(p);
-    Q[i].flatten(q);
-    // ADS: this is not the right transformation to put here; we do
-    // not want to add to these probabilities without ensuring they
-    // sum to not more than 1.0
-    // JQU: normalization is done inside kl_divergence(p, q), here
-    // we only want to make sure all elements are positive.
-    transform(p.begin(), p.end(), p.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    transform(q.begin(), q.end(), q.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    kld[i] = kl_divergence(p, q);
-  }
-}
-
-static void
-kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
-  kl_divergence(P.triad_distr, Q.triad_distr, kld);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -200,8 +173,42 @@ maximization_step(const bool VERBOSE,
                         triad_counts, ps);
 }
 
+bool
+KL_convergence(const bool VERBOSE, const vector<mcmc_stat> &mcmcstats,
+               const size_t keepsize, const double tol) {
+  vector<double> divergence;
+  vector<mcmc_stat> win1(mcmcstats.end() - 2*keepsize, mcmcstats.end() - keepsize);
+  vector<mcmc_stat> win2(mcmcstats.end() - keepsize, mcmcstats.end());
+
+  // sum statistics from two neighboring windows
+  mcmc_stat sumwin1, sumwin2;
+  sum(win1, sumwin1);
+  sum(win2, sumwin2);
+
+  // check how far the proportions have moved;
+  kl_divergence(sumwin1, sumwin2, divergence);
+
+  // determine convergence based on how far proportions have moved
+  const double kl = *max_element(divergence.begin(), divergence.end());
+ if (VERBOSE)
+        cerr << "KL=" << kl << ";" ;
+  return  kl < tol;
+}
 
 
+bool
+CBM_convergence(const bool VERBOSE,
+                const vector<mcmc_stat> &mcmcstats) {
+  double test_val = 0;
+  size_t batch_size = 0, batch_number = 0;
+  bool converged;
+  MCMC_MSE(mcmcstats, CBM_THETA, CBM_EPS,
+           test_val, batch_size, batch_number, converged);
+  if (VERBOSE)
+    cerr << "\tCBM test val=" <<  test_val << "; batch_num = " << batch_number
+         << "; batch_size = " << batch_size << ";";
+  return converged;
+}
 
 template <class T>
 static void
@@ -234,8 +241,6 @@ expectation_step(const bool VERBOSE,
   vector<double> datllk_keep(keepsize);
 
   vector<mcmc_stat> mcmcstats;
-  mcmc_stat sumwin1;
-  mcmc_stat sumwin2;
   bool converged = false;
   size_t mh_iter = 0;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
@@ -246,67 +251,35 @@ expectation_step(const bool VERBOSE,
     // take the sample
     sampler.sample_states(OBS, subtree_sizes, parent_ids, ps, tree_probs,
                           blocks, sampled_states);
+    mcmc_stat m;
+    collect_sample_stat(subtree_sizes, parent_ids, sampled_states, blocks, m);
+    mcmcstats.push_back(m);
 
-    if (mh_iter >= burnin) {
+    const double llk_samp = log_likelihood(subtree_sizes, ps, m.root_start_distr,
+                                           m.root_distr, m.start_distr, m.triad_distr);
+    datllk_keep[(mh_iter-burnin) % keepsize] = llk_samp;
+    if (VERBOSE)
+      cerr << "Sample_loglik=" << llk_samp << ";";
 
-      pair<double, double> root_start_counts_samp;
-      pair_state root_counts_samp;
-      vector<pair_state> start_counts_samp;
-      vector<triple_state> triad_counts_samp;
-      count_triads(subtree_sizes, parent_ids, sampled_states, blocks,
-                   root_start_counts_samp, root_counts_samp, start_counts_samp,
-                   triad_counts_samp);
-      const double llk_samp =
-        log_likelihood(subtree_sizes, ps, root_start_counts_samp,
-                       root_counts_samp, start_counts_samp, triad_counts_samp);
-      datllk_keep[(mh_iter-burnin) % keepsize] = llk_samp;
-
-      if (VERBOSE)
-        cerr << "Sample_loglik=" << llk_samp << ";";
-
-      // record stats if past burning stage
-      if (mcmcstats.size() == keepsize*2)
-        mcmcstats.erase(mcmcstats.begin());
-
-      mcmcstats.push_back(mcmc_stat(root_start_counts_samp, root_counts_samp,
-                                    start_counts_samp, triad_counts_samp));
-
-      if (mcmcstats.size() == keepsize*2) {
-        vector<double> divergence;
-        vector<mcmc_stat> win1(keepsize), win2(keepsize);
-        copy(mcmcstats.begin(), mcmcstats.begin() + keepsize, win1.begin());
-        copy(mcmcstats.begin() + keepsize, mcmcstats.end(), win2.begin());
-
-        // sum statistics from two neighboring windows
-        sum(win1, sumwin1);
-        sum(win2, sumwin2);
-
-        // check how far the proportions have moved;
-        kl_divergence(sumwin1, sumwin2, divergence);
-
-        // determine convergence based on how far proportions have moved
-        const double kl = *max_element(divergence.begin(), divergence.end()) ;
-        converged = kl < KL_CONV_TOL;
-        if (VERBOSE)
-          cerr << "KL=" << kl << ";" ;
-      }
+    if (mcmcstats.size() >= burnin + keepsize*2) {
+      converged = CBM_convergence(VERBOSE, mcmcstats);
+      if (converged && VERBOSE)
+        cerr << "Converged at chain length: " << mh_iter;
     }
   }
   if (VERBOSE)
     cerr << endl;
 
-  datllk = std::accumulate(datllk_keep.begin(), datllk_keep.end(), 0.0)/keepsize;
-  root_start_counts.first = sumwin2.root_start_distr.first/keepsize;
-  root_start_counts.second = sumwin2.root_start_distr.second/keepsize;
-  root_counts = sumwin2.root_distr;
-  root_counts.div(keepsize);
-  for (size_t i = 0; i < triad_counts.size(); ++i) {
-    start_counts[i] = sumwin2.start_distr[i];
-    triad_counts[i] = sumwin2.triad_distr[i];
-    start_counts[i].div(keepsize);
-    triad_counts[i].div(keepsize);
+  mcmc_stat ave_mcmcstats;
+  average(mcmcstats, ave_mcmcstats);
+  root_start_counts = ave_mcmcstats.root_start_distr;
+  root_counts = ave_mcmcstats.root_distr;
+  for (size_t i = 0; i < n_nodes; ++i) {
+    start_counts[i] = ave_mcmcstats.start_distr[i];
+    triad_counts[i] = ave_mcmcstats.triad_distr[i];
   }
-
+  datllk = log_likelihood(subtree_sizes, ps, root_start_counts,
+                          root_counts, start_counts, triad_counts);
   if (VERBOSE)
     // ADS: should we print more summary statistics here?
     cerr << "[MH iterations=" << mh_iter << ']' << endl;
@@ -416,77 +389,44 @@ expectation_step(const bool VERBOSE,
   root_counts = pair_state();
 
   vector<mcmc_stat> mcmcstats;
-
   bool converged = false;
   size_t mh_iter = 0;
-  mcmc_stat sumwin1;
-  mcmc_stat sumwin2;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
-
     if (VERBOSE)
       cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
            << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
-
-    cerr << "taking the sample" << endl;
 
     // take the sample
     sampler.sample_states(OBS, subtree_sizes, parent_ids, sites, desert_size,
                           ps, tree_probs, marks, sampled_states);
 
-    pair<double, double> root_start_counts_samp;
-    pair_state root_counts_samp;
-    vector<pair_state> start_counts_samp;
-    vector<triple_state> triad_counts_samp;
-    count_triads(subtree_sizes, parent_ids, sampled_states,
-                 marks, sites, desert_size,
-                 root_start_counts_samp, root_counts_samp, start_counts_samp,
-                 triad_counts_samp);
+    mcmc_stat m;
+    collect_sample_stat(subtree_sizes, parent_ids,sampled_states,
+                        marks, sites, desert_size, m);
+    mcmcstats.push_back(m);
 
-    if (mh_iter >= burnin) {
-      // record stats if past burning stage
-      if (mcmcstats.size() >= keepsize*2)
-        mcmcstats.erase(mcmcstats.begin());
-      mcmc_stat m(root_start_counts_samp, root_counts_samp,
-                  start_counts_samp, triad_counts_samp);
-      mcmcstats.push_back(m);
-    }
-
-    if (mcmcstats.size() >= keepsize*2) {
-
-      vector<double> divergence;
-      vector<mcmc_stat> win1(keepsize), win2(keepsize);
-      copy(mcmcstats.begin(), mcmcstats.begin() + keepsize, win1.begin());
-      copy(mcmcstats.begin() + keepsize, mcmcstats.end(), win2.begin());
-
-      // sum statistics from two neighboring windows
-      sum(win1, sumwin1);
-      sum(win2, sumwin2);
-
-      // check how far the proportions have moved;
-      kl_divergence(sumwin1, sumwin2, divergence);
-
-      // determine convergence based on how far proportions have moved
-      const double kl = *max_element(divergence.begin(), divergence.end()) ;
-      converged = kl < KL_CONV_TOL;
+    if (mcmcstats.size() >= burnin + 2*keepsize) {
+      converged = CBM_convergence(VERBOSE, mcmcstats);
+      if (converged && VERBOSE)
+        cerr << "Converged at chain length: " << mh_iter;
     }
   }
   if (VERBOSE)
     cerr << endl;
 
-  root_start_counts.first = sumwin2.root_start_distr.first/keepsize;
-  root_start_counts.second = sumwin2.root_start_distr.second/keepsize;
-  root_counts = sumwin2.root_distr;
-  root_counts.div(keepsize);
-  for (size_t i = 0; i < triad_counts.size(); ++i) {
-    start_counts[i] = sumwin2.start_distr[i];
-    triad_counts[i] = sumwin2.triad_distr[i];
-    start_counts[i].div(keepsize);
-    triad_counts[i].div(keepsize);
+  mcmc_stat ave_mcmcstats;
+  average(mcmcstats, ave_mcmcstats);
+  root_start_counts = ave_mcmcstats.root_start_distr;
+  root_counts = ave_mcmcstats.root_distr;
+  for (size_t i = 0; i < n_nodes; ++i) {
+    start_counts[i] = ave_mcmcstats.start_distr[i];
+    triad_counts[i] = ave_mcmcstats.triad_distr[i];
   }
 
   if (VERBOSE)
     // ADS: should we print more summary statistics here?
     cerr << "[MH iterations=" << mh_iter << ']' << endl;
+
 }
 
 
@@ -628,7 +568,6 @@ main(int argc, const char **argv) {
     size_t mh_max_iterations = 500;         // MAGIC
     size_t keep = 100;   // #samples per chain used to get average statistics
     size_t burnin = 100;
-
 
     // run mode flags
     bool VERBOSE = false;

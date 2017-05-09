@@ -60,12 +60,6 @@ using std::istringstream;
 using std::to_string;
 using std::ostream_iterator;
 
-#include <functional>
-using std::placeholders::_1;
-using std::bind;
-using std::plus;
-
-static const double PROBABILITY_GUARD = 1e-10;
 static const double KL_CONV_TOL = 1e-4;    //MAGIC
 
 static void
@@ -114,38 +108,6 @@ estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
   g1 = g11/(g11 + g10);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-/////////////////////// KL divergence     //////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-
-static void
-kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
-              vector<double> &kld) {
-  assert(P.size() == Q.size());
-  kld.resize(P.size(), 0.0); // clearing not needed; values not used here
-  for (size_t i = 0; i < P.size(); ++i) {
-    vector<double> p, q;
-    P[i].flatten(p);
-    Q[i].flatten(q);
-    // ADS: this is not the right transformation to put here; we do
-    // not want to add to these probabilities without ensuring they
-    // sum to not more than 1.0
-    // JQU: normalization is done inside kl_divergence(p, q), here
-    // we only want to make sure all elements are positive.
-    transform(p.begin(), p.end(), p.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    transform(q.begin(), q.end(), q.begin(),
-              bind(plus<double>(), _1, PROBABILITY_GUARD));
-    kld[i] = kl_divergence(p, q);
-  }
-}
-
-static void
-kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
-  kl_divergence(P.triad_distr, Q.triad_distr, kld);
-}
 
 double
 max_kl(const vector<mcmc_stat> &mcmc_stats) {

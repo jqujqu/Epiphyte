@@ -34,7 +34,6 @@ ifdef OPT
 CXXFLAGS += $(OPTFLAGS)
 endif
 
-
 all: $(OBJECTS)
 %.o: %.cpp %.hpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
