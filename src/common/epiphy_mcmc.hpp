@@ -424,7 +424,8 @@ void
 epiphy_mcmc::accept_or_reject_proposal(const double log_ratio, const size_t idx,
                                        std::vector<T> &states) const {
   const T tmp_state = states[idx];
-  const double ratio = (!tmp_state) ? exp(-log_ratio) : exp(log_ratio);
+  //const double ratio = (!tmp_state) ? exp(-log_ratio) : exp(log_ratio);
+  const double ratio = (!tmp_state) ? 1.0/(exp(log_ratio) + 1.0) : 1.0/(exp(-log_ratio) + 1.0);
   if (dis(gen) < ratio)
     // ADS: need to make sure the "!" is defined the type T
     states[idx] = !tmp_state; // = (1 - tmp_state)
