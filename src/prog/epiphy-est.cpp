@@ -253,15 +253,15 @@ expectation_step(const bool VERBOSE,
                           blocks, sampled_states);
     mcmc_stat m;
     collect_sample_stat(subtree_sizes, parent_ids, sampled_states, blocks, m);
-    mcmcstats.push_back(m);
+    if (mh_iter >= burnin)
+      mcmcstats.push_back(m);
 
     const double llk_samp = log_likelihood(subtree_sizes, ps, m.root_start_distr,
                                            m.root_distr, m.start_distr, m.triad_distr);
-    datllk_keep[(mh_iter-burnin) % keepsize] = llk_samp;
     if (VERBOSE)
       cerr << "Sample_loglik=" << llk_samp << ";";
 
-    if (mcmcstats.size() >= burnin + keepsize*2) {
+    if (mcmcstats.size() >= keepsize) {
       converged = CBM_convergence(VERBOSE, mcmcstats);
       if (converged && VERBOSE)
         cerr << "Converged at chain length: " << mh_iter;
@@ -403,9 +403,10 @@ expectation_step(const bool VERBOSE,
     mcmc_stat m;
     collect_sample_stat(subtree_sizes, parent_ids,sampled_states,
                         marks, sites, desert_size, m);
-    mcmcstats.push_back(m);
+    if (mh_iter >= burnin)
+      mcmcstats.push_back(m);
 
-    if (mcmcstats.size() >= burnin + 2*keepsize) {
+    if (mcmcstats.size() >= keepsize) {
       converged = CBM_convergence(VERBOSE, mcmcstats);
       if (converged && VERBOSE)
         cerr << "Converged at chain length: " << mh_iter;
