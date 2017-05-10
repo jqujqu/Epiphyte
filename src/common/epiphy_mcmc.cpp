@@ -257,18 +257,21 @@ MCMC_MSE(const vector<mcmc_stat> &mcmcstats,
          const double CBM_EPS,
          double &test_val, size_t &b, size_t &a,
          bool &stop) {
-  /*whole chain average*/
-  mcmc_stat ave_mcmcstats;
-  average(mcmcstats, ave_mcmcstats);
+
   const size_t n = mcmcstats.size();
-  const size_t n_sites = (ave_mcmcstats.root_distr.uu +
-                          ave_mcmcstats.root_distr.um +
-                          ave_mcmcstats.root_distr.mu +
-                          ave_mcmcstats.root_distr.mm);
+  const size_t n_sites = (mcmcstats[0].root_distr.uu +
+                          mcmcstats[0].root_distr.um +
+                          mcmcstats[0].root_distr.mu +
+                          mcmcstats[0].root_distr.mm);
 
   /*determine batch number a and batch size b*/
   b = static_cast<size_t>(floor(pow(n, CBM_THETA)));
   a = static_cast<size_t>(floor(double(n)/b));
+
+  /*whole chain average*/
+  mcmc_stat ave_mcmcstats;
+  vector<mcmc_stat> mcmcstats_ab(mcmcstats.end()-a*b, mcmcstats.end());
+  average(mcmcstats_ab, ave_mcmcstats);
 
   /*batch means*/
   vector<mcmc_stat> mcmcstats_batch_means;
