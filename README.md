@@ -7,13 +7,45 @@ assumes
   - known phylogenetic relationship between species
   - epigenetic modification has binary state
 
-## Programs in Epiphyte
+## Installation
+
+Before attempting to compile Epiphyte please make sure that 
+
+ - GNU Scientific Library (<http://www.gnu.org/software/gsl/>) 
+   is installed on your system, and 
+ - path to header-only Boost libraries (<http://www.boost.org/>) is 
+   defined in the environment variable BOOST
+
+To compile Epiphyte, enter the program's root directory (e.g. Epiphyte/) and
+execute
+
+``make && make install``
+
+After the compilation, the binaries can be found in Epiphyte/bin/
+
+
+## Usage
+
+### PROGRAM: *indep-methprob*
+Compute posterior probability for hyper-methylation state assuming independent sites 
+
+Usage: `indep-methprob [OPTIONS] <methcount>`
+
+|Option| Long tag    | Type| Default | Description |
+| ---- | :---------- |:----| :-------| :---------- |
+|  -o  | -out        | str | stdout  | output file | 
+|      | -params-in  | str | false   | parameters file (no training)| 
+|      | -params-out | str | false   | output estimated parameters | 
+|  -v  | -verbose    | bool| false   | print more run info (default)| 
+
+To see the list of options, use "-?" or "-help"
+
 
 ### PROGRAM: *indep-epi-phylo*
 
-Estimate tree shape and mutation rates assuming site-independency
+Estimate tree shape and mutation rates assuming independent sites
 
-Usage: ``indep-epi-phylo [OPTIONS] assuming independent sites<newick> <meth-tab>``
+Usage: ``indep-epi-phylo [OPTIONS] <newick> <meth-tab>``
 
 |Option| Long tag    | Type| Default | Description |
 | ---- | :---------- |:----| :-------| :---------- |  
