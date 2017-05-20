@@ -319,8 +319,8 @@ main(int argc, const char **argv) {
 
     /************************* COMMAND LINE OPTIONS ***************************/
     OptionParser opt_parse(strip_path(argv[0]), "posteriors for "
-                           "hypo meth state assuming independent sites",
-                           "<meth-tab>");
+                           "hyper-methylation state assuming independent sites",
+                           "<methcounts>");
     opt_parse.add_opt("out", 'o', "output file (default: stdout)",
                       false, outfile);
     opt_parse.add_opt("params-in", '\0', "parameters file (no training)",
