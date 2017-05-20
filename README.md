@@ -34,8 +34,8 @@ Usage: `indep-methprob [OPTIONS] <methcount>`
 |Option| Long tag    | Type| Default | Description |
 | ---- | :---------- |:----| :-------| :---------- |
 |  -o  | -out        | str | stdout  | output file | 
-|      | -params-in  | str | false   | parameters file (no training)| 
-|      | -params-out | str | false   | output estimated parameters | 
+|      | -params-in  | str | null    | parameters file (no training)| 
+|      | -params-out | str | null    | output estimated parameters | 
 |  -v  | -verbose    | bool| false   | print more run info (default)| 
 
 To see the list of options, use "-?" or "-help"
@@ -50,7 +50,7 @@ Usage: ``indep-epi-phylo [OPTIONS] <newick> <meth-tab>``
 |Option| Long tag    | Type| Default | Description |
 | ---- | :---------- |:----| :-------| :---------- |  
 | -c   | -counts    | bool | false   | meth-table contains read counts |
-| -p   | -params    | str  | Null    | use given parameters and skip optimization |
+| -p   | -params    | str  | null    | use given parameters and skip optimization |
 |  -i  | -iteration | int  | 100     | maximum number of iteration  
 |  -n  | -nodemap   | bool | false   | output MAP states of individual nodes|
 |  -o  | -out       | str  | stdout  | output file |
@@ -77,7 +77,7 @@ Usage: ``epiphy-est [OPTIONS] <newick> <methprob-tab> -o <out.params>``
 |  -r  | -restart    |bool  | false   | restart MCMC chain in each EM iteration |
 |  -s  | -seed       |int   | null    | rng seed |
 |  -v  | -verbose    |bool  | false   | print more run info |
-|  -o  | -out        |str   |null     |output file name |
+|  -o  | -out        |str   | null    | output file name |
 
 To see the list of options, use "-?" or "-help".
 
