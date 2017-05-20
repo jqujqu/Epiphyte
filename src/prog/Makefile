@@ -33,7 +33,7 @@ ifndef BOOST
 BOOST=$(realpath ../boost_1_64_0)
 endif
 
-PROGS = indep-epi-phylo epiphy-sim epiphy-est \
+PROGS = indep-methprob indep-epi-phylo epiphy-sim epiphy-est \
 	epiphy-post epiphy-seg epiphy-test epiphy-est-multichain
 
 CXX = g++
@@ -89,7 +89,7 @@ epiphy-test: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o PhyloTreePreorder.o \
 	$(addprefix $(METHPIPE_DIR)/, MethpipeSite.o) \
         $(addprefix $(TREETOOL)/, PhyloTree.o)
 
-indep-sites-hypo: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o)
+indep-methprob: $(addprefix $(COMMON_DIR)/, MethpipeFiles.o BetaBin.o)
 
 install: all
 	@mkdir -p ../../bin
