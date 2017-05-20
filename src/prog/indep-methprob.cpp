@@ -244,7 +244,7 @@ two_state_em(const bool VERBOSE,
     prev_score = score;
   }
 
-  posteriors.swap(low_probs);
+  posteriors.swap(high_probs);
 }
 
 
@@ -258,7 +258,7 @@ get_posteriors(const vector<pair<double, double> > &counts,
   vector<double> low_probs(counts.size(), 0), high_probs(counts.size(), 0);
   expectation_step(counts, mixing,
                    low_distro, high_distro, low_probs, high_probs);
-  posteriors.swap(low_probs);
+  posteriors.swap(high_probs);
 }
 
 
