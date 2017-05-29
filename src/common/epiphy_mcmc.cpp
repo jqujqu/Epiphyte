@@ -37,6 +37,8 @@ using std::bind;
 using std::plus;
 
 static const double PROBABILITY_GUARD = 1e-10;
+static const double CBM_THETA = 0.5;
+static const double CBM_EPS = 1e-4;
 
 
 void
@@ -330,6 +332,22 @@ MCMC_MSE(const vector<mcmc_stat> &mcmcstats,
   stop = (test_val/n_sites < CBM_EPS);
 }
 
+
+bool
+CBM_convergence(const bool VERBOSE,
+                const vector<mcmc_stat> &mcmcstats) {
+  double test_val = 0;
+  size_t batch_size = 0, batch_number = 0;
+  bool converged;
+  MCMC_MSE(mcmcstats, CBM_THETA, CBM_EPS,
+           test_val, batch_size, batch_number, converged);
+  if (VERBOSE)
+    cerr << "\tCBM test val=" <<  test_val << "; batch_num = " << batch_number
+         << "; batch_size = " << batch_size << ";";
+  return converged;
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 //////////          MCMC output analysis             ///////////////////////////
@@ -359,7 +377,32 @@ kl_divergence(const vector<triple_state> &P, const vector<triple_state> &Q,
   }
 }
 
+// compute KL divergence
 void
 kl_divergence(const mcmc_stat &P, const mcmc_stat &Q, vector<double> &kld) {
   kl_divergence(P.triad_distr, Q.triad_distr, kld);
+}
+
+
+// check chain convergence by KL measurement
+bool
+KL_convergence(const bool VERBOSE, const vector<mcmc_stat> &mcmcstats,
+               const size_t keepsize, const double tol) {
+  vector<double> divergence;
+  vector<mcmc_stat> win1(mcmcstats.end() - 2*keepsize, mcmcstats.end() - keepsize);
+  vector<mcmc_stat> win2(mcmcstats.end() - keepsize, mcmcstats.end());
+
+  // sum statistics from two neighboring windows
+  mcmc_stat sumwin1, sumwin2;
+  sum(win1, sumwin1);
+  sum(win2, sumwin2);
+
+  // check how far the proportions have moved;
+  kl_divergence(sumwin1, sumwin2, divergence);
+
+  // determine convergence based on how far proportions have moved
+  const double kl = *max_element(divergence.begin(), divergence.end());
+ if (VERBOSE)
+        cerr << "KL=" << kl << ";" ;
+  return  kl < tol;
 }

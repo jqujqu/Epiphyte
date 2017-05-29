@@ -65,11 +65,6 @@ using std::placeholders::_1;
 using std::bind;
 using std::plus;
 
-static const double KL_CONV_TOL = 1e-5;    //MAGIC
-static const double CBM_THETA = 0.5;
-static const double CBM_EPS = 1e-4;
-
-
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
                  vector<pair<size_t, size_t> > &blocks) {
@@ -78,7 +73,6 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
       blocks.push_back(std::make_pair(i, i));
     else blocks.back().second = i;
 }
-
 
 // putting this function here because it is related to the parameters
 static double
@@ -173,42 +167,8 @@ maximization_step(const bool VERBOSE,
                         triad_counts, ps);
 }
 
-bool
-KL_convergence(const bool VERBOSE, const vector<mcmc_stat> &mcmcstats,
-               const size_t keepsize, const double tol) {
-  vector<double> divergence;
-  vector<mcmc_stat> win1(mcmcstats.end() - 2*keepsize, mcmcstats.end() - keepsize);
-  vector<mcmc_stat> win2(mcmcstats.end() - keepsize, mcmcstats.end());
-
-  // sum statistics from two neighboring windows
-  mcmc_stat sumwin1, sumwin2;
-  sum(win1, sumwin1);
-  sum(win2, sumwin2);
-
-  // check how far the proportions have moved;
-  kl_divergence(sumwin1, sumwin2, divergence);
-
-  // determine convergence based on how far proportions have moved
-  const double kl = *max_element(divergence.begin(), divergence.end());
- if (VERBOSE)
-        cerr << "KL=" << kl << ";" ;
-  return  kl < tol;
-}
 
 
-bool
-CBM_convergence(const bool VERBOSE,
-                const vector<mcmc_stat> &mcmcstats) {
-  double test_val = 0;
-  size_t batch_size = 0, batch_number = 0;
-  bool converged;
-  MCMC_MSE(mcmcstats, CBM_THETA, CBM_EPS,
-           test_val, batch_size, batch_number, converged);
-  if (VERBOSE)
-    cerr << "\tCBM test val=" <<  test_val << "; batch_num = " << batch_number
-         << "; batch_size = " << batch_size << ";";
-  return converged;
-}
 
 template <class T>
 static void
@@ -746,7 +706,7 @@ main(int argc, const char **argv) {
                         root_start_counts, root_counts, start_counts,
                         triad_counts, params);
     } else {
-      const epiphy_mcmc sampler(mh_max_iterations, 0);
+      const epiphy_mcmc sampler(0);
       bool MARK = false;
 
       if (restart)

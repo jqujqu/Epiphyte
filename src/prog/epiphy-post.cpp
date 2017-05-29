@@ -465,7 +465,7 @@ main(int argc, const char **argv) {
       if (VERBOSE)
         cerr << "[computing posterior probabilities]" << endl;
 
-      const epiphy_mcmc sampler(mh_max_iterations, 0);
+      const epiphy_mcmc sampler(0);
       vector<vector<double> > posteriors;
       if (use_marks) {
         estimate_posterior(VERBOSE, OBS, mh_max_iterations, burn, sampler,

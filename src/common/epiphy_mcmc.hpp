@@ -34,8 +34,8 @@
 
 class epiphy_mcmc {
 public:
-  epiphy_mcmc(const size_t mi, const size_t s) :
-    max_iterations(mi), the_seed(s) {
+  epiphy_mcmc(const size_t s) :
+    the_seed(s) {
     dis = std::uniform_real_distribution<>(0, 1);
     gen = std::mt19937_64(the_seed);
   }
@@ -159,7 +159,6 @@ private:
 
   mutable std::uniform_real_distribution<> dis;
   mutable std::mt19937_64 gen;
-  size_t max_iterations;
   size_t the_seed;
 };
 
@@ -1092,8 +1091,17 @@ MCMC_MSE(const std::vector<mcmc_stat> &mcmcstats,
          double &test_val, size_t &b, size_t &a,
          bool &stop);
 
+bool
+CBM_convergence(const bool VERBOSE,
+                const std::vector<mcmc_stat> &mcmcstats);
+
 void
 kl_divergence(const mcmc_stat &P, const mcmc_stat &Q,
               vector<double> &kld);
+
+bool
+KL_convergence(const bool VERBOSE, const std::vector<mcmc_stat> &mcmcstats,
+               const size_t keepsize, const double tol);
+
 
 #endif

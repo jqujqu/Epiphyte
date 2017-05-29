@@ -812,7 +812,7 @@ main(int argc, const char **argv) {
       vector<epiphy_mcmc> samplers;
       bool MARK = true;
       for (size_t j = 0; j < n_chain; ++ j)
-        samplers.push_back(epiphy_mcmc(mh_max_iterations, j)); // seed j
+        samplers.push_back(epiphy_mcmc(j)); // seed j
       if (!MARK) {
         expectation_maximization(VERBOSE, OBS, em_max_iterations,
                                  opt_max_iterations, mh_max_iterations,
