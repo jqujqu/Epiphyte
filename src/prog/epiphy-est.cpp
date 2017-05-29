@@ -150,26 +150,6 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
   }
 }
 
-// optimize all parameters simultaneously by gradient descent
-static void
-maximization_step(const bool VERBOSE,
-                  const vector<size_t> &subtree_sizes,
-                  const pair<double, double> &root_start_counts,
-                  const pair_state &root_counts,
-                  const vector<pair_state> &start_counts,
-                  const vector<triple_state> &triad_counts, param_set &ps) {
-
-  // one M-step: optimize parameters
-  param_set prev_ps(ps);
-
-  max_likelihood_params(VERBOSE, subtree_sizes,
-                        root_start_counts, root_counts, start_counts,
-                        triad_counts, ps);
-}
-
-
-
-
 template <class T>
 static void
 expectation_step(const bool VERBOSE,
