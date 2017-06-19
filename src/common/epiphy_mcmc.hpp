@@ -1092,8 +1092,8 @@ MCMC_MSE(const std::vector<mcmc_stat> &mcmcstats,
          bool &stop);
 
 bool
-CBM_convergence(const bool VERBOSE,
-                const std::vector<mcmc_stat> &mcmcstats);
+CBM_convergence(const std::vector<mcmc_stat> &mcmcstats, double &test_val,
+                size_t &batch_size, size_t &batch_number);
 
 void
 kl_divergence(const mcmc_stat &P, const mcmc_stat &Q,

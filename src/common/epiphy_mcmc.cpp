@@ -334,16 +334,15 @@ MCMC_MSE(const vector<mcmc_stat> &mcmcstats,
 
 
 bool
-CBM_convergence(const bool VERBOSE,
-                const vector<mcmc_stat> &mcmcstats) {
-  double test_val = 0;
-  size_t batch_size = 0, batch_number = 0;
+CBM_convergence(const vector<mcmc_stat> &mcmcstats,
+                double &test_val, size_t &batch_size, size_t &batch_number) {
+  test_val = 0;
+  batch_size = 0;
+  batch_number = 0;
   bool converged;
   MCMC_MSE(mcmcstats, CBM_THETA, CBM_EPS,
            test_val, batch_size, batch_number, converged);
-  if (VERBOSE)
-    cerr << "\tCBM test val=" <<  test_val << "; batch_num = " << batch_number
-         << "; batch_size = " << batch_size << ";";
+
   return converged;
 }
 

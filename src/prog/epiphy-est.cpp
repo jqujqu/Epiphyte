@@ -65,6 +65,9 @@ using std::placeholders::_1;
 using std::bind;
 using std::plus;
 
+bool DEBUG = false;
+
+
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
                  vector<pair<size_t, size_t> > &blocks) {
@@ -130,7 +133,7 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
   double diff = std::numeric_limits<double>::max();
   for (size_t iter = 0; iter < MAXITER && diff > param_set::tolerance; ++iter) {
     if (VERBOSE)
-      cerr << "[inside maximization: iter=" << iter << "]" << endl
+      cerr << "\t[inside maximization: iter=" << iter << "]" << endl
            << ps << endl;
 
     param_set prev_ps(ps);
@@ -185,8 +188,8 @@ expectation_step(const bool VERBOSE,
   size_t mh_iter = 0;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
-      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
-           << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
+      cerr << "\r\t[inside expectation: M-H (iter=" << mh_iter << "; "
+           << (mh_iter < burnin ? "burning" : "post-burn") << ")]\t";
 
     // take the sample
     sampler.sample_states(OBS, subtree_sizes, parent_ids, ps, tree_probs,
@@ -196,13 +199,24 @@ expectation_step(const bool VERBOSE,
     if (mh_iter >= burnin)
       mcmcstats.push_back(m);
 
-    const double llk_samp = log_likelihood(subtree_sizes, ps, m.root_start_distr,
-                                           m.root_distr, m.start_distr, m.triad_distr);
+    const double llk_samp =
+      log_likelihood(subtree_sizes, ps, m.root_start_distr,
+                     m.root_distr, m.start_distr, m.triad_distr);
+
     if (VERBOSE)
-      cerr << "Sample_loglik=" << llk_samp << ";";
+      cerr << "Sample_llk=" << llk_samp << ";\t";
 
     if (mcmcstats.size() >= keepsize) {
-      converged = CBM_convergence(VERBOSE, mcmcstats);
+      double test_val;
+      size_t batch_size, batch_number;
+      converged = CBM_convergence(mcmcstats, test_val, batch_size,
+                                  batch_number);
+
+      if (VERBOSE)
+        cerr << "CBM_score =" <<  test_val
+             << ";\t(" << batch_number
+             << " x " << batch_size << ")";
+
       if (converged && VERBOSE)
         cerr << "Converged at chain length: " << mh_iter;
     }
@@ -222,7 +236,7 @@ expectation_step(const bool VERBOSE,
                           root_counts, start_counts, triad_counts);
   if (VERBOSE)
     // ADS: should we print more summary statistics here?
-    cerr << "[MH iterations=" << mh_iter << ']' << endl;
+    cerr << "\t[M-H iterations=" << mh_iter << ']' << endl;
 }
 
 
@@ -252,7 +266,8 @@ expectation_maximization(const bool VERBOSE,
 
     if (VERBOSE)
       cerr << endl << "====================[EM ITERATION=" << iter
-           << "]=======================" << endl;
+           << "]=======================" << endl
+           << "[E-step iter=" << iter << "]" << endl;
 
     const param_set prev_ps(params);
     double datllk;
@@ -261,11 +276,12 @@ expectation_maximization(const bool VERBOSE,
                      tree_probs, blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts,
                      sampled_states, datllk);
-
-    if (VERBOSE) {
-      cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
+    if (DEBUG) {
+      cerr << "...................." << endl
+           << "triad counts:" << endl;
       for (size_t i = 0; i < triad_counts.size(); ++i)
         cerr << triad_counts[i] << "\tnode=" << i << endl;
+      cerr << "...................." << endl;
     }
 
     /****************** M-step: optimize parameters ************************/
@@ -274,10 +290,7 @@ expectation_maximization(const bool VERBOSE,
                       triad_counts, params);
     if (VERBOSE)
       cerr << "[M-step iter=" << iter << ", params:" << endl
-           << params << ']' << endl;
-
-    // const double diff = param_set::absolute_difference(prev_ps, params);
-    // em_converged = (diff < param_set::tolerance*params.T.size());
+           << "\t" << params << ']' << endl;
 
     const double diff = param_set::max_abs_difference(prev_ps, params);
     em_converged = (diff < param_set::tolerance);
@@ -286,7 +299,7 @@ expectation_maximization(const bool VERBOSE,
                                       root_counts, start_counts, triad_counts);
 
     if (VERBOSE)
-      cerr << "[EM iter=" << iter << ", "
+      cerr << "[End EM iter=" << iter << ", "
            << "log_lik=" << llk << ", "
            << "delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
@@ -333,7 +346,7 @@ expectation_step(const bool VERBOSE,
   size_t mh_iter = 0;
   for (mh_iter = 0; mh_iter < mh_max_iterations && !converged; ++mh_iter) {
     if (VERBOSE)
-      cerr << "\r[inside expectation: M-H (iter=" << mh_iter << "; "
+      cerr << "\r\t[inside expectation: M-H (iter=" << mh_iter << "; "
            << (mh_iter < burnin ? "burning" : "post-burn") << ")]";
 
     // take the sample
@@ -347,7 +360,16 @@ expectation_step(const bool VERBOSE,
       mcmcstats.push_back(m);
 
     if (mcmcstats.size() >= keepsize) {
-      converged = CBM_convergence(VERBOSE, mcmcstats);
+      double test_val;
+      size_t batch_size, batch_number;
+      converged = CBM_convergence(mcmcstats, test_val, batch_size,
+                                  batch_number);
+
+      if (VERBOSE)
+        cerr << " CBM_score =" <<  test_val
+             << "; (" << batch_number
+             << " x " << batch_size << ")";
+
       if (converged && VERBOSE)
         cerr << "Converged at chain length: " << mh_iter;
     }
@@ -366,7 +388,7 @@ expectation_step(const bool VERBOSE,
 
   if (VERBOSE)
     // ADS: should we print more summary statistics here?
-    cerr << "[MH iterations=" << mh_iter << ']' << endl;
+    cerr << "\t[M-H iterations=" << mh_iter << ']' << endl;
 
 }
 
@@ -398,24 +420,25 @@ expectation_maximization(const bool VERBOSE,
 
   bool em_converged = false;
   for (size_t iter = 0; iter < em_max_iterations && !em_converged; ++iter) {
-
     if (VERBOSE)
       cerr << endl << "====================[EM ITERATION=" << iter
-           << "]=======================" << endl;
+           << "]=======================" << endl
+           << "[E-step iter=" << iter << "]" << endl;
 
     const param_set prev_ps(params);
-
     const size_t burn = (first_only && iter > 0)? 0 : burnin;
+
     expectation_step(VERBOSE, OBS, mh_max_iterations,
                      burn, keepsize, sampler, subtree_sizes,
                      parent_ids, tree_probs, marks, sites, desert_size,
                      params, root_start_counts, root_counts, start_counts,
                      triad_counts, sampled_states);
-
-    if (VERBOSE) {
-      cerr << "[E-step iter=" << iter << "]\ntriad counts:\n" << endl;
+    if (DEBUG) {
+      cerr << "...................." << endl
+           << "triad counts:" << endl;
       for (size_t i = 0; i < triad_counts.size(); ++i)
         cerr << triad_counts[i] << "\tnode=" << i << endl;
+      cerr << "...................." << endl;
     }
 
     /****************** M-step: optimize parameters ************************/
@@ -435,7 +458,7 @@ expectation_maximization(const bool VERBOSE,
                                       root_counts, start_counts, triad_counts);
 
     if (VERBOSE)
-      cerr << "[EM iter=" << iter << ", "
+      cerr << "[End EM iter=" << iter << ", "
            << "log_lik=" << llk << ", "
            << "delta=" << diff << ", "
            << "conv=" << em_converged << ']' << endl;
@@ -547,6 +570,9 @@ main(int argc, const char **argv) {
     opt_parse.add_opt("verbose", 'v', "print more run info "
                       "(default: " + string(VERBOSE ? "true" : "false") + ")",
                       false, VERBOSE);
+    opt_parse.add_opt("debug", 'D', "print more debug info "
+                      "(default: " + string(DEBUG ? "true" : "false") + ")",
+                      false, DEBUG);
     opt_parse.add_opt("out", 'o', "output file name (default: stdout)",
                       true, outfile);
 
