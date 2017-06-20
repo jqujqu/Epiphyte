@@ -308,7 +308,7 @@ int main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[computing transition matrices]" << endl;
 
-    pair_state F(ps.f0, 1.0 - ps.f0, 1.0 - ps.f1, ps.f1);
+    pair_state F(ps.g0[0], 1.0 - ps.g0[0], 1.0 - ps.g1[0], ps.g1[0]);
     vector<pair_state> P;
     vector<triple_state> GP;
     get_transition_matrices(ps, P, GP);

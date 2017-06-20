@@ -41,6 +41,7 @@
 #include "optimize_params.hpp"
 
 using std::string;
+using std::to_string;
 using std::vector;
 using std::endl;
 using std::cerr;
@@ -117,12 +118,24 @@ int main(int argc, const char **argv) {
     bool test_lambda = false;
     size_t test_branch = 0;
 
+    /* model of horizontal rates: 
+       1 same across all; 
+       2 root vs non-root
+       3 node-specific */
+    size_t horiz_mode = 2;
+
     /****************** COMMAND LINE OPTIONS ********************/
     OptionParser opt_parse(strip_path(argv[0]), "test harness for "
                            "some functions used in epiphy",
                            "<meth-table-file> <params-file>");
     opt_parse.add_opt("indep", 'I', "sites are independent",
                       false, independent_sites);
+     opt_parse.add_opt("mode", 'm', "mode of horizontal transition rates\n"
+                      "1 -- all nodes share the same parameters\n"
+                      "2 -- all non-root nodes share the same parameters\n"
+                      "3 -- parameters are node-specific\n"
+                      "(default: " + to_string(horiz_mode) + ")",
+                      false, horiz_mode);
     opt_parse.add_opt("desert", 'd',
                       "desert size (default " + std::to_string(1000) + ")",
                       false, desert_size);
@@ -162,6 +175,10 @@ int main(int argc, const char **argv) {
     const size_t flag_sum = test_pi0 + test_G + test_lambda;
     if (flag_sum > 1 && test_branch > 0) {
       cerr << "pi0, G, lambda and branch are mutually exclusive" << endl;
+      return EXIT_SUCCESS;
+    }
+    if (!(horiz_mode == 1 || horiz_mode ==2 || horiz_mode == 3)) {
+      cerr << opt_parse.help_message() << endl;
       return EXIT_SUCCESS;
     }
     const string meth_table_file(leftover_args.front());
@@ -235,26 +252,29 @@ int main(int argc, const char **argv) {
         cerr << optimized_ps << endl;
     }
 
-    if (test_root_G) {
-      // sample arbitrary value (but making it > 0.5)
-      optimized_ps.f0 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
-      optimized_ps.f1 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
-      if (VERBOSE)
-        cerr << "optimizing root_G" << endl
-             << "initial params: " << optimized_ps << endl;
-      max_likelihood_f0_f1(VERBOSE, root_counts, optimized_ps);
-      if (VERBOSE)
-        cerr << optimized_ps << endl;
-    }
+    // if (test_root_G) {
+    //   // sample arbitrary value (but making it > 0.5)
+    //   optimized_ps.g0[0] = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+    //   optimized_ps.g1[0] = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+    //   if (VERBOSE)
+    //     cerr << "optimizing root_G" << endl
+    //          << "initial params: " << optimized_ps << endl;
+    //   max_likelihood_f0_f1(VERBOSE, root_counts, optimized_ps);
+    //   if (VERBOSE)
+    //     cerr << optimized_ps << endl;
+    // }
 
     if (test_G) {
       // sample arbitrary value (but making it > 0.5)
-      optimized_ps.g0 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
-      optimized_ps.g1 = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+      for (size_t i = 0; i < ps.T.size(); ++i) {
+        optimized_ps.g0[i] = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+        optimized_ps.g1[i] = std::uniform_real_distribution<>(0.5, 1.0)(gen);
+      }
       if (VERBOSE)
         cerr << "optimizing G" << endl
              << "initial params: " << optimized_ps << endl;
-      max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, optimized_ps);
+      max_likelihood_horiz(VERBOSE, horiz_mode, subtree_sizes, root_counts,
+                           triad_counts, optimized_ps);
       if (VERBOSE)
         cerr << optimized_ps << endl;
     }

@@ -11,7 +11,7 @@
  *
  *  This program is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
  *  General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
@@ -47,7 +47,8 @@ log_likelihood(const std::vector<size_t> &subtree_sizes,
                const std::vector<triple_state> &triad_counts); // treesize x 2 x 2 x 2
 
 void
-optimize_params(const bool VERBOSE, const std::vector<size_t> &subtree_sizes,
+optimize_params(const bool VERBOSE, const size_t HORIZ_MODE,
+                const std::vector<size_t> &subtree_sizes,
                 const std::pair<double, double> &root_start_counts,
                 const pair_state &root_counts,
                 const std::vector<pair_state> &start_counts,
@@ -59,12 +60,10 @@ max_likelihood_pi0(const bool VERBOSE,
                    param_set &ps);
 
 void
-max_likelihood_f0_f1(const bool VERBOSE,
-                     const pair_state &root_counts, param_set &ps);
-
-void
 max_likelihood_horiz(const bool VERBOSE,
+                     const size_t HORIZ_MODE,
                      const std::vector<size_t> &subtree_sizes,
+                     const pair_state &root_counts,
                      const std::vector<triple_state> &triad_counts,
                      param_set &ps);
 
@@ -85,6 +84,7 @@ max_likelihood_branch(const bool VERBOSE,
 
 void
 max_likelihood_params(const bool VERBOSE,
+                      const size_t HORIZ_MODE,                      
                       const std::vector<size_t> &subtree_sizes,
                       const std::pair<double, double> &root_start_counts,
                       const pair_state &root_counts,

@@ -27,13 +27,12 @@
 using std::vector;
 using std::string;
 
-double param_set::tolerance = 5e-4; // tolerance for parameter estimate precision
+double param_set::tolerance = 5e-4;  // tolerance for parameter estimate precision
 
 std::ostream &
 operator<<(std::ostream &out, const param_set &ps) {
   return out << ps.tostring();
 }
-
 
 void
 param_set::read(const string &paramfile, PhyloTreePreorder &t) {
@@ -50,12 +49,26 @@ param_set::read(const string &paramfile, PhyloTreePreorder &t) {
   in >> dummy_label >> t;
   in >> dummy_label >> pi0;
   in >> dummy_label >> rate0;
-  in >> dummy_label >> f0;
-  in >> dummy_label >> f1;
-  in >> dummy_label >> g0;
-  in >> dummy_label >> g1;
 
-  // sync the transformed values for brances in parameter set
+  // read in G parameters: The last pair of values will be repeated for the
+  // remaining branches if number of pairs is less than tree-size
+  for (size_t i = 0; i < t.get_size(); ++i) {
+    double val0, val1;
+    in >> dummy_label >> val0;
+    in >> dummy_label >> val1;
+    if (val0 > 0.0 && val1 > 0.0 && val0 < 1.0 && val1 > 0.0) {
+      g0.push_back(val0);
+      g1.push_back(val1);
+    } else if (g0.size() > 0 && g1.size() > 0) {
+      g0.push_back(g0.back());
+      g1.push_back(g1.back());
+    } else { // will fail assertion later
+      g0.push_back(val0);
+      g1.push_back(val1);
+    }
+  }
+
+  // sync the transformed values for branches in parameter set
   vector<double> branches;
   t.get_branch_lengths(branches);
   T.clear();
@@ -84,23 +97,21 @@ param_set::write(PhyloTreePreorder t, const string &paramfile) {
   out << "tree\t" << t << std::endl;
   out << "pi0\t" << pi0 << std::endl;
   out << "rate0\t" << rate0 << std::endl;
-  out << "f0\t" << f0 << std::endl;
-  out << "f1\t" << f1 << std::endl;
-  out << "g0\t" << g0 << std::endl;
-  out << "g1\t" << g1 << std::endl;
+  for (size_t i = 0; i < T.size(); ++i) {
+    out << "g0[" << i << "]\t" << g0[i] << std::endl;
+    out << "g1[" << i << "]\t" << g1[i] << std::endl;
+  }
 }
 
 string
 param_set::tostring() const {
   std::ostringstream oss;
   oss << "pi0=" << pi0 << ", "
-      << "rate0=" << rate0 << ", "
-      << "f0=" << f0 << ", "
-      << "f1=" << f1 << ", "
-      << "g0=" << g0 << ", "
-      << "g1=" << g1 << ", "
-      << "T=(";
-
+      << "rate0=" << rate0 << ", ";
+  for (size_t i = 0; i < T.size(); ++i) 
+    oss << "g0[" << i << "]=" << g0[i] << ", "
+        << "g1[" << i << "]=" << g1[i] << ", ";
+  oss << "T=(";
   for (size_t i = 0; i < T.size() - 1; ++i)
     oss << -log(1.0 - T[i]) << ',';
   oss << -log(1.0 - T.back()) << ')';

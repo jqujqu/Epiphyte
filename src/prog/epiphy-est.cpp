@@ -67,7 +67,6 @@ using std::plus;
 
 bool DEBUG = false;
 
-
 static void
 separate_regions(const size_t desert_size, vector<MSite> &sites,
                  vector<pair<size_t, size_t> > &blocks) {
@@ -77,42 +76,42 @@ separate_regions(const size_t desert_size, vector<MSite> &sites,
     else blocks.back().second = i;
 }
 
-// putting this function here because it is related to the parameters
-static double
-estimate_pi0(const vector<vector<double> > &meth) {
-  double total = 0.0;
-  size_t N = 0;
-  for (auto i(meth.begin()); i != meth.end(); ++i)
-    for (auto j(i->begin()); j != i->end(); ++j)
-      if (!missing_meth_value(*j)) {
-        total += *j;
-        ++N;
-      }
-  return (N - total)/N;
-}
+// // putting this function here because it is related to the parameters
+// static double
+// estimate_pi0(const vector<vector<double> > &meth) {
+//   double total = 0.0;
+//   size_t N = 0;
+//   for (auto i(meth.begin()); i != meth.end(); ++i)
+//     for (auto j(i->begin()); j != i->end(); ++j)
+//       if (!missing_meth_value(*j)) {
+//         total += *j;
+//         ++N;
+//       }
+//   return (N - total)/N;
+// }
 
 
-static void
-estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
+// static void
+// estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
 
-  static const double pseudo_count = 1.0;
+//   static const double pseudo_count = 1.0;
 
-  double g00 = pseudo_count, g01 = pseudo_count;
-  double g10 = pseudo_count, g11 = pseudo_count;
-  for (size_t i = 0; i < meth.size() - 1; ++i)
-    for (size_t j = 0; j < meth[i].size(); ++j) {
-      const double curr = meth[i][j], next = meth[i + 1][j];
-      if (!missing_meth_value(curr) && !missing_meth_value(next)) {
-        g00 += (1.0 - curr)*(1.0 - next);
-        g01 += (1.0 - curr)*next;
-        g10 += curr*(1.0 - next);
-        g11 += curr*next;
-      }
-    }
+//   double g00 = pseudo_count, g01 = pseudo_count;
+//   double g10 = pseudo_count, g11 = pseudo_count;
+//   for (size_t i = 0; i < meth.size() - 1; ++i)
+//     for (size_t j = 0; j < meth[i].size(); ++j) {
+//       const double curr = meth[i][j], next = meth[i + 1][j];
+//       if (!missing_meth_value(curr) && !missing_meth_value(next)) {
+//         g00 += (1.0 - curr)*(1.0 - next);
+//         g01 += (1.0 - curr)*next;
+//         g10 += curr*(1.0 - next);
+//         g11 += curr*next;
+//       }
+//     }
 
-  g0 = g00/(g01 + g00);
-  g1 = g11/(g11 + g10);
-}
+//   g0 = g00/(g01 + g00);
+//   g1 = g11/(g11 + g10);
+// }
 
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -122,7 +121,8 @@ estimate_g0_g1(const vector<vector<double> > &meth, double &g0, double &g1) {
 
 // optimize parameters one by one
 static void
-maximization_step(const bool VERBOSE, const size_t MAXITER,
+maximization_step(const bool VERBOSE,
+                  const size_t HORIZ_MODE, const size_t MAXITER,
                   const vector<size_t> &subtree_sizes,
                   const pair<double, double> &root_start_counts,
                   const pair_state &root_counts,
@@ -135,20 +135,14 @@ maximization_step(const bool VERBOSE, const size_t MAXITER,
     if (VERBOSE)
       cerr << "\t[inside maximization: iter=" << iter << "]" << endl
            << ps << endl;
-
     param_set prev_ps(ps);
     for (size_t node_id = 1; node_id < subtree_sizes.size(); ++node_id)
       max_likelihood_branch(VERBOSE, subtree_sizes, node_id,
                             start_counts, triad_counts, ps);
-
     max_likelihood_rate(VERBOSE, subtree_sizes, start_counts, triad_counts, ps);
-
     max_likelihood_pi0(VERBOSE, root_start_counts, ps);
-
-    max_likelihood_f0_f1(VERBOSE, root_counts, ps);
-
-    max_likelihood_horiz(VERBOSE, subtree_sizes, triad_counts, ps);
-
+    max_likelihood_horiz(VERBOSE, HORIZ_MODE, subtree_sizes, root_counts,
+                         triad_counts, ps);
     diff = param_set::absolute_difference(ps, prev_ps); // convergence criteria
   }
 }
@@ -244,12 +238,14 @@ template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
                          const bool OBS,
+                         const size_t horiz_mode,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
                          const size_t burnin,
                          const size_t keepsize,
                          const epiphy_mcmc &sampler,
+                         const bool first_only,
                          const vector<size_t> &subtree_sizes,
                          const vector<size_t> &parent_ids,
                          const vector<vector<double> > &tree_probs,
@@ -263,7 +259,6 @@ expectation_maximization(const bool VERBOSE,
 
   bool em_converged = false;
   for (size_t iter = 0; iter < em_max_iterations && !em_converged; ++iter) {
-
     if (VERBOSE)
       cerr << endl << "====================[EM ITERATION=" << iter
            << "]=======================" << endl
@@ -271,7 +266,8 @@ expectation_maximization(const bool VERBOSE,
 
     const param_set prev_ps(params);
     double datllk;
-    expectation_step(VERBOSE, OBS, mh_max_iterations, burnin, keepsize,
+    const size_t burn = (first_only && iter > 0)? 0 : burnin;
+    expectation_step(VERBOSE, OBS, mh_max_iterations, burn, keepsize,
                      sampler, subtree_sizes, parent_ids,
                      tree_probs, blocks, params, root_start_counts,
                      root_counts, start_counts, triad_counts,
@@ -284,8 +280,8 @@ expectation_maximization(const bool VERBOSE,
       cerr << "...................." << endl;
     }
 
-    /****************** M-step: optimize parameters ************************/
-    maximization_step(false, opt_max_iterations, subtree_sizes,
+    /******************** M-step: optimize parameters ************************/
+    maximization_step(DEBUG, horiz_mode, opt_max_iterations, subtree_sizes,
                       root_start_counts, root_counts, start_counts,
                       triad_counts, params);
     if (VERBOSE)
@@ -354,8 +350,8 @@ expectation_step(const bool VERBOSE,
                           ps, tree_probs, marks, sampled_states);
 
     mcmc_stat m;
-    collect_sample_stat(subtree_sizes, parent_ids,sampled_states,
-                        marks, sites, desert_size, m);
+    collect_sample_stat(subtree_sizes, parent_ids,sampled_states, marks, sites,
+                        desert_size, m);
     if (mh_iter >= burnin)
       mcmcstats.push_back(m);
 
@@ -389,7 +385,6 @@ expectation_step(const bool VERBOSE,
   if (VERBOSE)
     // ADS: should we print more summary statistics here?
     cerr << "\t[M-H iterations=" << mh_iter << ']' << endl;
-
 }
 
 
@@ -398,12 +393,13 @@ template <class T>
 static void
 expectation_maximization(const bool VERBOSE,
                          const bool OBS,
+                         const size_t horiz_mode,
                          const size_t em_max_iterations,
                          const size_t opt_max_iterations,
                          const size_t mh_max_iterations,
-                         const epiphy_mcmc &sampler,
                          const size_t burnin,
                          const size_t keepsize,
+                         const epiphy_mcmc &sampler,
                          const bool first_only,
                          const vector<size_t> &subtree_sizes,
                          const vector<size_t> &parent_ids,
@@ -443,20 +439,16 @@ expectation_maximization(const bool VERBOSE,
 
     /****************** M-step: optimize parameters ************************/
     /*optimize parameters one by one, at most opt_max_iterations*/
-    maximization_step(false, opt_max_iterations, subtree_sizes,
+    maximization_step(DEBUG, horiz_mode, opt_max_iterations, subtree_sizes,
                       root_start_counts, root_counts, start_counts,
                       triad_counts, params);
-
     if (VERBOSE)
       cerr << "[M-step iter=" << iter << ", params:" << endl
            << params << ']' << endl;
-
     const double diff = param_set::max_abs_difference(prev_ps, params);
     em_converged = (diff < param_set::tolerance);
-
     const double llk = log_likelihood(subtree_sizes, params, root_start_counts,
                                       root_counts, start_counts, triad_counts);
-
     if (VERBOSE)
       cerr << "[End EM iter=" << iter << ", "
            << "log_lik=" << llk << ", "
@@ -520,30 +512,44 @@ int
 main(int argc, const char **argv) {
 
   try {
-
+    bool MARK = false;
     size_t rng_seed = numeric_limits<size_t>::max();
-
     string outfile("/dev/stdout");
 
     size_t desert_size = 1000;
-
     size_t opt_max_iterations = 500;        // iterations inside the M-step
     size_t em_max_iterations = 100;         // rounds of EM iterations
-    size_t mh_max_iterations = 500;         // MAGIC
+    size_t mh_max_iterations = 500;         // max length of MCMC
     size_t keep = 100;   // #samples per chain used to get average statistics
     size_t burnin = 100;
 
     // run mode flags
     bool VERBOSE = false;
+    /* In sampling stage, change prev and next leaf states to
+       the closest observed sites' states */
     bool OBS = true;
     bool assume_complete_data = false;
+    /* only burn in first EM iteration */
     bool first_only = false;
+    /* restart from a random sample point 
+       at the beginning of each EM iteration*/
     bool restart = false;
-
-    /********************* COMMAND LINE OPTIONS ***********************/
+    /* model of horizontal rates: 
+       1 same across all; 
+       2 root vs non-root
+       3 node-specific */
+    size_t horiz_mode = 2;
+    
+    /********************* COMMAND LINE OPTIONS *******************************/
     OptionParser opt_parse(strip_path(argv[0]), "estimate parameters of "
                            "a phylo-epigenomic model"
                            "<newick> <meth-table>");
+    opt_parse.add_opt("mode", 'm', "mode of horizontal transition rates\n"
+                      "1 -- all nodes share the same parameters\n"
+                      "2 -- all non-root nodes share the same parameters\n"
+                      "3 -- parameters are node-specific\n"
+                      "(default: " + to_string(horiz_mode) + ")",
+                      false, horiz_mode);
     opt_parse.add_opt("desert", 'd', "desert size (default: " +
                       to_string(desert_size) + ")",
                       false, desert_size);
@@ -595,9 +601,13 @@ main(int argc, const char **argv) {
       cerr << opt_parse.help_message() << endl;
       return EXIT_SUCCESS;
     }
+    if (!(horiz_mode == 1 || horiz_mode ==2 || horiz_mode == 3)) {
+      cerr << opt_parse.help_message() << endl;
+      return EXIT_SUCCESS;
+    }
     const string tree_file = leftover_args.front();
     const string meth_table_file = leftover_args.back();
-    /******************** END COMMAND LINE OPTIONS ********************/
+    /******************** END COMMAND LINE OPTIONS ****************************/
 
     mh_max_iterations = std::max(burnin + 2*keep, mh_max_iterations);
 
@@ -621,9 +631,21 @@ main(int argc, const char **argv) {
     vector<size_t> parent_ids;
     get_parent_id(subtree_sizes, parent_ids);
 
-    if (VERBOSE)
+    if (VERBOSE) {
       cerr << "[tree:]\n" << t.tostring() << endl;
-
+      cerr << "[mode-";
+      switch (horiz_mode) {
+      case 1:
+        cerr << "1: g0, g1 shared by all nodes]" << endl;
+        break;
+      case 2:
+        cerr << "2: g0, g1 shared by non-root nodes]" << endl;
+        break;
+      case 3:
+        cerr << "3: g0, g1 are node-specific]" << endl;
+        break;
+      }
+    }
     /******************** INITIALIZE PARAMETERS *******************************/
     // ADS: must we assume branch lengths are provided here?
     vector<double> branches;
@@ -631,14 +653,11 @@ main(int argc, const char **argv) {
     for (size_t i = 0; i < branches.size(); ++i)
       branches[i] = 1.0 - 1.0/exp(branches[i]);
 
-    static const double pi0_init   = 0.5; // MAGIC
+    static const double pi0_init = 0.5; // MAGIC
     static const double rate0_init = 0.5; // MAGIC
-    static const double f0_init    = 0.9; // MAGIC
-    static const double f1_init    = 0.9; // MAGIC
-    static const double g0_init    = 0.6; // MAGIC
-    static const double g1_init    = 0.6; // MAGIC
-    param_set params(pi0_init, rate0_init, f0_init, f1_init,
-                     g0_init, g1_init, branches);
+    static const vector<double> g0_init(n_nodes, 0.9); // MAGIC
+    static const vector<double> g1_init(n_nodes, 0.95); // MAGIC
+    param_set params(pi0_init, rate0_init, g0_init, g1_init, branches);
     if (VERBOSE)
       cerr << "[starting params={" << params << "}]" << endl;
 
@@ -646,7 +665,6 @@ main(int argc, const char **argv) {
     if (VERBOSE)
       cerr << "[reading methylation data (mode="
            << (assume_complete_data ? "complete" : "missing") << ")]" << endl;
-
     vector<MSite> sites;
     vector<vector<double> > tree_probs;
     vector<string> meth_table_species;
@@ -681,20 +699,17 @@ main(int argc, const char **argv) {
       cerr << "[separating deserts]" << endl;
     vector<pair<size_t, size_t> > blocks;
     separate_regions(desert_size, sites, blocks);
-
     if (VERBOSE)
       cerr << "number of blocks: " << blocks.size() << endl;
 
-    // // mark sites usable for training
-    if (VERBOSE)
-      cerr << "[marking sites]" << endl;
+    // mark sites usable for training
     vector<vector<bool> > marks;
-    mark_useable_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
-
-    // heuristic starting points for G and pi
-    estimate_g0_g1(tree_probs, params.f0, params.f1);
-    params.pi0 = estimate_pi0(tree_probs);
-
+    if (MARK) {
+      if (VERBOSE)
+        cerr << "[marking sites]" << endl;
+      mark_useable_sites(subtree_sizes, sites, tree_probs, desert_size, marks);
+    }
+    
     vector<vector<bool> > tree_states(n_sites, vector<bool>(n_nodes, false));
     // for complete data, the sampling will have probability 1 or 0
     sample_initial_states(rng_seed, tree_probs, tree_states);
@@ -705,40 +720,38 @@ main(int argc, const char **argv) {
     vector<pair_state> start_counts;
     vector<triple_state> triad_counts;
 
-    if (assume_complete_data) {
+    if (assume_complete_data) { // complete data
       count_triads(subtree_sizes, parent_ids, tree_states, blocks,
                    root_start_counts, root_counts, start_counts, triad_counts);
-      maximization_step(VERBOSE, opt_max_iterations, subtree_sizes,
+      maximization_step(DEBUG, horiz_mode, opt_max_iterations, subtree_sizes,
                         root_start_counts, root_counts, start_counts,
                         triad_counts, params);
-    } else {
+      if (VERBOSE)
+        cerr << "[RESULT] MLE params:" << endl << "{" << params << "}" << endl;
+    } else { // missing data
       const epiphy_mcmc sampler(0);
-      bool MARK = false;
+      if (restart) sample_initial_states(rng_seed, tree_probs, tree_states);
 
-      if (restart)
-        sample_initial_states(rng_seed, tree_probs, tree_states);
-
-      if (!MARK) {
-        expectation_maximization(VERBOSE, OBS, em_max_iterations,
-                                 opt_max_iterations,
-                                 mh_max_iterations, burnin, keep, sampler,
+      if (MARK)  { 
+        expectation_maximization(VERBOSE, OBS, horiz_mode, em_max_iterations,
+                                 opt_max_iterations, mh_max_iterations,
+                                 burnin, keep, sampler, first_only,
                                  subtree_sizes, parent_ids,
-                                 tree_probs, blocks, params,
-                                 root_start_counts, root_counts,
+                                 tree_probs, marks, sites, desert_size,
+                                 params, root_start_counts, root_counts,
                                  start_counts, triad_counts, tree_states);
       } else {
-        expectation_maximization(VERBOSE, OBS,
-                                 em_max_iterations, opt_max_iterations,
-                                 mh_max_iterations, sampler,
-                                 burnin, keep, first_only,
-                                 subtree_sizes, parent_ids, tree_probs, marks,
-                                 sites, desert_size, params, root_start_counts,
-                                 root_counts, start_counts, triad_counts,
-                                 tree_states);
-      }
+        expectation_maximization(VERBOSE, OBS,  horiz_mode, em_max_iterations,
+                                 opt_max_iterations, mh_max_iterations,
+                                 burnin, keep, sampler, first_only,
+                                 subtree_sizes, parent_ids,
+                                 tree_probs, blocks,
+                                 params, root_start_counts, root_counts,
+                                 start_counts, triad_counts, tree_states);
+      } 
     }
 
-    if (VERBOSE) {
+    if (DEBUG) {
       cerr << "[sufficient statistics]" << endl;
       cerr << "root_start_counts:\n"
            << root_start_counts.first << '\t'

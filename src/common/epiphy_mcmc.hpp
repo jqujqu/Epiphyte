@@ -572,7 +572,7 @@ epiphy_mcmc::sample_states(const bool OBS,
 
   std::pair<double, double> log_pi(std::make_pair(log(params.pi0),
                                                   log(1.0 - params.pi0)));
-  pair_state logG(params.f0, 1.0 - params.f0, 1.0 - params.f1, params.f1);
+  pair_state logG(params.g0[0], 1.0 - params.g0[0], 1.0 - params.g1[0], params.g1[0]);
   logG.make_logs();
 
   std::vector<pair_state> logP;
@@ -638,7 +638,7 @@ epiphy_mcmc::sample_states_rev(const bool OBS,
 
   std::pair<double, double> log_pi(std::make_pair(log(params.pi0),
                                                   log(1.0 - params.pi0)));
-  pair_state logG(params.f0, 1.0 - params.f0, 1.0 - params.f1, params.f1);
+  pair_state logG(params.g0[0], 1.0 - params.g0[0], 1.0 - params.g1[0], params.g1[0]);
   logG.make_logs();
 
   std::vector<pair_state> logP;
@@ -832,7 +832,7 @@ epiphy_mcmc::sample_states(const bool OBS,
   std::pair<double, double>
     log_pi(std::make_pair(log(params.pi0), log(1.0 - params.pi0)));
 
-  pair_state logG(params.f0, 1.0 - params.f0, 1.0 - params.f1, params.f1);
+  pair_state logG(params.g0[0], 1.0 - params.g0[0], 1.0 - params.g1[0], params.g1[0]);
   logG.make_logs();
 
   std::vector<pair_state> logP;
@@ -922,7 +922,7 @@ epiphy_mcmc::sample_states_rev(const bool OBS,
   std::pair<double, double>
     log_pi(std::make_pair(log(params.pi0), log(1.0 - params.pi0)));
 
-  pair_state logG(params.f0, 1.0 - params.f0, 1.0 - params.f1, params.f1);
+  pair_state logG(params.g0[0], 1.0 - params.g0[0], 1.0 - params.g1[0], params.g1[0]);
   logG.make_logs();
 
   std::vector<pair_state> logP;

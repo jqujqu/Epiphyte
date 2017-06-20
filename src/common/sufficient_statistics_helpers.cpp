@@ -30,6 +30,7 @@ operator<<(std::ostream &out, const pair_state &ps) {
   return out << ps.tostring();
 }
 
+
 std::ostream &
 operator<<(std::ostream &out, const triple_state &ts) {
   return out << ts.tostring();
@@ -46,7 +47,7 @@ combine_horiz_and_vert_deriv(const param_set &ps, const size_t &node_id,
                              triple_state &GP_drate, triple_state &GP_dg0,
                              triple_state &GP_dg1, triple_state &GP_dT) {
   // deriv for: (rate0, g0, g1, T)
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
+  pair_state G(ps.g0[node_id], 1.0 - ps.g0[node_id], 1.0 - ps.g1[node_id], ps.g1[node_id]);
   pair_state Q(-ps.rate0, ps.rate0, 1.0 - ps.rate0, ps.rate0 - 1.0);
 
   pair_state GP_denom;
@@ -149,16 +150,13 @@ void
 get_transition_matrices(const param_set &ps,
                         vector<pair_state> &P, vector<triple_state> &GP) {
   assert(ps.is_valid());
-
   const size_t n_nodes = ps.T.size();
   P = vector<pair_state>(n_nodes);
   GP = vector<triple_state>(n_nodes);
-  pair_state G(ps.g0, 1.0 - ps.g0, 1.0 - ps.g1, ps.g1);
-
   P[0] = pair_state(1.0, 0.0, 0.0, 1.0);
-
   for (size_t i = 1; i < n_nodes; ++i) {
     make_vertical_matrix(ps.T[i], ps.rate0, P[i]);
+    pair_state G(ps.g0[i], 1.0 - ps.g0[i], 1.0 - ps.g1[i], ps.g1[i]);
     combine_horiz_and_vert(G, P[i], GP[i]);
   }
 }
