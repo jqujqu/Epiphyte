@@ -67,6 +67,7 @@ Usage: ``epiphy-est [OPTIONS] <newick> <methprob-tab> -o <out.params>``
 
 |Option| Long tag    | Type| Default | Description |
 | ---- | :---------- |:---- | :-------| :---------- |  
+|  -m  | -mode       |int   | 2       | mode of horizontal transition rates: 1 -- all nodes share the same parameters; 2 -- all non-root nodes share the same parameters; 3 -- parameters are node-specific (default: 2)| 
 |  -d  | -desert     |int   | 1000    | desert size |
 |  -i  | -maxiter    |int   | 100     | max EM iterations |
 |  -h  | -mcmc-iter  |int   | 500     | max mcmc iterations
