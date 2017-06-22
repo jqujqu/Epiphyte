@@ -37,7 +37,8 @@ public:
   epiphy_mcmc(const size_t s) :
     the_seed(s) {
     dis = std::uniform_real_distribution<>(0, 1);
-    gen = std::mt19937_64(the_seed);
+    //gen = std::mt19937_64(the_seed);
+    gen = std::minstd_rand0(the_seed);
   }
 
   template <class T> void
@@ -158,7 +159,8 @@ private:
                       const size_t node_id) const;
 
   mutable std::uniform_real_distribution<> dis;
-  mutable std::mt19937_64 gen;
+  //mutable std::mt19937_64 gen;
+  mutable std::minstd_rand0 gen;
   size_t the_seed;
 };
 
@@ -423,7 +425,6 @@ void
 epiphy_mcmc::accept_or_reject_proposal(const double log_ratio, const size_t idx,
                                        std::vector<T> &states) const {
   const T tmp_state = states[idx];
-  //const double ratio = (!tmp_state) ? exp(-log_ratio) : exp(log_ratio);
   const double ratio = (!tmp_state) ? 1.0/(exp(log_ratio) + 1.0) : 1.0/(exp(-log_ratio) + 1.0);
   if (dis(gen) < ratio)
     // ADS: need to make sure the "!" is defined the type T
@@ -583,6 +584,7 @@ epiphy_mcmc::sample_states(const bool OBS,
     logGP[i].make_logs();
   }
 
+#pragma omp parallel for
   for (size_t i = 0; i < blocks.size(); ++i) {
     const size_t start = blocks[i].first;
     const size_t end = blocks[i].second;
@@ -649,6 +651,7 @@ epiphy_mcmc::sample_states_rev(const bool OBS,
     logGP[i].make_logs();
   }
 
+#pragma omp parallel for
   for (size_t i = 0; i < blocks.size(); ++i) {
     const size_t start = blocks[i].first;
     const size_t end = blocks[i].second;
@@ -729,6 +732,7 @@ epiphy_mcmc::sample_states(const bool OBS,
     logGP[i].make_logs();
   }
 
+#pragma omp parallel for
   for (size_t i = 0; i < blocks.size(); ++i) {
     const size_t start = blocks[i].first;
     const size_t end = blocks[i].second;
