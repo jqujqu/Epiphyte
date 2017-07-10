@@ -1,7 +1,7 @@
 ##### Small test examples #####
 # Files coming with the package: CpGs.bed  sim.params 7sp.nwk
 # Modify the following line to go to the "example" subdirectory of Epiphyte
-cd <path to Epiphyte>/example
+# cd <path to Epiphyte>/example
 
 # simulate methylomes 
 ../bin/epiphy-sim CpGs.bed sim.params -L sim_leaf.out -o sim_all.out
