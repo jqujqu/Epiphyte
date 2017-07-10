@@ -76,7 +76,7 @@ away_from_extremes(const double x, const double epsilon) {
   return std::min(std::max(epsilon, x), 1.0 - epsilon);
 }
 
-class MSite;
+struct MSite;
 
 void
 read_meth_table(const std::string &table_file,

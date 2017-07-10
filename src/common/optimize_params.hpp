@@ -22,9 +22,9 @@
 #ifndef OPTIMIZE_PARAMS_HPP
 #define OPTIMIZE_PARAMS_HPP
 
-class param_set;
-class triple_state;
-class pair_state;
+struct param_set;
+struct triple_state;
+struct pair_state;
 
 double
 log_likelihood(const std::vector<size_t> &subtree_sizes, const param_set &ps,
@@ -84,7 +84,7 @@ max_likelihood_branch(const bool VERBOSE,
 
 void
 max_likelihood_params(const bool VERBOSE,
-                      const size_t HORIZ_MODE,                      
+                      const size_t HORIZ_MODE,
                       const std::vector<size_t> &subtree_sizes,
                       const std::pair<double, double> &root_start_counts,
                       const pair_state &root_counts,
