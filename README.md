@@ -12,9 +12,17 @@ assumes
 Before attempting to compile Epiphyte please make sure that 
 
  - GNU Scientific Library (<http://www.gnu.org/software/gsl/>) 
-   is installed on your system, and 
+   is installed on your system 
  - path to header-only Boost libraries (<http://www.boost.org/>) is 
-   defined in the environment variable BOOST
+   defined in the environment variable BOOST_ROOT
+   ```
+   export BOOST_ROOT=/path/to/boost_1_64_0
+   ```
+ - path to Methpipe (<https://github.com/smithlabcode/methpipe>) is  
+   defined in the environment variable METHPIPE_ROOT 
+   ```  
+   export METHPIPE_ROOT=/path/to/methpipe
+   ```
 
 To compile Epiphyte, enter the program's root directory (e.g. Epiphyte/) and
 execute
