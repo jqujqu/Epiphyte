@@ -37,7 +37,7 @@ PROGS = indep-methprob indep-epi-phylo epiphy-sim epiphy-est \
 	epiphy-post epiphy-seg epiphy-test epiphy-est-multichain
 
 CXX = g++
-CXXFLAGS = -Wall -fmessage-length=50 -std=c++11 #-fopenmp
+CXXFLAGS = -Wall -fmessage-length=50 -std=c++11 -fopenmp
 OPTFLAGS = -O2
 DEBUGFLAGS = -g
 LIBS = -lgsl -lgslcblas -L/usr/local/lib 
