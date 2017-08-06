@@ -6,9 +6,9 @@
 # simulate methylomes 
 ../bin/epiphy-sim CpGs.bed sim.params -L sim_leaf.out -o sim_all.out
 # estimate model parameters from leaf species observations
-../bin/epiphy-est 7sp.nwk sim_leaf.out -v -o est_leaf.params
+../bin/epiphy-est start_params sim_leaf.out -v -o est_leaf.params
 # estimate model parameters with complete observations
-../bin/epiphy-est 7sp.nwk -c sim_all.out -v -o est_all.params
+../bin/epiphy-est start_params -c sim_all.out -v -o est_all.params
 # get posterior methylation probabilities 
 ../bin/epiphy-post est_leaf.params sim_leaf.out -o est_leaf.post -v
 # get methylation state segmentations
